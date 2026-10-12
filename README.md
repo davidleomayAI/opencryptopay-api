@@ -25,3 +25,7 @@ Pull requests target `develop`. `main` moves only through the release pull reque
 ## Checks
 
 `bun run typecheck`, `bun run lint`, `bun run handbook:check`, `bun run e2e:check`, `bun run test:coverage`, `bun run build`, and `bun run e2e`. Coverage on `src` is 100 percent. `src/index.ts` is the process entry and is exercised by the HTTP end-to-end run.
+
+## Product notes
+
+Notes that are not specific to this API are in [docs/product](docs/product/README.md). [Where place maps are shown](docs/product/maps.md) is the first of those notes.
