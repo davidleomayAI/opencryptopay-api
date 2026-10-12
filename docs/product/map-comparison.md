@@ -34,12 +34,14 @@ file has the same contents on `main` and on `develop`.
 
 ## What all five share
 
-Each one draws places as points. When several places are on screen, the view
-is framed around those places. The shop name can be read once a place is
-chosen: in a map popup, on a card under the map, or in a list beside the map.
+Each one draws places as points. The shop name can be read once a place is
+chosen. Where that name sits is not the same: a map popup on the OpenCryptoPay
+website and on the DFX page, a card under the map on the RealUnit website, the
+outline and the list under the map in the RealUnit app, and the list under the
+map on 21.gifts.
 
 That is the whole overlap. They do not share a renderer, a tile source, a
-place list, a pin, or a filter.
+place list, a pin, a filter, or a camera frame.
 
 Three of them are the OpenCryptoPay street map. The RealUnit app is an outline
 of Switzerland. 21.gifts is a Google map of its own member shops.
