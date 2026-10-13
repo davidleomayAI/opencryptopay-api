@@ -293,7 +293,7 @@ describe('MemoryMapPlaceStore', () => {
     expect(again.place.supports).toEqual([{ blockchain: 'Ethereum', asset: 'ZCHF' }]);
   });
 
-  it('sets omitted country and shop name to null on upsert and leaves supports', () => {
+  it('keeps an omitted country on upsert, clears an omitted shop name, and leaves supports', () => {
     const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
     store.upsert({
       ...input,
@@ -303,7 +303,7 @@ describe('MemoryMapPlaceStore', () => {
     });
     const omitted = store.upsert({ ...input, name: 'Other' });
     expect(omitted.place.name).toBe('Other');
-    expect(omitted.place.country).toBeNull();
+    expect(omitted.place.country).toBe('CH');
     expect(omitted.place.shopName).toBeNull();
     expect(omitted.place.supports).toEqual([{ blockchain: 'Ethereum', asset: 'ZCHF' }]);
   });

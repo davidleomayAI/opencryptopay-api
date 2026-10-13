@@ -205,7 +205,9 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
     existing.lon = input.lon;
     existing.category = input.category;
     existing.paymentMethods = input.paymentMethods;
-    existing.country = input.country ?? null;
+    if (input.country !== undefined) {
+      existing.country = input.country;
+    }
     existing.shopName = input.shopName ?? null;
     if (input.techProvider !== undefined) {
       existing.techProvider = input.techProvider;
