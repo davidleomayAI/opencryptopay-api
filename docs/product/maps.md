@@ -5,7 +5,8 @@ inventory of clients, not a proof that no other client exists, and not the API
 reference. Branch facts below are the GitHub branches on that date.
 
 The street map is OpenFreeMap Liberty drawn with MapLibre. The other sections
-are different maps and are named as such.
+are different maps and are named as such. How the implementations compare is
+[map-comparison.md](map-comparison.md).
 
 ## Street map
 
