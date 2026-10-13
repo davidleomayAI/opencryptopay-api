@@ -344,7 +344,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
     }
     const techProvider =
       input.techProvider !== undefined ? input.techProvider : existing.tech_provider;
-    const country = input.country ?? null;
+    const country = input.country !== undefined ? input.country : existing.country;
     const shopName = input.shopName ?? null;
     this.#db
       .query(
