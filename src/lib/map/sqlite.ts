@@ -210,7 +210,8 @@ function replaceSupportRows(db: Database, placeId: string, supports: MapPlaceSup
 
 /**
  * SQLite {@link MapPlaceStore}. Opened by the process entrypoint.
- * Insert, list, and delete are exercised by the HTTP end-to-end run.
+ * Insert, list, delete, and an upsert that omits or replaces country
+ * are exercised by the HTTP end-to-end run.
  * The SPAR shop-name backfill and the country backfill (null country only)
  * are exercised by e2e/sqlite-backfill.ts.
  */

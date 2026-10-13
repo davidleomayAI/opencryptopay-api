@@ -293,6 +293,96 @@ test('Function: normalizeMapPlaceKey — PUT updates a pin and DELETE removes it
   expect(await again.json()).toEqual({ deleted: false });
 });
 
+test('Function: SqliteMapPlaceStore — an upsert that omits country keeps it', async ({
+  request,
+}) => {
+  const pin = {
+    origin: 'dfx',
+    externalId: 'e2e-keep-country',
+    name: 'Keep Country Pin',
+    lat: 47.37,
+    lon: 8.54,
+    category: 'cafe',
+    country: 'CH',
+    shopName: 'SPAR',
+    supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
+  };
+  expect(
+    (
+      await request.post('/map/places', {
+        headers: { Authorization: 'Bearer e2e-ingest' },
+        data: pin,
+      })
+    ).status(),
+  ).toBe(201);
+
+  const createdList = (await (await request.get('/map/places')).json()) as {
+    places: Array<{
+      name: string;
+      country: string | null;
+      shopName: string | null;
+      supports: Array<{ blockchain: string; asset: string }>;
+    }>;
+  };
+  const created = createdList.places.find((row) => row.name === 'Keep Country Pin');
+  expect(created?.country).toBe('CH');
+  expect(created?.shopName).toBe('SPAR');
+
+  const renamed = await request.put('/map/places', {
+    headers: { Authorization: 'Bearer e2e-ingest' },
+    data: {
+      origin: 'dfx',
+      externalId: 'e2e-keep-country',
+      name: 'Keep Country Renamed',
+      lat: 47.37,
+      lon: 8.54,
+      category: 'cafe',
+    },
+  });
+  expect(renamed.status()).toBe(200);
+
+  const omittedList = (await (await request.get('/map/places')).json()) as {
+    places: Array<{
+      name: string;
+      country: string | null;
+      shopName: string | null;
+      supports: Array<{ blockchain: string; asset: string }>;
+    }>;
+  };
+  const omitted = omittedList.places.find((row) => row.name === 'Keep Country Renamed');
+  expect(omitted?.country).toBe('CH');
+  expect(omitted?.shopName).toBeNull();
+  expect(omitted?.supports).toEqual([{ blockchain: 'Ethereum', asset: 'ZCHF' }]);
+
+  const replaced = await request.put('/map/places', {
+    headers: { Authorization: 'Bearer e2e-ingest' },
+    data: {
+      origin: 'dfx',
+      externalId: 'e2e-keep-country',
+      name: 'Keep Country Renamed',
+      lat: 47.37,
+      lon: 8.54,
+      category: 'cafe',
+      country: 'DE',
+    },
+  });
+  expect(replaced.status()).toBe(200);
+
+  const replacedList = (await (await request.get('/map/places')).json()) as {
+    places: Array<{ name: string; country: string | null; shopName: string | null }>;
+  };
+  const updated = replacedList.places.find((row) => row.name === 'Keep Country Renamed');
+  expect(updated?.country).toBe('DE');
+  expect(updated?.shopName).toBeNull();
+
+  const deleted = await request.delete('/map/places', {
+    headers: { Authorization: 'Bearer e2e-ingest' },
+    data: { origin: 'dfx', externalId: 'e2e-keep-country' },
+  });
+  expect(deleted.status()).toBe(200);
+  expect(await deleted.json()).toEqual({ deleted: true });
+});
+
 test('Function: SqliteMapPlaceStore — limit is applied after the country filter', async ({
   request,
 }) => {
