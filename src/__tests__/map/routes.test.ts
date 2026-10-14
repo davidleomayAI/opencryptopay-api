@@ -708,7 +708,7 @@ describe('map routes', () => {
       body: JSON.stringify({ origin: 'dfx', externalId: 'store-old', occurredAt: oldIso }),
     });
     expect(noneRes.status).toBe(200);
-    expect(await noneRes.json()).toEqual({ activity: 'none' });
+    expect(await noneRes.json()).toEqual({ activity: 'olderThan30Days' });
     expect(store.list(10).find((row) => row.externalId === 'store-old')?.lastTransactionAt).toBe(
       oldIso,
     );
@@ -750,5 +750,36 @@ describe('map routes', () => {
     });
     expect(recent.status).toBe(200);
     expect(await recent.json()).toEqual({ activity: 'within7Days' });
+  });
+
+  it('copies stored activity on GET until refreshActivity runs at the new clock', async () => {
+    const startMs = Date.parse('2026-10-08T00:00:00.000Z');
+    let clock = startMs;
+    const store = new MemoryMapPlaceStore(() => new Date(startMs));
+    const api = app({ token: 'secret', store, now: () => clock });
+    const created = await api.request('/map/places', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify({ ...body, externalId: 'stale-clock', name: 'Stale Clock' }),
+    });
+    expect(created.status).toBe(201);
+    const sevenDays = new Date(startMs - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const recorded = await api.request('/map/places/transactions', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify({ origin: 'dfx', externalId: 'stale-clock', occurredAt: sevenDays }),
+    });
+    expect(recorded.status).toBe(200);
+    expect(await recorded.json()).toEqual({ activity: 'within7Days' });
+    clock = startMs + 1;
+    const listed = (await (await api.request('/map/places')).json()) as {
+      places: Array<{ name: string; activity: string }>;
+    };
+    expect(listed.places.find((row) => row.name === 'Stale Clock')?.activity).toBe('within7Days');
+    store.refreshActivity(clock);
+    const after = (await (await api.request('/map/places')).json()) as {
+      places: Array<{ name: string; activity: string }>;
+    };
+    expect(after.places.find((row) => row.name === 'Stale Clock')?.activity).toBe('within30Days');
   });
 });

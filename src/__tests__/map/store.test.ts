@@ -37,6 +37,8 @@ describe('MemoryMapPlaceStore', () => {
     expect(first.place.country).toBeNull();
     expect(first.place.shopName).toBeNull();
     expect(first.place.supports).toEqual([]);
+    expect(first.place.activity).toBe('none');
+    expect(first.place.lastTransactionAt).toBeNull();
     const second = store.insertIfNew({ ...input, name: 'Other', lat: 1 });
     expect(second.created).toBe(false);
     expect(second.place.name).toBe('SPAR');
@@ -408,41 +410,182 @@ describe('MemoryMapPlaceStore', () => {
   });
 
   it('records a newer transaction instant and does not move backward', () => {
+    const nowMs = Date.parse('2026-09-26T18:00:00.000Z');
     const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
-    expect(store.recordTransaction('dfx', 'store-1', '2026-09-26T00:00:00.000Z')).toBeUndefined();
+    expect(
+      store.recordTransaction('dfx', 'store-1', '2026-09-26T00:00:00.000Z', nowMs),
+    ).toBeUndefined();
     expect(store.list(10)).toHaveLength(0);
     const created = store.insertIfNew(input);
     expect(created.place.lastTransactionAt).toBeNull();
-    const moved = store.recordTransaction('dfx', 'store-1', '2026-09-26T12:00:00Z');
+    expect(created.place.activity).toBe('none');
+    const moved = store.recordTransaction('dfx', 'store-1', '2026-09-26T12:00:00Z', nowMs);
     expect(moved?.lastTransactionAt).toBe('2026-09-26T12:00:00.000Z');
+    expect(moved?.activity).toBe('within7Days');
     const newer = '2026-09-26T18:00:00.000Z';
-    const forwarded = store.recordTransaction('dfx', 'store-1', newer);
+    const forwarded = store.recordTransaction('dfx', 'store-1', newer, nowMs);
     expect(forwarded?.lastTransactionAt).toBe(newer);
-    const older = store.recordTransaction('dfx', 'store-1', '2026-09-26T06:00:00.000Z');
+    const older = store.recordTransaction('dfx', 'store-1', '2026-09-26T06:00:00.000Z', nowMs);
     expect(older?.lastTransactionAt).toBe(newer);
-    const equal = store.recordTransaction('dfx', 'store-1', '2026-09-26T18:00:00Z');
+    const equal = store.recordTransaction('dfx', 'store-1', '2026-09-26T18:00:00Z', nowMs);
     expect(equal?.lastTransactionAt).toBe(newer);
   });
 
   it('ignores an unparseable argument and keeps the timestamp on insert and upsert', () => {
+    const nowMs = Date.parse('2026-09-26T00:00:00.000Z');
     const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
     store.insertIfNew(input);
-    const seeded = store.recordTransaction('dfx', 'store-1', 'not-a-date');
+    const seeded = store.recordTransaction('dfx', 'store-1', 'not-a-date', nowMs);
     expect(seeded?.lastTransactionAt).toBeNull();
+    expect(seeded?.activity).toBe('none');
     const iso = '2026-09-26T00:00:00.000Z';
-    const replaced = store.recordTransaction('dfx', 'store-1', iso);
+    const replaced = store.recordTransaction('dfx', 'store-1', iso, nowMs);
     expect(replaced?.lastTransactionAt).toBe(iso);
-    const ignored = store.recordTransaction('dfx', 'store-1', 'not-a-date');
+    expect(replaced?.activity).toBe('within7Days');
+    const ignored = store.recordTransaction('dfx', 'store-1', 'not-a-date', nowMs);
     expect(ignored?.lastTransactionAt).toBe(iso);
+    expect(ignored?.activity).toBe('within7Days');
     const again = store.insertIfNew({ ...input, name: 'Other' });
     expect(again.created).toBe(false);
     expect(again.place.lastTransactionAt).toBe(iso);
+    expect(again.place.activity).toBe('within7Days');
     const updated = store.upsert({ ...input, name: 'Renamed' });
     expect(updated.place.name).toBe('Renamed');
     expect(updated.place.lastTransactionAt).toBe(iso);
+    expect(updated.place.activity).toBe('within7Days');
     if (replaced !== undefined) {
       replaced.lastTransactionAt = 'mutated';
+      replaced.activity = 'none';
     }
     expect(store.list(1)[0]?.lastTransactionAt).toBe(iso);
+    expect(store.list(1)[0]?.activity).toBe('within7Days');
+  });
+
+  it('stores in-window days, ignores an outside day, and becomes daily at five distinct UTC days', () => {
+    const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    store.insertIfNew(input);
+    const day = (value: string): string => `${value}T12:00:00.000Z`;
+    expect(store.recordTransaction('dfx', 'store-1', day('2026-10-08'), nowMs)?.activity).toBe(
+      'within7Days',
+    );
+    expect(store.recordTransaction('dfx', 'store-1', day('2026-10-07'), nowMs)?.activity).toBe(
+      'within7Days',
+    );
+    expect(store.recordTransaction('dfx', 'store-1', day('2026-10-06'), nowMs)?.activity).toBe(
+      'within7Days',
+    );
+    const four = store.recordTransaction('dfx', 'store-1', day('2026-10-05'), nowMs);
+    expect(four?.activity).toBe('within7Days');
+    expect(four?.lastTransactionAt).toBe(day('2026-10-08'));
+    const twice = store.recordTransaction('dfx', 'store-1', '2026-10-05T18:00:00.000Z', nowMs);
+    expect(twice?.activity).toBe('within7Days');
+    expect(twice?.lastTransactionAt).toBe(day('2026-10-08'));
+    const outside = store.recordTransaction('dfx', 'store-1', day('2026-10-01'), nowMs);
+    expect(outside?.activity).toBe('within7Days');
+    expect(outside?.lastTransactionAt).toBe(day('2026-10-08'));
+    const future = store.recordTransaction('dfx', 'store-1', day('2026-10-09'), nowMs);
+    expect(future?.activity).toBe('within7Days');
+    expect(future?.lastTransactionAt).toBe(day('2026-10-09'));
+    const daily = store.recordTransaction('dfx', 'store-1', day('2026-10-04'), nowMs);
+    expect(daily?.activity).toBe('daily');
+    expect(daily?.lastTransactionAt).toBe(day('2026-10-09'));
+  });
+
+  it('deletes payment days older than the window start on a later parseable write', () => {
+    const store = new MemoryMapPlaceStore(() => new Date('2026-10-01T12:00:00.000Z'));
+    store.insertIfNew(input);
+    const first = '2026-10-01T12:00:00.000Z';
+    store.recordTransaction('dfx', 'store-1', first, Date.parse(first));
+    const later = '2026-10-09T12:00:00.000Z';
+    const recorded = store.recordTransaction('dfx', 'store-1', later, Date.parse(later));
+    expect(recorded?.lastTransactionAt).toBe(later);
+    expect(recorded?.activity).toBe('within7Days');
+  });
+
+  it('adds an older in-window day without moving lastTransactionAt backward', () => {
+    const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    store.insertIfNew(input);
+    const recent = '2026-10-08T12:00:00.000Z';
+    store.recordTransaction('dfx', 'store-1', recent, nowMs);
+    const older = store.recordTransaction('dfx', 'store-1', '2026-10-07T08:00:00.000Z', nowMs);
+    expect(older?.lastTransactionAt).toBe(recent);
+    expect(older?.activity).toBe('within7Days');
+  });
+
+  it('stores olderThan30Days for a parseable instant older than 30 days', () => {
+    const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    store.insertIfNew(input);
+    const oldIso = new Date(nowMs - (30 * 24 * 60 * 60 * 1000 + 1)).toISOString();
+    const recorded = store.recordTransaction('dfx', 'store-1', oldIso, nowMs);
+    expect(recorded?.lastTransactionAt).toBe(oldIso);
+    expect(recorded?.activity).toBe('olderThan30Days');
+    store.refreshActivity(nowMs);
+    expect(store.list(1)[0]?.activity).toBe('olderThan30Days');
+  });
+
+  it('returns none after delete then insert and keeps activity on upsert', () => {
+    const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    store.insertIfNew(input);
+    store.recordTransaction('dfx', 'store-1', '2026-10-08T12:00:00.000Z', nowMs);
+    const kept = store.upsert({ ...input, name: 'Renamed' });
+    expect(kept.place.name).toBe('Renamed');
+    expect(kept.place.activity).toBe('within7Days');
+    expect(kept.place.lastTransactionAt).toBe('2026-10-08T12:00:00.000Z');
+    expect(store.deleteByKey('dfx', 'store-1')).toBe(true);
+    const created = store.insertIfNew(input);
+    expect(created.created).toBe(true);
+    expect(created.place.activity).toBe('none');
+    expect(created.place.lastTransactionAt).toBeNull();
+  });
+
+  it('does not change GET-copied activity until refreshActivity at the due clock', () => {
+    const nowMs = Date.parse('2026-10-08T00:00:00.000Z');
+    const seven = 7 * 24 * 60 * 60 * 1000;
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    store.insertIfNew(input);
+    const last = new Date(nowMs - seven).toISOString();
+    const recorded = store.recordTransaction('dfx', 'store-1', last, nowMs);
+    expect(recorded?.activity).toBe('within7Days');
+    store.refreshActivity(nowMs);
+    expect(store.list(1)[0]?.activity).toBe('within7Days');
+    store.refreshActivity(nowMs + 1);
+    expect(store.list(1)[0]?.activity).toBe('within30Days');
+  });
+
+  it('keeps daily before the pivot midnight and drops it at that instant', () => {
+    const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    store.insertIfNew(input);
+    const day = (value: string): string => `${value}T12:00:00.000Z`;
+    store.recordTransaction('dfx', 'store-1', day('2026-10-04'), nowMs);
+    store.recordTransaction('dfx', 'store-1', day('2026-10-05'), nowMs);
+    store.recordTransaction('dfx', 'store-1', day('2026-10-06'), nowMs);
+    store.recordTransaction('dfx', 'store-1', day('2026-10-07'), nowMs);
+    const daily = store.recordTransaction('dfx', 'store-1', day('2026-10-08'), nowMs);
+    expect(daily?.activity).toBe('daily');
+    expect(daily?.lastTransactionAt).toBe(day('2026-10-08'));
+    const pivotMidnight = Date.parse('2026-10-11T00:00:00.000Z');
+    store.refreshActivity(pivotMidnight - 1);
+    expect(store.list(1)[0]?.activity).toBe('daily');
+    store.refreshActivity(pivotMidnight);
+    expect(store.list(1)[0]?.activity).toBe('within7Days');
+    expect(store.list(1)[0]?.lastTransactionAt).toBe(day('2026-10-08'));
+  });
+
+  it('refreshes a due within30Days row to olderThan30Days', () => {
+    const nowMs = Date.parse('2026-10-08T00:00:00.000Z');
+    const thirty = 30 * 24 * 60 * 60 * 1000;
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    store.insertIfNew(input);
+    store.refreshActivity(nowMs);
+    expect(store.list(1)[0]?.activity).toBe('none');
+    const last = new Date(nowMs - thirty).toISOString();
+    expect(store.recordTransaction('dfx', 'store-1', last, nowMs)?.activity).toBe('within30Days');
+    store.refreshActivity(nowMs + 1);
+    expect(store.list(1)[0]?.activity).toBe('olderThan30Days');
   });
 });
