@@ -9,8 +9,8 @@
 
 ## Function: normalizeMapPlace
 
-- **Purpose:** Validate a JSON body for one map pin. Coordinates must be finite and in range, then they are rounded to six decimals. An unknown payment list becomes null instead of an error. An omitted tech provider is left unset so the store can default it. Optional `country` is the DFX country symbol (ISO 3166-1 alpha-2), trimmed and uppercased, or omitted. Optional `shopName` is a brand of 1 to 40 characters, not casefolded. Optional `supports` is a list of DFX payment-network and asset-name pairs; omitted leaves the field unset so an upsert can keep the stored rows.
-- **Inputs:** Unknown JSON. Required fields are `origin`, `externalId`, `name`, `lat`, `lon`, and `category`. `techProvider`, `country`, `shopName`, and `supports` are optional.
+- **Purpose:** Validate a JSON body for one map pin. Coordinates must be finite and in range, then they are rounded to six decimals. An unknown payment list becomes null instead of an error. An omitted tech provider is left unset so the store can default it. Optional `country` is the DFX country symbol (ISO 3166-1 alpha-2), trimmed and uppercased, or omitted. Optional `shopName` is a brand of 1 to 40 characters, not casefolded. Optional `supports` is a list of DFX payment-network and asset-name pairs; omitted leaves the field unset so an upsert can keep the stored rows. Optional `street`, `houseNumber`, `postalCode`, and `city` are trimmed strings of 1 to 120, 1 to 32, 1 to 16, and 1 to 80 characters. Empty text and control characters are invalid. An omitted field, including JSON null, leaves that part unset so an upsert can keep the stored value.
+- **Inputs:** Unknown JSON. Required fields are `origin`, `externalId`, `name`, `lat`, `lon`, and `category`. `techProvider`, `country`, `street`, `houseNumber`, `postalCode`, `city`, `shopName`, and `supports` are optional.
 - **Returns / side effects:** `{ ok: true, value }` or `{ ok: false, error }` with a fixed English message. No I/O.
 - **Used by:** `mapRoutes` on `POST /map/places` and `PUT /map/places`.
 
