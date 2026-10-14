@@ -20,6 +20,10 @@ export type MapPlaceInput = {
   paymentMethods: string | null;
   techProvider?: string;
   country?: string;
+  street?: string;
+  houseNumber?: string;
+  postalCode?: string;
+  city?: string;
   shopName?: string;
   supports?: MapPlaceSupport[];
 };
@@ -28,12 +32,23 @@ export type PlaceActivity = 'daily' | 'within7Days' | 'within30Days' | 'olderTha
 
 export type StoredMapPlace = Omit<
   MapPlaceInput,
-  'techProvider' | 'country' | 'shopName' | 'supports'
+  | 'techProvider'
+  | 'country'
+  | 'street'
+  | 'houseNumber'
+  | 'postalCode'
+  | 'city'
+  | 'shopName'
+  | 'supports'
 > & {
   id: string;
   createdAt: string;
   techProvider: string;
   country: string | null;
+  street: string | null;
+  houseNumber: string | null;
+  postalCode: string | null;
+  city: string | null;
   shopName: string | null;
   supports: MapPlaceSupport[];
   lastTransactionAt: string | null;
@@ -50,6 +65,10 @@ export type PublicMapPlace = {
   category: string;
   techProvider: string;
   country: string | null;
+  street: string | null;
+  houseNumber: string | null;
+  postalCode: string | null;
+  city: string | null;
   shopName: string | null;
   supports: MapPlaceSupport[];
   activity: PlaceActivity;
@@ -70,6 +89,10 @@ const NAME_ERROR = 'Place name is required';
 const CATEGORY_ERROR = 'Place category is required';
 const TECH_PROVIDER_ERROR = 'Place tech provider is invalid';
 const COUNTRY_ERROR = 'Place country is invalid';
+const STREET_ERROR = 'Place street is invalid';
+const HOUSE_NUMBER_ERROR = 'Place house number is invalid';
+const POSTAL_CODE_ERROR = 'Place postal code is invalid';
+const CITY_ERROR = 'Place city is invalid';
 const SHOP_NAME_ERROR = 'Place shop name is invalid';
 const SUPPORT_ERROR = 'Place support is invalid';
 const TRANSACTION_TIME_ERROR = 'Place transaction time is invalid';
@@ -468,6 +491,24 @@ function normalizeCountry(
   return { ok: true, value: country };
 }
 
+function normalizeOptionalAddressPart(
+  raw: unknown,
+  maxLength: number,
+  error: string,
+): { ok: true; value?: string } | { ok: false; error: string } {
+  if (raw === undefined || raw === null) {
+    return { ok: true };
+  }
+  if (typeof raw !== 'string') {
+    return { ok: false, error };
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length < 1 || trimmed.length > maxLength || !hasNoControls(trimmed)) {
+    return { ok: false, error };
+  }
+  return { ok: true, value: trimmed };
+}
+
 function normalizeShopName(
   raw: unknown,
 ): { ok: true; value: string } | { ok: false; error: string } {
@@ -643,6 +684,23 @@ export function normalizeMapPlace(
     country = parsedCountry.value;
   }
 
+  const street = normalizeOptionalAddressPart(rec['street'], 120, STREET_ERROR);
+  if (!street.ok) {
+    return street;
+  }
+  const houseNumber = normalizeOptionalAddressPart(rec['houseNumber'], 32, HOUSE_NUMBER_ERROR);
+  if (!houseNumber.ok) {
+    return houseNumber;
+  }
+  const postalCode = normalizeOptionalAddressPart(rec['postalCode'], 16, POSTAL_CODE_ERROR);
+  if (!postalCode.ok) {
+    return postalCode;
+  }
+  const city = normalizeOptionalAddressPart(rec['city'], 80, CITY_ERROR);
+  if (!city.ok) {
+    return city;
+  }
+
   const rawShopName = rec['shopName'];
   let shopName: string | undefined;
   if (rawShopName !== undefined && rawShopName !== null) {
@@ -677,6 +735,18 @@ export function normalizeMapPlace(
   }
   if (country !== undefined) {
     value.country = country;
+  }
+  if (street.value !== undefined) {
+    value.street = street.value;
+  }
+  if (houseNumber.value !== undefined) {
+    value.houseNumber = houseNumber.value;
+  }
+  if (postalCode.value !== undefined) {
+    value.postalCode = postalCode.value;
+  }
+  if (city.value !== undefined) {
+    value.city = city.value;
   }
   if (shopName !== undefined) {
     value.shopName = shopName;
@@ -899,6 +969,10 @@ export function toPublicMapPlace(place: StoredMapPlace): PublicMapPlace {
     category: place.category,
     techProvider: place.techProvider,
     country: place.country,
+    street: place.street,
+    houseNumber: place.houseNumber,
+    postalCode: place.postalCode,
+    city: place.city,
     shopName: place.shopName,
     supports: place.supports.map((item) => ({
       blockchain: item.blockchain,

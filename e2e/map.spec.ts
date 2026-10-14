@@ -111,6 +111,26 @@ test('Function: toPublicMapPlace — the list hides the caller id', async ({ req
   const res = await request.get('/map/places');
   const json = (await res.json()) as { places: Array<Record<string, unknown>> };
   expect(json.places.some((row) => row['externalId'] !== undefined)).toBe(false);
+  expect(
+    json.places.every(
+      (row) =>
+        Object.prototype.hasOwnProperty.call(row, 'street') &&
+        Object.prototype.hasOwnProperty.call(row, 'houseNumber') &&
+        Object.prototype.hasOwnProperty.call(row, 'postalCode') &&
+        Object.prototype.hasOwnProperty.call(row, 'city'),
+    ),
+  ).toBe(true);
+  const createdPin = json.places.find((row) => row['id'] !== undefined);
+  expect(createdPin).toBeDefined();
+  expect(
+    json.places.some(
+      (row) =>
+        row['street'] === null &&
+        row['houseNumber'] === null &&
+        row['postalCode'] === null &&
+        row['city'] === null,
+    ),
+  ).toBe(true);
 });
 
 test('Function: SqliteMapPlaceStore — the created pin is listed', async ({ request }) => {
@@ -316,6 +336,10 @@ test('Function: SqliteMapPlaceStore — an upsert that omits country keeps it', 
     lon: 8.54,
     category: 'cafe',
     country: 'CH',
+    street: 'Bahnhofstrasse',
+    houseNumber: '12',
+    postalCode: '8001',
+    city: 'Zürich',
     shopName: 'SPAR',
     supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
   };
@@ -332,12 +356,20 @@ test('Function: SqliteMapPlaceStore — an upsert that omits country keeps it', 
     places: Array<{
       name: string;
       country: string | null;
+      street: string | null;
+      houseNumber: string | null;
+      postalCode: string | null;
+      city: string | null;
       shopName: string | null;
       supports: Array<{ blockchain: string; asset: string }>;
     }>;
   };
   const created = createdList.places.find((row) => row.name === 'Keep Country Pin');
   expect(created?.country).toBe('CH');
+  expect(created?.street).toBe('Bahnhofstrasse');
+  expect(created?.houseNumber).toBe('12');
+  expect(created?.postalCode).toBe('8001');
+  expect(created?.city).toBe('Zürich');
   expect(created?.shopName).toBe('SPAR');
 
   const renamed = await request.put('/map/places', {
@@ -357,12 +389,20 @@ test('Function: SqliteMapPlaceStore — an upsert that omits country keeps it', 
     places: Array<{
       name: string;
       country: string | null;
+      street: string | null;
+      houseNumber: string | null;
+      postalCode: string | null;
+      city: string | null;
       shopName: string | null;
       supports: Array<{ blockchain: string; asset: string }>;
     }>;
   };
   const omitted = omittedList.places.find((row) => row.name === 'Keep Country Renamed');
   expect(omitted?.country).toBe('CH');
+  expect(omitted?.street).toBe('Bahnhofstrasse');
+  expect(omitted?.houseNumber).toBe('12');
+  expect(omitted?.postalCode).toBe('8001');
+  expect(omitted?.city).toBe('Zürich');
   expect(omitted?.shopName).toBeNull();
   expect(omitted?.supports).toEqual([{ blockchain: 'Ethereum', asset: 'ZCHF' }]);
 
@@ -390,6 +430,106 @@ test('Function: SqliteMapPlaceStore — an upsert that omits country keeps it', 
   const deleted = await request.delete('/map/places', {
     headers: { Authorization: 'Bearer e2e-ingest' },
     data: { origin: 'dfx', externalId: 'e2e-keep-country' },
+  });
+  expect(deleted.status()).toBe(200);
+  expect(await deleted.json()).toEqual({ deleted: true });
+});
+
+test('Function: SqliteMapPlaceStore — omitted address parts stay stored', async ({ request }) => {
+  const pin = {
+    origin: 'dfx',
+    externalId: 'e2e-keep-address',
+    name: 'Keep Address Pin',
+    lat: 47.37,
+    lon: 8.54,
+    category: 'cafe',
+    street: 'Bahnhofstrasse',
+    houseNumber: '12',
+    postalCode: '8001',
+    city: 'Zürich',
+  };
+  expect(
+    (
+      await request.post('/map/places', {
+        headers: { Authorization: 'Bearer e2e-ingest' },
+        data: pin,
+      })
+    ).status(),
+  ).toBe(201);
+
+  const again = await request.post('/map/places', {
+    headers: { Authorization: 'Bearer e2e-ingest' },
+    data: {
+      ...pin,
+      street: 'Other Street',
+      houseNumber: '99',
+      postalCode: '10115',
+      city: 'Berlin',
+    },
+  });
+  expect(again.status()).toBe(200);
+
+  const afterInsert = (await (await request.get('/map/places')).json()) as {
+    places: Array<{
+      name: string;
+      street: string | null;
+      houseNumber: string | null;
+      postalCode: string | null;
+      city: string | null;
+    }>;
+  };
+  const stored = afterInsert.places.find((row) => row.name === 'Keep Address Pin');
+  expect(stored?.street).toBe('Bahnhofstrasse');
+  expect(stored?.houseNumber).toBe('12');
+  expect(stored?.postalCode).toBe('8001');
+  expect(stored?.city).toBe('Zürich');
+
+  const bad = await request.put('/map/places', {
+    headers: { Authorization: 'Bearer e2e-ingest' },
+    data: { ...pin, street: '  ' },
+  });
+  expect(bad.status()).toBe(400);
+  expect(await bad.json()).toEqual({ error: 'Place street is invalid' });
+
+  const afterBad = (await (await request.get('/map/places')).json()) as {
+    places: Array<{
+      name: string;
+      street: string | null;
+      houseNumber: string | null;
+      postalCode: string | null;
+      city: string | null;
+    }>;
+  };
+  const unchanged = afterBad.places.find((row) => row.name === 'Keep Address Pin');
+  expect(unchanged?.street).toBe('Bahnhofstrasse');
+  expect(unchanged?.houseNumber).toBe('12');
+  expect(unchanged?.postalCode).toBe('8001');
+  expect(unchanged?.city).toBe('Zürich');
+
+  const replaced = await request.put('/map/places', {
+    headers: { Authorization: 'Bearer e2e-ingest' },
+    data: { ...pin, name: 'Keep Address Pin', street: 'Limmatquai' },
+  });
+  expect(replaced.status()).toBe(200);
+
+  const afterReplace = (await (await request.get('/map/places')).json()) as {
+    places: Array<{
+      name: string;
+      street: string | null;
+      houseNumber: string | null;
+      postalCode: string | null;
+      city: string | null;
+    }>;
+  };
+  const updated = afterReplace.places.find((row) => row.name === 'Keep Address Pin');
+  expect(updated?.street).toBe('Limmatquai');
+  expect(updated?.houseNumber).toBe('12');
+  expect(updated?.postalCode).toBe('8001');
+  expect(updated?.city).toBe('Zürich');
+
+  const deleted = await request.delete('/map/places', {
+    headers: { Authorization: 'Bearer e2e-ingest' },
+    data: { origin: 'dfx', externalId: 'e2e-keep-address' },
   });
   expect(deleted.status()).toBe(200);
   expect(await deleted.json()).toEqual({ deleted: true });

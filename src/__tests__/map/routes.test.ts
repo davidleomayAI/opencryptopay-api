@@ -310,6 +310,10 @@ describe('map routes', () => {
       category: 'groceries',
       techProvider: 'DFX.swiss',
       country: null,
+      street: null,
+      houseNumber: null,
+      postalCode: null,
+      city: null,
       shopName: null,
       supports: [],
       activity: 'none',
@@ -359,6 +363,170 @@ describe('map routes', () => {
       category: 'groceries',
       techProvider: '21.gifts',
       country: null,
+      street: null,
+      houseNumber: null,
+      postalCode: null,
+      city: null,
+      shopName: null,
+      supports: [],
+      activity: 'none',
+    });
+  });
+
+  it('returns stored address parts and keeps omitted parts on upsert', async () => {
+    const api = app({ token: 'secret' });
+    const created = await api.request('/map/places', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        ...body,
+        street: 'Bahnhofstrasse',
+        houseNumber: '12',
+        postalCode: '8001',
+        city: 'Zürich',
+      }),
+    });
+    expect(created.status).toBe(201);
+    const createdBody = (await created.json()) as { id: string };
+    const listed = (await (await api.request('/map/places')).json()) as {
+      places: Array<Record<string, unknown>>;
+    };
+    expect(listed.places[0]).toEqual({
+      id: createdBody.id,
+      origin: 'dfx',
+      name: 'SPAR',
+      lat: 47.37,
+      lon: 8.54,
+      category: 'groceries',
+      techProvider: 'DFX.swiss',
+      country: null,
+      street: 'Bahnhofstrasse',
+      houseNumber: '12',
+      postalCode: '8001',
+      city: 'Zürich',
+      shopName: null,
+      supports: [],
+      activity: 'none',
+    });
+    const updated = await api.request('/map/places', {
+      method: 'PUT',
+      headers: jsonHeaders,
+      body: JSON.stringify({ ...body, name: 'Renamed', street: 'Limmatquai' }),
+    });
+    expect(updated.status).toBe(200);
+    const after = (await (await api.request('/map/places')).json()) as {
+      places: Array<Record<string, unknown>>;
+    };
+    expect(after.places[0]).toEqual({
+      id: createdBody.id,
+      origin: 'dfx',
+      name: 'Renamed',
+      lat: 47.37,
+      lon: 8.54,
+      category: 'groceries',
+      techProvider: 'DFX.swiss',
+      country: null,
+      street: 'Limmatquai',
+      houseNumber: '12',
+      postalCode: '8001',
+      city: 'Zürich',
+      shopName: null,
+      supports: [],
+      activity: 'none',
+    });
+  });
+
+  it('rejects a bad address part and does not replace the stored parts', async () => {
+    const api = app({ token: 'secret' });
+    const created = await api.request('/map/places', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        ...body,
+        street: 'Bahnhofstrasse',
+        houseNumber: '12',
+        postalCode: '8001',
+        city: 'Zürich',
+      }),
+    });
+    expect(created.status).toBe(201);
+    const createdBody = (await created.json()) as { id: string };
+    const badStreet = await api.request('/map/places', {
+      method: 'PUT',
+      headers: jsonHeaders,
+      body: JSON.stringify({ ...body, street: '  ' }),
+    });
+    expect(badStreet.status).toBe(400);
+    expect(await badStreet.json()).toEqual({ error: 'Place street is invalid' });
+    const badHouse = await api.request('/map/places', {
+      method: 'PUT',
+      headers: jsonHeaders,
+      body: JSON.stringify({ ...body, houseNumber: 1 }),
+    });
+    expect(badHouse.status).toBe(400);
+    expect(await badHouse.json()).toEqual({ error: 'Place house number is invalid' });
+    const badPostal = await api.request('/map/places', {
+      method: 'PUT',
+      headers: jsonHeaders,
+      body: JSON.stringify({ ...body, postalCode: '' }),
+    });
+    expect(badPostal.status).toBe(400);
+    expect(await badPostal.json()).toEqual({ error: 'Place postal code is invalid' });
+    const badCity = await api.request('/map/places', {
+      method: 'PUT',
+      headers: jsonHeaders,
+      body: JSON.stringify({ ...body, city: 'bad\ncity' }),
+    });
+    expect(badCity.status).toBe(400);
+    expect(await badCity.json()).toEqual({ error: 'Place city is invalid' });
+    const listed = (await (await api.request('/map/places')).json()) as {
+      places: Array<Record<string, unknown>>;
+    };
+    expect(listed.places[0]).toEqual({
+      id: createdBody.id,
+      origin: 'dfx',
+      name: 'SPAR',
+      lat: 47.37,
+      lon: 8.54,
+      category: 'groceries',
+      techProvider: 'DFX.swiss',
+      country: null,
+      street: 'Bahnhofstrasse',
+      houseNumber: '12',
+      postalCode: '8001',
+      city: 'Zürich',
+      shopName: null,
+      supports: [],
+      activity: 'none',
+    });
+    const again = await api.request('/map/places', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        ...body,
+        street: 'Other Street',
+        houseNumber: '99',
+        postalCode: '10115',
+        city: 'Berlin',
+      }),
+    });
+    expect(again.status).toBe(200);
+    const afterInsert = (await (await api.request('/map/places')).json()) as {
+      places: Array<Record<string, unknown>>;
+    };
+    expect(afterInsert.places[0]).toEqual({
+      id: createdBody.id,
+      origin: 'dfx',
+      name: 'SPAR',
+      lat: 47.37,
+      lon: 8.54,
+      category: 'groceries',
+      techProvider: 'DFX.swiss',
+      country: null,
+      street: 'Bahnhofstrasse',
+      houseNumber: '12',
+      postalCode: '8001',
+      city: 'Zürich',
       shopName: null,
       supports: [],
       activity: 'none',
