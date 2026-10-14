@@ -35,6 +35,10 @@ describe('MemoryMapPlaceStore', () => {
     expect(first.created).toBe(true);
     expect(first.place.techProvider).toBe('DFX.swiss');
     expect(first.place.country).toBeNull();
+    expect(first.place.street).toBeNull();
+    expect(first.place.houseNumber).toBeNull();
+    expect(first.place.postalCode).toBeNull();
+    expect(first.place.city).toBeNull();
     expect(first.place.shopName).toBeNull();
     expect(first.place.supports).toEqual([]);
     expect(first.place.activity).toBe('none');
@@ -122,6 +126,10 @@ describe('MemoryMapPlaceStore', () => {
     expect(updated.place.paymentMethods).toBe('onchain');
     expect(updated.place.techProvider).toBe('DFX.swiss');
     expect(updated.place.country).toBe('DE');
+    expect(updated.place.street).toBeNull();
+    expect(updated.place.houseNumber).toBeNull();
+    expect(updated.place.postalCode).toBeNull();
+    expect(updated.place.city).toBeNull();
     expect(updated.place.shopName).toBe('Migros');
   });
 
@@ -273,11 +281,15 @@ describe('MemoryMapPlaceStore', () => {
     ]);
   });
 
-  it('does not replace country, shop name, or supports on a repeated insert', () => {
+  it('does not replace country, address parts, shop name, or supports on a repeated insert', () => {
     const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
     store.insertIfNew({
       ...input,
       country: 'CH',
+      street: 'Bahnhofstrasse',
+      houseNumber: '12',
+      postalCode: '8001',
+      city: 'Zürich',
       shopName: 'SPAR',
       supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
     });
@@ -285,29 +297,74 @@ describe('MemoryMapPlaceStore', () => {
       ...input,
       name: 'Other',
       country: 'DE',
+      street: 'Other Street',
+      houseNumber: '99',
+      postalCode: '10115',
+      city: 'Berlin',
       shopName: 'Migros',
       supports: [{ blockchain: 'Bitcoin', asset: 'BTC' }],
     });
     expect(again.created).toBe(false);
     expect(again.place.name).toBe('SPAR');
     expect(again.place.country).toBe('CH');
+    expect(again.place.street).toBe('Bahnhofstrasse');
+    expect(again.place.houseNumber).toBe('12');
+    expect(again.place.postalCode).toBe('8001');
+    expect(again.place.city).toBe('Zürich');
     expect(again.place.shopName).toBe('SPAR');
     expect(again.place.supports).toEqual([{ blockchain: 'Ethereum', asset: 'ZCHF' }]);
   });
 
-  it('keeps an omitted country on upsert, clears an omitted shop name, and leaves supports', () => {
+  it('keeps an omitted country and address parts on upsert, clears an omitted shop name, and leaves supports', () => {
     const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
     store.upsert({
       ...input,
       country: 'CH',
+      street: 'Bahnhofstrasse',
+      houseNumber: '12',
+      postalCode: '8001',
+      city: 'Zürich',
       shopName: 'SPAR',
       supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
     });
     const omitted = store.upsert({ ...input, name: 'Other' });
     expect(omitted.place.name).toBe('Other');
     expect(omitted.place.country).toBe('CH');
+    expect(omitted.place.street).toBe('Bahnhofstrasse');
+    expect(omitted.place.houseNumber).toBe('12');
+    expect(omitted.place.postalCode).toBe('8001');
+    expect(omitted.place.city).toBe('Zürich');
     expect(omitted.place.shopName).toBeNull();
     expect(omitted.place.supports).toEqual([{ blockchain: 'Ethereum', asset: 'ZCHF' }]);
+  });
+
+  it('replaces a sent address part on upsert and leaves omitted parts', () => {
+    const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
+    store.upsert({
+      ...input,
+      street: 'Bahnhofstrasse',
+      houseNumber: '12',
+      postalCode: '8001',
+      city: 'Zürich',
+    });
+    const replaced = store.upsert({
+      ...input,
+      street: 'Limmatquai',
+      city: 'Winterthur',
+    });
+    expect(replaced.place.street).toBe('Limmatquai');
+    expect(replaced.place.houseNumber).toBe('12');
+    expect(replaced.place.postalCode).toBe('8001');
+    expect(replaced.place.city).toBe('Winterthur');
+    const numbered = store.upsert({
+      ...input,
+      houseNumber: '4',
+      postalCode: '8400',
+    });
+    expect(numbered.place.street).toBe('Limmatquai');
+    expect(numbered.place.houseNumber).toBe('4');
+    expect(numbered.place.postalCode).toBe('8400');
+    expect(numbered.place.city).toBe('Winterthur');
   });
 
   it('clears supports on upsert when the body sends an empty list', () => {

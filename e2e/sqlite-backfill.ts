@@ -4,7 +4,34 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { placeActivity } from '../src/lib/map/place';
 import { SqliteMapPlaceStore } from '../src/lib/map/sqlite';
-import { MAP_PLACE_SCHEMA_SQL } from '../src/lib/map/store';
+
+const OLD_MAP_PLACE_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS map_place (
+  id TEXT PRIMARY KEY,
+  origin TEXT NOT NULL,
+  external_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  lat REAL NOT NULL,
+  lon REAL NOT NULL,
+  category TEXT NOT NULL,
+  payment_methods TEXT,
+  created_at TEXT NOT NULL,
+  tech_provider TEXT NOT NULL DEFAULT 'DFX.swiss',
+  country TEXT,
+  shop_name TEXT,
+  last_transaction_at TEXT,
+  UNIQUE (origin, external_id)
+);
+CREATE TABLE IF NOT EXISTS map_place_support (
+  place_id TEXT NOT NULL,
+  blockchain TEXT NOT NULL,
+  asset TEXT NOT NULL,
+  PRIMARY KEY (place_id, blockchain, asset),
+  FOREIGN KEY (place_id) REFERENCES map_place(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS map_place_country ON map_place(country);
+CREATE INDEX IF NOT EXISTS map_place_shop_name ON map_place(shop_name);
+CREATE INDEX IF NOT EXISTS map_place_support_lookup
+  ON map_place_support(blockchain, asset, place_id)`;
 
 const OLD_MAP_PLACE_TABLE = `CREATE TABLE IF NOT EXISTS map_place (
   id TEXT PRIMARY KEY,
@@ -49,7 +76,7 @@ let store: SqliteMapPlaceStore | undefined;
 let countryOk = false;
 try {
   seed = new Database(filename);
-  const statements = MAP_PLACE_SCHEMA_SQL.split(';')
+  const statements = OLD_MAP_PLACE_SCHEMA_SQL.split(';')
     .map((part) => part.trim())
     .filter((part) => part !== '');
   for (const sql of statements) {
@@ -214,6 +241,20 @@ try {
     null,
     null,
   );
+  insert.run(
+    'single-word-row',
+    'dfx',
+    'single-word',
+    'Cafe',
+    47.37,
+    8.54,
+    'groceries',
+    null,
+    '2026-01-12T00:00:00.000Z',
+    'DFX.swiss',
+    null,
+    null,
+  );
   seed.close();
   seed = undefined;
   store = new SqliteMapPlaceStore(filename);
@@ -229,6 +270,14 @@ try {
   const giftsKeMachakos = listed.find((row) => row.externalId === 'gifts-ke-machakos');
   const giftsKeMakueni = listed.find((row) => row.externalId === 'gifts-ke-makueni');
   const giftsOther = listed.find((row) => row.externalId === 'gifts-other');
+  const singleWord = listed.find((row) => row.externalId === 'single-word');
+  const addressEmpty = (row: {
+    street: string | null;
+    houseNumber: string | null;
+    postalCode: string | null;
+    city: string | null;
+  }): boolean =>
+    row.street === null && row.houseNumber === null && row.postalCode === null && row.city === null;
   if (
     sparNull !== undefined &&
     dfxNull !== undefined &&
@@ -241,6 +290,7 @@ try {
     giftsKeMachakos !== undefined &&
     giftsKeMakueni !== undefined &&
     giftsOther !== undefined &&
+    singleWord !== undefined &&
     sparNull.shopName === 'SPAR' &&
     sparNull.country === null &&
     dfxNull.shopName === null &&
@@ -255,7 +305,11 @@ try {
     giftsPhRose.country === 'PH' &&
     giftsKeMachakos.country === 'KE' &&
     giftsKeMakueni.country === 'KE' &&
-    giftsOther.country === null
+    giftsKeMakueni.name === 'bitcoinmakueni' &&
+    giftsOther.country === null &&
+    singleWord.name === 'Cafe' &&
+    addressEmpty(singleWord) &&
+    listed.every(addressEmpty)
   ) {
     countryOk = true;
   } else {
@@ -282,6 +336,16 @@ try {
         'gifts-ke-machakos': giftsKeMachakos === undefined ? null : giftsKeMachakos.country,
         'gifts-ke-makueni': giftsKeMakueni === undefined ? null : giftsKeMakueni.country,
         'gifts-other': giftsOther === undefined ? null : giftsOther.country,
+        'single-word':
+          singleWord === undefined
+            ? null
+            : {
+                name: singleWord.name,
+                street: singleWord.street,
+                houseNumber: singleWord.houseNumber,
+                postalCode: singleWord.postalCode,
+                city: singleWord.city,
+              },
       })}\n`,
     );
     process.exitCode = 1;

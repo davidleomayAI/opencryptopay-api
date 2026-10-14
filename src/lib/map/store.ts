@@ -22,6 +22,10 @@ export const MAP_PLACE_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS map_place (
   created_at TEXT NOT NULL,
   tech_provider TEXT NOT NULL DEFAULT 'DFX.swiss',
   country TEXT,
+  street TEXT,
+  house_number TEXT,
+  postal_code TEXT,
+  city TEXT,
   shop_name TEXT,
   last_transaction_at TEXT,
   activity TEXT NOT NULL DEFAULT 'none',
@@ -136,6 +140,10 @@ function toStoredPlace(input: MapPlaceInput, id: string, createdAt: string): Sto
     paymentMethods: input.paymentMethods,
     techProvider: input.techProvider ?? DEFAULT_TECH_PROVIDER,
     country: input.country ?? null,
+    street: input.street ?? null,
+    houseNumber: input.houseNumber ?? null,
+    postalCode: input.postalCode ?? null,
+    city: input.city ?? null,
     shopName: input.shopName ?? null,
     supports: storedSupports(input.supports ?? []),
     lastTransactionAt: null,
@@ -245,6 +253,18 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
     existing.paymentMethods = input.paymentMethods;
     if (input.country !== undefined) {
       existing.country = input.country;
+    }
+    if (input.street !== undefined) {
+      existing.street = input.street;
+    }
+    if (input.houseNumber !== undefined) {
+      existing.houseNumber = input.houseNumber;
+    }
+    if (input.postalCode !== undefined) {
+      existing.postalCode = input.postalCode;
+    }
+    if (input.city !== undefined) {
+      existing.city = input.city;
     }
     existing.shopName = input.shopName ?? null;
     if (input.techProvider !== undefined) {

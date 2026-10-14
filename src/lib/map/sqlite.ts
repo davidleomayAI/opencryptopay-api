@@ -10,7 +10,7 @@ import {
 import { MAP_PLACE_SCHEMA_SQL, type MapPlaceListFilter, type MapPlaceStore } from '@/lib/map/store';
 
 const MAP_PLACE_COLUMNS =
-  'id, origin, external_id, name, lat, lon, category, payment_methods, created_at, tech_provider, country, shop_name, last_transaction_at, activity';
+  'id, origin, external_id, name, lat, lon, category, payment_methods, created_at, tech_provider, country, street, house_number, postal_code, city, shop_name, last_transaction_at, activity';
 
 type MapPlaceRow = {
   id: string;
@@ -24,6 +24,10 @@ type MapPlaceRow = {
   created_at: string;
   tech_provider: string;
   country: string | null;
+  street: string | null;
+  house_number: string | null;
+  postal_code: string | null;
+  city: string | null;
   shop_name: string | null;
   last_transaction_at: string | null;
   activity: PlaceActivity;
@@ -73,6 +77,10 @@ function mapRow(row: MapPlaceRow, supports: MapPlaceSupport[]): StoredMapPlace {
     createdAt: row.created_at,
     techProvider: row.tech_provider,
     country: row.country,
+    street: row.street,
+    houseNumber: row.house_number,
+    postalCode: row.postal_code,
+    city: row.city,
     shopName: row.shop_name,
     lastTransactionAt: row.last_transaction_at,
     activity: row.activity,
@@ -267,8 +275,9 @@ function replaceSupportRows(db: Database, placeId: string, supports: MapPlaceSup
 
 /**
  * SQLite {@link MapPlaceStore}. Opened by the process entrypoint.
- * Insert, list, delete, and an upsert that omits or replaces country
- * are exercised by the HTTP end-to-end run.
+ * Insert, list, delete, and an upsert that omits or replaces country,
+ * street, house number, postal code, and city are exercised by the HTTP
+ * end-to-end run.
  * The SPAR shop-name backfill, the country backfill (null country only),
  * and the activity backfill are exercised by e2e/sqlite-backfill.ts.
  */
@@ -298,6 +307,18 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
         }
         if (!columns.some((column) => column.name === 'country')) {
           this.#db.exec('ALTER TABLE map_place ADD COLUMN country TEXT');
+        }
+        if (!columns.some((column) => column.name === 'street')) {
+          this.#db.exec('ALTER TABLE map_place ADD COLUMN street TEXT');
+        }
+        if (!columns.some((column) => column.name === 'house_number')) {
+          this.#db.exec('ALTER TABLE map_place ADD COLUMN house_number TEXT');
+        }
+        if (!columns.some((column) => column.name === 'postal_code')) {
+          this.#db.exec('ALTER TABLE map_place ADD COLUMN postal_code TEXT');
+        }
+        if (!columns.some((column) => column.name === 'city')) {
+          this.#db.exec('ALTER TABLE map_place ADD COLUMN city TEXT');
         }
         if (!columns.some((column) => column.name === 'shop_name')) {
           this.#db.exec('ALTER TABLE map_place ADD COLUMN shop_name TEXT');
@@ -335,15 +356,19 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
     const createdAt = new Date().toISOString();
     const techProvider = input.techProvider ?? 'DFX.swiss';
     const country = input.country ?? null;
+    const street = input.street ?? null;
+    const houseNumber = input.houseNumber ?? null;
+    const postalCode = input.postalCode ?? null;
+    const city = input.city ?? null;
     const shopName = input.shopName ?? null;
     const supports = storedSupports(input.supports ?? []);
     const result = this.#db
       .query(
         `INSERT INTO map_place (
            id, origin, external_id, name, lat, lon, category, payment_methods,
-           created_at, tech_provider, country, shop_name, last_transaction_at,
-           activity, activity_until
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           created_at, tech_provider, country, street, house_number, postal_code, city,
+           shop_name, last_transaction_at, activity, activity_until
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (origin, external_id) DO NOTHING`,
       )
       .run(
@@ -358,6 +383,10 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
         createdAt,
         techProvider,
         country,
+        street,
+        houseNumber,
+        postalCode,
+        city,
         shopName,
         null,
         'none',
@@ -377,6 +406,10 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
           paymentMethods: input.paymentMethods,
           techProvider,
           country,
+          street,
+          houseNumber,
+          postalCode,
+          city,
           shopName,
           supports: supports.map((item) => ({
             blockchain: item.blockchain,
@@ -420,11 +453,15 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
     const techProvider =
       input.techProvider !== undefined ? input.techProvider : existing.tech_provider;
     const country = input.country !== undefined ? input.country : existing.country;
+    const street = input.street !== undefined ? input.street : existing.street;
+    const houseNumber = input.houseNumber !== undefined ? input.houseNumber : existing.house_number;
+    const postalCode = input.postalCode !== undefined ? input.postalCode : existing.postal_code;
+    const city = input.city !== undefined ? input.city : existing.city;
     const shopName = input.shopName ?? null;
     this.#db
       .query(
         `UPDATE map_place
-         SET name = ?, lat = ?, lon = ?, category = ?, payment_methods = ?, tech_provider = ?, country = ?, shop_name = ?
+         SET name = ?, lat = ?, lon = ?, category = ?, payment_methods = ?, tech_provider = ?, country = ?, street = ?, house_number = ?, postal_code = ?, city = ?, shop_name = ?
          WHERE origin = ? AND external_id = ?`,
       )
       .run(
@@ -435,6 +472,10 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
         input.paymentMethods,
         techProvider,
         country,
+        street,
+        houseNumber,
+        postalCode,
+        city,
         shopName,
         input.origin,
         input.externalId,
@@ -453,6 +494,10 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
         payment_methods: input.paymentMethods,
         tech_provider: techProvider,
         country,
+        street,
+        house_number: houseNumber,
+        postal_code: postalCode,
+        city,
         shop_name: shopName,
       }),
     };
