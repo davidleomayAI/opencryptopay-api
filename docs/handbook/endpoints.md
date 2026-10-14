@@ -1,5 +1,12 @@
 # Endpoints
 
+## Endpoint: GET /
+
+- **Purpose:** Welcome page for a browser that opens the API host. It names the service and links the public place list, the filter list, the health check, and the website. The page is static and is not a data API.
+- **Errors:** No error body. A method other than GET is not this page.
+- **Used by:** A person who opens the API host in a browser.
+- **Auth:** none.
+
 ## Endpoint: GET /healthz
 
 - **Purpose:** Process health for the map API. Returns `{ ok: true }`.

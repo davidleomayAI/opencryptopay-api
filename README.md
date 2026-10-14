@@ -16,7 +16,7 @@ bun run start
 
 The process listens on port `3000` unless `PORT` is set. The database file is `data/places.sqlite` unless `PLACE_DB` is set.
 
-`GET /healthz` returns `{ "ok": true }`.
+`GET /` returns a short HTML welcome page. `GET /healthz` returns `{ "ok": true }`.
 
 ## Branches
 
