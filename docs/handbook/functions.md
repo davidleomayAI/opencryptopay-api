@@ -126,9 +126,16 @@
 - **Returns / side effects:** A Hono app with one public GET. No I/O.
 - **Used by:** `createApp`, mounted at `/healthz`.
 
+## Function: welcomeRoutes
+
+- **Purpose:** `GET /` returns a static HTML welcome page for the API host. It links `GET /map/places`, `GET /map/filters`, `GET /healthz`, and the public website. It does not read the store.
+- **Inputs:** None.
+- **Returns / side effects:** A Hono app with one public GET. No I/O.
+- **Used by:** `createApp`, mounted at `/`.
+
 ## Function: createApp
 
-- **Purpose:** Build the HTTP application: health and the map routes.
+- **Purpose:** Build the HTTP application: the welcome page, health, and the map routes.
 - **Inputs:** Store, optional ingest token, environment, fetch, and an optional clock. When the clock is omitted the routes use `Date.now`.
 - **Returns / side effects:** A Hono app. It does not listen and does not open a second database.
 - **Used by:** The process entrypoint and the tests.

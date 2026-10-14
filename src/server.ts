@@ -3,6 +3,7 @@ import type { FetchLike } from '@/lib/map/btcmap';
 import type { MapPlaceStore } from '@/lib/map/store';
 import { healthRoutes } from '@/routes/health';
 import { mapRoutes } from '@/routes/map';
+import { welcomeRoutes } from '@/routes/welcome';
 
 export type AppDeps = {
   store: MapPlaceStore;
@@ -15,7 +16,8 @@ export type AppDeps = {
 };
 
 /**
- * HTTP API. `GET /healthz`, `GET /map/places`, and `GET /map/filters` are public.
+ * HTTP API. `GET /` is the welcome page. `GET /healthz`, `GET /map/places`, and
+ * `GET /map/filters` are public.
  * `POST /map/places` creates a pin once. `PUT /map/places` updates a pin.
  * `DELETE /map/places` removes a pin.
  *
@@ -24,6 +26,7 @@ export type AppDeps = {
  */
 export function createApp(deps: AppDeps): Hono {
   const app = new Hono();
+  app.route('/', welcomeRoutes());
   app.route('/healthz', healthRoutes());
   app.route(
     '/map',

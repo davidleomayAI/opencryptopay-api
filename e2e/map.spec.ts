@@ -11,6 +11,18 @@ const body = {
   paymentMethods: 'lightning',
 };
 
+test('Function: welcomeRoutes — GET / is a welcome page', async ({ request }) => {
+  const res = await request.get('/');
+  expect(res.status()).toBe(200);
+  expect(res.headers()['content-type'] ?? '').toContain('text/html');
+  const html = await res.text();
+  expect(html).toContain('<h1>Welcome</h1>');
+  expect(html).toContain('href="/map/places"');
+  expect(html).toContain('href="/map/filters"');
+  expect(html).toContain('href="/healthz"');
+  expect(html).toContain('https://opencryptopay.io');
+});
+
 test('Function: healthRoutes — GET /healthz is public', async ({ request }) => {
   const res = await request.get('/healthz');
   expect(res.status()).toBe(200);

@@ -35,6 +35,21 @@ function app(opts: {
 }
 
 describe('map routes', () => {
+  it('serves a welcome page and leaves unknown paths as 404', async () => {
+    const api = app({});
+    const page = await api.request('/');
+    expect(page.status).toBe(200);
+    expect(page.headers.get('content-type') ?? '').toContain('text/html');
+    const html = await page.text();
+    expect(html).toContain('<h1>Welcome</h1>');
+    expect(html).toContain('href="/map/places"');
+    expect(html).toContain('href="/map/filters"');
+    expect(html).toContain('href="/healthz"');
+    expect(html).toContain('https://opencryptopay.io');
+    expect((await api.request('/no-such')).status).toBe(404);
+    expect((await api.request('/', { method: 'POST' })).status).toBe(404);
+  });
+
   it('serves health and an empty public list', async () => {
     const api = app({});
     expect((await api.request('/healthz')).status).toBe(200);
