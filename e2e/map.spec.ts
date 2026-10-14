@@ -701,6 +701,77 @@ test('Function: placeActivity — a recorded transaction is within7Days', async 
   expect(await missing.json()).toEqual({ error: 'Place not found' });
 });
 
+test('Function: placeActivity — five UTC days in the window are daily', async ({ request }) => {
+  const pin = {
+    origin: 'dfx',
+    externalId: 'e2e-activity-daily',
+    name: 'Activity Daily Pin',
+    lat: 47.37,
+    lon: 8.54,
+    category: 'groceries',
+  };
+  expect(
+    (
+      await request.post('/map/places', {
+        headers: { Authorization: 'Bearer e2e-ingest' },
+        data: pin,
+      })
+    ).status(),
+  ).toBe(201);
+  const nowMs = Date.now();
+  let lastActivity: unknown;
+  for (let i = 4; i >= 0; i -= 1) {
+    const occurredAt = new Date(nowMs - i * 24 * 60 * 60 * 1000).toISOString();
+    const recorded = await request.post('/map/places/transactions', {
+      headers: { Authorization: 'Bearer e2e-ingest' },
+      data: { origin: 'dfx', externalId: 'e2e-activity-daily', occurredAt },
+    });
+    expect(recorded.status()).toBe(200);
+    lastActivity = await recorded.json();
+  }
+  expect(lastActivity).toEqual({ activity: 'daily' });
+  const listed = await request.get('/map/places');
+  const json = (await listed.json()) as { places: Array<{ name: string; activity: string }> };
+  expect(
+    json.places.some((row) => row.name === 'Activity Daily Pin' && row.activity === 'daily'),
+  ).toBe(true);
+});
+
+test('Function: placeActivity — an instant older than 30 days is olderThan30Days', async ({
+  request,
+}) => {
+  const pin = {
+    origin: 'dfx',
+    externalId: 'e2e-activity-old',
+    name: 'Activity Old Pin',
+    lat: 47.37,
+    lon: 8.54,
+    category: 'groceries',
+  };
+  expect(
+    (
+      await request.post('/map/places', {
+        headers: { Authorization: 'Bearer e2e-ingest' },
+        data: pin,
+      })
+    ).status(),
+  ).toBe(201);
+  const occurredAt = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
+  const recorded = await request.post('/map/places/transactions', {
+    headers: { Authorization: 'Bearer e2e-ingest' },
+    data: { origin: 'dfx', externalId: 'e2e-activity-old', occurredAt },
+  });
+  expect(recorded.status()).toBe(200);
+  expect(await recorded.json()).toEqual({ activity: 'olderThan30Days' });
+  const listed = await request.get('/map/places');
+  const json = (await listed.json()) as { places: Array<{ name: string; activity: string }> };
+  expect(
+    json.places.some(
+      (row) => row.name === 'Activity Old Pin' && row.activity === 'olderThan30Days',
+    ),
+  ).toBe(true);
+});
+
 test('Function: normalizePlaceTransaction — a future occurredAt beyond skew is 400', async ({
   request,
 }) => {

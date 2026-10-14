@@ -9,7 +9,6 @@ import {
   normalizeMapPlaceKey,
   normalizePlaceOrigin,
   normalizePlaceTransaction,
-  placeActivity,
   toPublicMapPlace,
 } from '@/lib/map/place';
 import type { MapPlaceListFilter, MapPlaceStore } from '@/lib/map/store';
@@ -95,8 +94,7 @@ export function mapRoutes(deps: MapRouteDeps): Hono {
     if (origin !== undefined) {
       filter.origin = origin;
     }
-    const nowMs = now();
-    const places = deps.store.list(limit, filter).map((place) => toPublicMapPlace(place, nowMs));
+    const places = deps.store.list(limit, filter).map((place) => toPublicMapPlace(place));
     return c.json({ places });
   });
 
@@ -191,11 +189,12 @@ export function mapRoutes(deps: MapRouteDeps): Hono {
       parsed.value.origin,
       parsed.value.externalId,
       parsed.value.occurredAt,
+      nowMs,
     );
     if (place === undefined) {
       return c.json({ error: 'Place not found' }, 404);
     }
-    return c.json({ activity: placeActivity(place.lastTransactionAt, nowMs) });
+    return c.json({ activity: place.activity });
   });
 
   return app;

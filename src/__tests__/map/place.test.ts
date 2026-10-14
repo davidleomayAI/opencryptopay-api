@@ -538,29 +538,99 @@ describe('normalizeMapPlaceKey', () => {
 
 describe('placeActivity', () => {
   const nowMs = Date.parse('2026-10-08T00:00:00.000Z');
+  const seven = 7 * 24 * 60 * 60 * 1000;
+  const thirty = 30 * 24 * 60 * 60 * 1000;
 
   it('classifies null, unparseable, future, and the 7-day and 30-day bounds', () => {
-    expect(placeActivity(null, nowMs)).toBe('none');
-    expect(placeActivity('not-a-date', nowMs)).toBe('none');
-    expect(placeActivity(new Date(nowMs + 1).toISOString(), nowMs)).toBe('within7Days');
-    expect(placeActivity(new Date(nowMs - 3 * 24 * 60 * 60 * 1000).toISOString(), nowMs)).toBe(
-      'within7Days',
-    );
-    expect(placeActivity(new Date(nowMs - 7 * 24 * 60 * 60 * 1000).toISOString(), nowMs)).toBe(
-      'within7Days',
-    );
+    expect(placeActivity(null, [], nowMs)).toEqual({ activity: 'none', until: null });
+    expect(placeActivity('not-a-date', [], nowMs)).toEqual({ activity: 'none', until: null });
+    const future = new Date(nowMs + 1).toISOString();
+    expect(placeActivity(future, [], nowMs)).toEqual({
+      activity: 'within7Days',
+      until: new Date(nowMs + 1 + seven + 1).toISOString(),
+    });
+    const threeDays = new Date(nowMs - 3 * 24 * 60 * 60 * 1000).toISOString();
+    expect(placeActivity(threeDays, [], nowMs)).toEqual({
+      activity: 'within7Days',
+      until: new Date(nowMs - 3 * 24 * 60 * 60 * 1000 + seven + 1).toISOString(),
+    });
+    const sevenDays = new Date(nowMs - seven).toISOString();
+    expect(placeActivity(sevenDays, [], nowMs)).toEqual({
+      activity: 'within7Days',
+      until: new Date(nowMs + 1).toISOString(),
+    });
+    const sevenPlus = new Date(nowMs - (seven + 1)).toISOString();
+    expect(placeActivity(sevenPlus, [], nowMs)).toEqual({
+      activity: 'within30Days',
+      until: new Date(nowMs - (seven + 1) + thirty + 1).toISOString(),
+    });
+    const fifteenDays = new Date(nowMs - 15 * 24 * 60 * 60 * 1000).toISOString();
+    expect(placeActivity(fifteenDays, [], nowMs)).toEqual({
+      activity: 'within30Days',
+      until: new Date(nowMs - 15 * 24 * 60 * 60 * 1000 + thirty + 1).toISOString(),
+    });
+    const thirtyDays = new Date(nowMs - thirty).toISOString();
+    expect(placeActivity(thirtyDays, [], nowMs)).toEqual({
+      activity: 'within30Days',
+      until: new Date(nowMs + 1).toISOString(),
+    });
+    const thirtyPlus = new Date(nowMs - (thirty + 1)).toISOString();
+    expect(placeActivity(thirtyPlus, [], nowMs)).toEqual({
+      activity: 'olderThan30Days',
+      until: null,
+    });
+  });
+
+  it('treats 4 distinct UTC days as not daily and 5 as daily', () => {
+    const four = ['2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08'];
+    const recent = new Date(nowMs).toISOString();
+    expect(placeActivity(recent, four, nowMs)).toEqual({
+      activity: 'within7Days',
+      until: new Date(nowMs + seven + 1).toISOString(),
+    });
+    const five = ['2026-10-04', '2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08'];
+    expect(placeActivity(recent, five, nowMs)).toEqual({
+      activity: 'daily',
+      until: '2026-10-11T00:00:00.000Z',
+    });
+    expect(placeActivity('not-a-date', five, nowMs).activity).toBe('daily');
+    const six = ['2026-10-03', ...five];
+    expect(placeActivity(null, six, nowMs)).toEqual({
+      activity: 'daily',
+      until: '2026-10-11T00:00:00.000Z',
+    });
+  });
+
+  it('counts the same UTC day twice as one day and ignores out-of-window strings', () => {
+    const recent = new Date(nowMs).toISOString();
+    const duplicated = ['2026-10-08', '2026-10-08', '2026-10-07', '2026-10-06', '2026-10-05'];
+    expect(placeActivity(recent, duplicated, nowMs).activity).toBe('within7Days');
+    const withOutside = [
+      '2026-10-01',
+      '2026-10-09',
+      '2026-10-8',
+      'not-a-date',
+      '2026-10-08T00:00:00.000Z',
+      '2026-10-05',
+      '2026-10-06',
+      '2026-10-07',
+      '2026-10-08',
+    ];
+    expect(placeActivity(recent, withOutside, nowMs).activity).toBe('within7Days');
+    expect(placeActivity(recent, [...withOutside, '2026-10-04'], nowMs)).toEqual({
+      activity: 'daily',
+      until: '2026-10-11T00:00:00.000Z',
+    });
     expect(
-      placeActivity(new Date(nowMs - (7 * 24 * 60 * 60 * 1000 + 1)).toISOString(), nowMs),
-    ).toBe('within30Days');
-    expect(placeActivity(new Date(nowMs - 15 * 24 * 60 * 60 * 1000).toISOString(), nowMs)).toBe(
-      'within30Days',
-    );
-    expect(placeActivity(new Date(nowMs - 30 * 24 * 60 * 60 * 1000).toISOString(), nowMs)).toBe(
-      'within30Days',
-    );
-    expect(
-      placeActivity(new Date(nowMs - (30 * 24 * 60 * 60 * 1000 + 1)).toISOString(), nowMs),
-    ).toBe('none');
+      placeActivity(
+        recent,
+        ['2026-10-02', '2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08'],
+        nowMs,
+      ),
+    ).toEqual({
+      activity: 'daily',
+      until: '2026-10-09T00:00:00.000Z',
+    });
   });
 });
 
@@ -665,8 +735,6 @@ describe('normalizePlaceTransaction', () => {
 });
 
 describe('toPublicMapPlace', () => {
-  const nowMs = Date.parse('2026-09-26T00:00:00.000Z');
-
   it('omits the caller id and payment methods', () => {
     const stored: StoredMapPlace = {
       ...valid,
@@ -677,8 +745,9 @@ describe('toPublicMapPlace', () => {
       shopName: null,
       supports: [],
       lastTransactionAt: null,
+      activity: 'none',
     };
-    expect(toPublicMapPlace(stored, nowMs)).toEqual({
+    expect(toPublicMapPlace(stored)).toEqual({
       id: 'id-1',
       origin: 'dfx',
       name: 'SPAR',
@@ -704,8 +773,9 @@ describe('toPublicMapPlace', () => {
       shopName: 'SPAR',
       supports,
       lastTransactionAt: null,
+      activity: 'daily',
     };
-    const publicPlace = toPublicMapPlace(stored, nowMs);
+    const publicPlace = toPublicMapPlace(stored);
     expect(publicPlace).toEqual({
       id: 'id-1',
       origin: 'dfx',
@@ -717,7 +787,7 @@ describe('toPublicMapPlace', () => {
       country: 'CH',
       shopName: 'SPAR',
       supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
-      activity: 'none',
+      activity: 'daily',
     });
     publicPlace.supports.push({ blockchain: 'Polygon', asset: 'ETH' });
     expect(stored.supports).toEqual([{ blockchain: 'Ethereum', asset: 'ZCHF' }]);

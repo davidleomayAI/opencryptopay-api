@@ -24,6 +24,8 @@ export type MapPlaceInput = {
   supports?: MapPlaceSupport[];
 };
 
+export type PlaceActivity = 'daily' | 'within7Days' | 'within30Days' | 'olderThan30Days' | 'none';
+
 export type StoredMapPlace = Omit<
   MapPlaceInput,
   'techProvider' | 'country' | 'shopName' | 'supports'
@@ -35,6 +37,7 @@ export type StoredMapPlace = Omit<
   shopName: string | null;
   supports: MapPlaceSupport[];
   lastTransactionAt: string | null;
+  activity: PlaceActivity;
 };
 
 /** Fields the public map may show. The caller's own id stays off this list. */
@@ -49,7 +52,7 @@ export type PublicMapPlace = {
   country: string | null;
   shopName: string | null;
   supports: MapPlaceSupport[];
-  activity: 'within7Days' | 'within30Days' | 'none';
+  activity: PlaceActivity;
 };
 
 /** Query fields that restrict GET /map/places, all optional. */
@@ -708,32 +711,83 @@ export function normalizeMapPlaceKey(
   return { ok: true, value: { origin: origin.value, externalId: externalId.value } };
 }
 
+const PAYMENT_DAY = /^\d{4}-\d{2}-\d{2}$/;
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+function utcDayFromMs(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+function shiftUtcDay(day: string, deltaDays: number): string {
+  const year = Number(day.slice(0, 4));
+  const month = Number(day.slice(5, 7));
+  const date = Number(day.slice(8, 10));
+  return new Date(Date.UTC(year, month - 1, date + deltaDays)).toISOString().slice(0, 10);
+}
+
+function utcMidnightPlusDays(day: string, deltaDays: number): string {
+  const year = Number(day.slice(0, 4));
+  const month = Number(day.slice(5, 7));
+  const date = Number(day.slice(8, 10));
+  return new Date(Date.UTC(year, month - 1, date + deltaDays)).toISOString();
+}
+
+function countedPaymentDays(paymentDays: readonly string[], nowMs: number): string[] {
+  const end = utcDayFromMs(nowMs);
+  const start = shiftUtcDay(end, -6);
+  const unique = new Set<string>();
+  for (const day of paymentDays) {
+    if (!PAYMENT_DAY.test(day)) {
+      continue;
+    }
+    if (day < start || day > end) {
+      continue;
+    }
+    unique.add(day);
+  }
+  return [...unique].sort();
+}
+
 /**
- * Classify a stored transaction instant relative to the request clock.
+ * Classify a stored transaction instant and payment days relative to the maintenance clock.
  *
  * @param lastTransactionAt - Stored instant, or null when none.
- * @param nowMs - Request clock in milliseconds.
- * @returns One of the three mutually exclusive activity buckets.
+ * @param paymentDays - Stored UTC date strings. Invalid and out-of-window values are ignored.
+ * @param nowMs - Maintenance clock in milliseconds.
+ * @returns The activity token and the instant when it next needs refresh, or null.
  */
 export function placeActivity(
   lastTransactionAt: string | null,
+  paymentDays: readonly string[],
   nowMs: number,
-): 'within7Days' | 'within30Days' | 'none' {
+): { activity: PlaceActivity; until: string | null } {
+  const counted = countedPaymentDays(paymentDays, nowMs);
+  const pivot = counted.find((_, index) => index === counted.length - 5);
+  if (pivot !== undefined) {
+    return { activity: 'daily', until: utcMidnightPlusDays(pivot, 7) };
+  }
   if (lastTransactionAt === null) {
-    return 'none';
+    return { activity: 'none', until: null };
   }
-  const parsed = Date.parse(lastTransactionAt);
-  if (!Number.isFinite(parsed)) {
-    return 'none';
+  const lastMs = Date.parse(lastTransactionAt);
+  if (!Number.isFinite(lastMs)) {
+    return { activity: 'none', until: null };
   }
-  const age = nowMs - parsed;
-  if (age <= 7 * 24 * 60 * 60 * 1000) {
-    return 'within7Days';
+  const age = nowMs - lastMs;
+  if (age <= SEVEN_DAYS_MS) {
+    return {
+      activity: 'within7Days',
+      until: new Date(lastMs + SEVEN_DAYS_MS + 1).toISOString(),
+    };
   }
-  if (age <= 30 * 24 * 60 * 60 * 1000) {
-    return 'within30Days';
+  if (age <= THIRTY_DAYS_MS) {
+    return {
+      activity: 'within30Days',
+      until: new Date(lastMs + THIRTY_DAYS_MS + 1).toISOString(),
+    };
   }
-  return 'none';
+  return { activity: 'olderThan30Days', until: null };
 }
 
 /**
@@ -833,10 +887,9 @@ export function normalizeMapPlaceFilter(
  * Drop fields that only the ingest caller needs.
  *
  * @param place - Stored pin.
- * @param nowMs - Request clock in milliseconds.
- * @returns The public map row, including activity.
+ * @returns The public map row, including the stored activity.
  */
-export function toPublicMapPlace(place: StoredMapPlace, nowMs: number): PublicMapPlace {
+export function toPublicMapPlace(place: StoredMapPlace): PublicMapPlace {
   return {
     id: place.id,
     origin: place.origin,
@@ -851,6 +904,6 @@ export function toPublicMapPlace(place: StoredMapPlace, nowMs: number): PublicMa
       blockchain: item.blockchain,
       asset: item.asset,
     })),
-    activity: placeActivity(place.lastTransactionAt, nowMs),
+    activity: place.activity,
   };
 }

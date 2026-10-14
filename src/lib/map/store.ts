@@ -1,9 +1,10 @@
 import { matchesUnstatedPayment } from '@/lib/map/filter-catalog';
-import type {
-  MapPlaceInput,
-  MapPlaceQueryFilter,
-  MapPlaceSupport,
-  StoredMapPlace,
+import {
+  placeActivity,
+  type MapPlaceInput,
+  type MapPlaceQueryFilter,
+  type MapPlaceSupport,
+  type StoredMapPlace,
 } from '@/lib/map/place';
 
 const DEFAULT_TECH_PROVIDER = 'DFX.swiss';
@@ -23,6 +24,8 @@ export const MAP_PLACE_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS map_place (
   country TEXT,
   shop_name TEXT,
   last_transaction_at TEXT,
+  activity TEXT NOT NULL DEFAULT 'none',
+  activity_until TEXT,
   UNIQUE (origin, external_id)
 );
 CREATE TABLE IF NOT EXISTS map_place_support (
@@ -35,7 +38,14 @@ CREATE TABLE IF NOT EXISTS map_place_support (
 CREATE INDEX IF NOT EXISTS map_place_country ON map_place(country);
 CREATE INDEX IF NOT EXISTS map_place_shop_name ON map_place(shop_name);
 CREATE INDEX IF NOT EXISTS map_place_support_lookup
-  ON map_place_support(blockchain, asset, place_id)`;
+  ON map_place_support(blockchain, asset, place_id);
+CREATE TABLE IF NOT EXISTS map_place_payment_day (
+  place_id TEXT NOT NULL,
+  day TEXT NOT NULL,
+  PRIMARY KEY (place_id, day),
+  FOREIGN KEY (place_id) REFERENCES map_place(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS map_place_activity_until ON map_place(activity_until)`;
 
 /** Optional AND predicates for `list`, applied before sort and limit. */
 export type MapPlaceListFilter = MapPlaceQueryFilter & {
@@ -129,9 +139,33 @@ function toStoredPlace(input: MapPlaceInput, id: string, createdAt: string): Sto
     shopName: input.shopName ?? null,
     supports: storedSupports(input.supports ?? []),
     lastTransactionAt: null,
+    activity: 'none',
     id,
     createdAt,
   };
+}
+
+function utcDayFromMs(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+function windowStartDay(nowMs: number): string {
+  const end = utcDayFromMs(nowMs);
+  const year = Number(end.slice(0, 4));
+  const month = Number(end.slice(5, 7));
+  const date = Number(end.slice(8, 10));
+  return new Date(Date.UTC(year, month - 1, date - 6)).toISOString().slice(0, 10);
+}
+
+function paymentDayInWindow(day: string, nowMs: number): boolean {
+  return day >= windowStartDay(nowMs) && day <= utcDayFromMs(nowMs);
+}
+
+function storedPaymentDays(days: Set<string> | undefined): string[] {
+  if (days === undefined) {
+    return [];
+  }
+  return [...days];
 }
 
 /**
@@ -144,7 +178,9 @@ export interface MapPlaceStore {
     origin: string,
     externalId: string,
     occurredAt: string,
+    nowMs: number,
   ): StoredMapPlace | undefined;
+  refreshActivity(nowMs: number): void;
   deleteByKey(origin: string, externalId: string): boolean;
   list(limit: number, filter?: MapPlaceListFilter): StoredMapPlace[];
   filters(blockchain?: string | undefined): {
@@ -160,6 +196,8 @@ export interface MapPlaceStore {
  */
 export class MemoryMapPlaceStore implements MapPlaceStore {
   readonly #rows: StoredMapPlace[] = [];
+  readonly #paymentDays = new Map<string, Set<string>>();
+  readonly #activityUntil = new Map<string, string>();
   readonly #now: () => Date;
 
   /**
@@ -219,11 +257,12 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Store a newer transaction instant for an existing pin.
+   * Store a newer transaction instant for an existing pin and refresh its activity.
    *
    * @param origin - Pin origin.
    * @param externalId - Caller id.
    * @param occurredAt - Instant to store. An unparseable argument is ignored.
+   * @param nowMs - Maintenance clock in milliseconds.
    * @returns A copy of the row, or undefined when the pair is missing. A written instant is
    * canonical ISO.
    */
@@ -231,6 +270,7 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
     origin: string,
     externalId: string,
     occurredAt: string,
+    nowMs: number,
   ): StoredMapPlace | undefined {
     const existing = this.#rows.find(
       (row) => row.origin === origin && row.externalId === externalId,
@@ -245,11 +285,68 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
     const canonical = new Date(newMs).toISOString();
     const storedMs =
       existing.lastTransactionAt === null ? Number.NaN : Date.parse(existing.lastTransactionAt);
-    if (Number.isFinite(storedMs) && storedMs >= newMs) {
-      return copyStoredPlace(existing);
+    if (!Number.isFinite(storedMs) || storedMs < newMs) {
+      existing.lastTransactionAt = canonical;
     }
-    existing.lastTransactionAt = canonical;
+    const start = windowStartDay(nowMs);
+    let days = this.#paymentDays.get(existing.id);
+    if (days !== undefined) {
+      for (const day of [...days]) {
+        if (day < start) {
+          days.delete(day);
+        }
+      }
+    }
+    const day = utcDayFromMs(newMs);
+    if (paymentDayInWindow(day, nowMs)) {
+      if (days === undefined) {
+        days = new Set<string>();
+        this.#paymentDays.set(existing.id, days);
+      }
+      days.add(day);
+    }
+    const classified = placeActivity(existing.lastTransactionAt, storedPaymentDays(days), nowMs);
+    existing.activity = classified.activity;
+    if (classified.until === null) {
+      this.#activityUntil.delete(existing.id);
+    } else {
+      this.#activityUntil.set(existing.id, classified.until);
+    }
     return copyStoredPlace(existing);
+  }
+
+  /**
+   * Recompute activity for rows whose stored `activity_until` is due.
+   *
+   * @param nowMs - Maintenance clock in milliseconds.
+   */
+  refreshActivity(nowMs: number): void {
+    const nowIso = new Date(nowMs).toISOString();
+    const start = windowStartDay(nowMs);
+    for (const row of this.#rows) {
+      const until = this.#activityUntil.get(row.id);
+      if (until === undefined) {
+        continue;
+      }
+      if (until > nowIso) {
+        continue;
+      }
+      const days = this.#paymentDays.get(row.id);
+      if (days !== undefined) {
+        for (const day of [...days]) {
+          if (day < start) {
+            days.delete(day);
+          }
+        }
+      }
+      const classified = placeActivity(row.lastTransactionAt, storedPaymentDays(days), nowMs);
+      row.activity = classified.activity;
+      if (classified.until === null) {
+        this.#activityUntil.delete(row.id);
+      } else {
+        this.#activityUntil.set(row.id, classified.until);
+      }
+    }
   }
 
   /**
@@ -260,13 +357,15 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
    * @returns Whether a row was removed.
    */
   deleteByKey(origin: string, externalId: string): boolean {
-    const index = this.#rows.findIndex(
+    const existing = this.#rows.find(
       (row) => row.origin === origin && row.externalId === externalId,
     );
-    if (index < 0) {
+    if (existing === undefined) {
       return false;
     }
-    this.#rows.splice(index, 1);
+    this.#paymentDays.delete(existing.id);
+    this.#activityUntil.delete(existing.id);
+    this.#rows.splice(this.#rows.indexOf(existing), 1);
     return true;
   }
 
@@ -326,5 +425,7 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
   /** Nothing to close. */
   close(): void {
     this.#rows.length = 0;
+    this.#paymentDays.clear();
+    this.#activityUntil.clear();
   }
 }

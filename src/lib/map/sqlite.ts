@@ -1,10 +1,16 @@
 import { Database } from 'bun:sqlite';
 import { unstatedPaymentSql } from '@/lib/map/filter-catalog';
-import type { MapPlaceInput, MapPlaceSupport, StoredMapPlace } from '@/lib/map/place';
+import {
+  placeActivity,
+  type MapPlaceInput,
+  type MapPlaceSupport,
+  type PlaceActivity,
+  type StoredMapPlace,
+} from '@/lib/map/place';
 import { MAP_PLACE_SCHEMA_SQL, type MapPlaceListFilter, type MapPlaceStore } from '@/lib/map/store';
 
 const MAP_PLACE_COLUMNS =
-  'id, origin, external_id, name, lat, lon, category, payment_methods, created_at, tech_provider, country, shop_name, last_transaction_at';
+  'id, origin, external_id, name, lat, lon, category, payment_methods, created_at, tech_provider, country, shop_name, last_transaction_at, activity';
 
 type MapPlaceRow = {
   id: string;
@@ -20,6 +26,7 @@ type MapPlaceRow = {
   country: string | null;
   shop_name: string | null;
   last_transaction_at: string | null;
+  activity: PlaceActivity;
 };
 
 function compareSupport(a: MapPlaceSupport, b: MapPlaceSupport): number {
@@ -68,8 +75,32 @@ function mapRow(row: MapPlaceRow, supports: MapPlaceSupport[]): StoredMapPlace {
     country: row.country,
     shopName: row.shop_name,
     lastTransactionAt: row.last_transaction_at,
+    activity: row.activity,
     supports: supports.map((item) => ({ blockchain: item.blockchain, asset: item.asset })),
   };
+}
+
+function utcDayFromMs(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+function windowStartDay(nowMs: number): string {
+  const end = utcDayFromMs(nowMs);
+  const year = Number(end.slice(0, 4));
+  const month = Number(end.slice(5, 7));
+  const date = Number(end.slice(8, 10));
+  return new Date(Date.UTC(year, month - 1, date - 6)).toISOString().slice(0, 10);
+}
+
+function paymentDayInWindow(day: string, nowMs: number): boolean {
+  return day >= windowStartDay(nowMs) && day <= utcDayFromMs(nowMs);
+}
+
+function loadPaymentDays(db: Database, placeId: string): string[] {
+  const rows = db
+    .query('SELECT day FROM map_place_payment_day WHERE place_id = ? ORDER BY day')
+    .all(placeId) as Array<{ day: string }>;
+  return rows.map((row) => row.day);
 }
 
 function loadSupportsByPlaceId(db: Database, ids: string[]): Map<string, MapPlaceSupport[]> {
@@ -194,6 +225,32 @@ function backfillMissingCountry(db: Database): void {
   }
 }
 
+function backfillActivityFromLastTransaction(db: Database): void {
+  const nowMs = Date.now();
+  const rows = db.query('SELECT id, last_transaction_at FROM map_place').all() as Array<{
+    id: string;
+    last_transaction_at: string | null;
+  }>;
+  const insertDay = db.query(
+    'INSERT OR IGNORE INTO map_place_payment_day (place_id, day) VALUES (?, ?)',
+  );
+  const update = db.query('UPDATE map_place SET activity = ?, activity_until = ? WHERE id = ?');
+  for (const row of rows) {
+    const days: string[] = [];
+    const last = row.last_transaction_at;
+    const parsed = last === null ? Number.NaN : Date.parse(last);
+    if (Number.isFinite(parsed)) {
+      const day = utcDayFromMs(parsed);
+      if (paymentDayInWindow(day, nowMs)) {
+        insertDay.run(row.id, day);
+        days.push(day);
+      }
+    }
+    const classified = placeActivity(last, days, nowMs);
+    update.run(classified.activity, classified.until, row.id);
+  }
+}
+
 function insertSupportRows(db: Database, placeId: string, supports: MapPlaceSupport[]): void {
   const insert = db.query(
     'INSERT INTO map_place_support (place_id, blockchain, asset) VALUES (?, ?, ?)',
@@ -212,8 +269,8 @@ function replaceSupportRows(db: Database, placeId: string, supports: MapPlaceSup
  * SQLite {@link MapPlaceStore}. Opened by the process entrypoint.
  * Insert, list, delete, and an upsert that omits or replaces country
  * are exercised by the HTTP end-to-end run.
- * The SPAR shop-name backfill and the country backfill (null country only)
- * are exercised by e2e/sqlite-backfill.ts.
+ * The SPAR shop-name backfill, the country backfill (null country only),
+ * and the activity backfill are exercised by e2e/sqlite-backfill.ts.
  */
 export class SqliteMapPlaceStore implements MapPlaceStore {
   readonly #db: Database;
@@ -227,6 +284,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
     const statements = MAP_PLACE_SCHEMA_SQL.split(';')
       .map((part) => part.trim())
       .filter((part) => part !== '');
+    let addedActivity = false;
     for (const [index, sql] of statements.entries()) {
       this.#db.exec(sql);
       if (index === 0) {
@@ -247,12 +305,23 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
         if (!columns.some((column) => column.name === 'last_transaction_at')) {
           this.#db.exec('ALTER TABLE map_place ADD COLUMN last_transaction_at TEXT');
         }
+        if (!columns.some((column) => column.name === 'activity')) {
+          this.#db.exec("ALTER TABLE map_place ADD COLUMN activity TEXT NOT NULL DEFAULT 'none'");
+          addedActivity = true;
+        }
+        if (!columns.some((column) => column.name === 'activity_until')) {
+          this.#db.exec('ALTER TABLE map_place ADD COLUMN activity_until TEXT');
+        }
       }
     }
     this.#db.exec(
       "UPDATE map_place SET shop_name = 'SPAR' WHERE origin = 'spar' AND shop_name IS NULL",
     );
     backfillMissingCountry(this.#db);
+    if (addedActivity) {
+      backfillActivityFromLastTransaction(this.#db);
+    }
+    this.refreshActivity(Date.now());
   }
 
   /**
@@ -271,8 +340,10 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
     const result = this.#db
       .query(
         `INSERT INTO map_place (
-           id, origin, external_id, name, lat, lon, category, payment_methods, created_at, tech_provider, country, shop_name, last_transaction_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           id, origin, external_id, name, lat, lon, category, payment_methods,
+           created_at, tech_provider, country, shop_name, last_transaction_at,
+           activity, activity_until
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (origin, external_id) DO NOTHING`,
       )
       .run(
@@ -288,6 +359,8 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
         techProvider,
         country,
         shopName,
+        null,
+        'none',
         null,
       );
     if (result.changes === 1) {
@@ -310,6 +383,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
             asset: item.asset,
           })),
           lastTransactionAt: null,
+          activity: 'none',
           id,
           createdAt,
         },
@@ -385,11 +459,12 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Store a newer transaction instant for an existing pin.
+   * Store a newer transaction instant for an existing pin and refresh its activity.
    *
    * @param origin - Pin origin.
    * @param externalId - Caller id.
    * @param occurredAt - Instant to store. An unparseable argument is ignored.
+   * @param nowMs - Maintenance clock in milliseconds.
    * @returns A copy of the row, or undefined when the pair is missing. A written instant is
    * canonical ISO.
    */
@@ -397,6 +472,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
     origin: string,
     externalId: string,
     occurredAt: string,
+    nowMs: number,
   ): StoredMapPlace | undefined {
     const existing = this.#db
       .query(
@@ -414,17 +490,69 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
     const canonical = new Date(newMs).toISOString();
     const storedMs =
       existing.last_transaction_at === null ? Number.NaN : Date.parse(existing.last_transaction_at);
-    if (Number.isFinite(storedMs) && storedMs >= newMs) {
-      return mapOne(this.#db, existing);
+    let lastTransactionAt = existing.last_transaction_at;
+    if (!Number.isFinite(storedMs) || storedMs < newMs) {
+      lastTransactionAt = canonical;
+      this.#db
+        .query(
+          `UPDATE map_place
+           SET last_transaction_at = ?
+           WHERE origin = ? AND external_id = ?`,
+        )
+        .run(canonical, origin, externalId);
     }
+    const start = windowStartDay(nowMs);
     this.#db
+      .query('DELETE FROM map_place_payment_day WHERE place_id = ? AND day < ?')
+      .run(existing.id, start);
+    const day = utcDayFromMs(newMs);
+    if (paymentDayInWindow(day, nowMs)) {
+      this.#db
+        .query('INSERT OR IGNORE INTO map_place_payment_day (place_id, day) VALUES (?, ?)')
+        .run(existing.id, day);
+    }
+    const days = loadPaymentDays(this.#db, existing.id);
+    const classified = placeActivity(lastTransactionAt, days, nowMs);
+    this.#db
+      .query('UPDATE map_place SET activity = ?, activity_until = ? WHERE id = ?')
+      .run(classified.activity, classified.until, existing.id);
+    return mapOne(this.#db, {
+      ...existing,
+      last_transaction_at: lastTransactionAt,
+      activity: classified.activity,
+    });
+  }
+
+  /**
+   * Recompute activity for rows whose stored `activity_until` is due.
+   *
+   * @param nowMs - Maintenance clock in milliseconds.
+   */
+  refreshActivity(nowMs: number): void {
+    const nowIso = new Date(nowMs).toISOString();
+    const start = windowStartDay(nowMs);
+    const due = this.#db
       .query(
-        `UPDATE map_place
-         SET last_transaction_at = ?
-         WHERE origin = ? AND external_id = ?`,
+        `SELECT ${MAP_PLACE_COLUMNS}
+         FROM map_place
+         WHERE activity_until IS NOT NULL AND activity_until <= ?`,
       )
-      .run(canonical, origin, externalId);
-    return mapOne(this.#db, { ...existing, last_transaction_at: canonical });
+      .all(nowIso) as MapPlaceRow[];
+    const deleteOldDays = this.#db.query(
+      'DELETE FROM map_place_payment_day WHERE place_id = ? AND day < ?',
+    );
+    const update = this.#db.query(
+      'UPDATE map_place SET activity = ?, activity_until = ? WHERE id = ?',
+    );
+    for (const row of due) {
+      deleteOldDays.run(row.id, start);
+      const classified = placeActivity(
+        row.last_transaction_at,
+        loadPaymentDays(this.#db, row.id),
+        nowMs,
+      );
+      update.run(classified.activity, classified.until, row.id);
+    }
   }
 
   /**
