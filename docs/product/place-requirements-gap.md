@@ -6,7 +6,7 @@ with the current state. It was checked on 2026-10-16 against:
 - code: `develop` at `707b349`
 - production: `api.opencryptopay.io`, image built from `e603b76a` (#17), which
   does not contain #18 (street, house number, postal code, and city fields)
-  or #19 (activity levels)
+  or #19 (the `daily` and `olderThan30Days` activity levels)
 - development: `dev-api.opencryptopay.io`, image `beta` built from `develop`
 - live data: `GET /map/places` on both hosts, all rows
 
