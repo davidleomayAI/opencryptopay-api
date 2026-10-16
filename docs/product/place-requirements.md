@@ -2,7 +2,8 @@
 
 These are hard requirements for every shop the API serves. They are product
 requirements, not a description of the current code. Where the code or the
-stored data differ, the requirement wins and the difference is a defect.
+stored data differ, the requirement wins and the difference is a defect. The
+current state is compared in [place-requirements-gap.md](place-requirements-gap.md).
 
 "Shop" means one place in the public list of `GET /map/places`. "Must" means
 the API guarantees it for every shop in that list, without exception.
