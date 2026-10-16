@@ -61,9 +61,11 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
   21.gifts rows, and development shows `none` for every row. `none` is correct
   only if those shops never had a transaction, which is not established.
 - **Sources:** both report transactions through
-  `POST /map/places/transactions`. All 170 SPAR rows show `none` on both
-  hosts, so either no SPAR transaction has been reported or reports do not
-  reach these rows. Which of the two is not established.
+  `POST /map/places/transactions`. On development, which has all five levels,
+  all 170 SPAR rows show `none`, so no usable SPAR transaction time is stored
+  there: either none has been reported or reports do not reach these rows.
+  Which of the two is not established. On production, `none` also covers an
+  old transaction and proves nothing.
 
 ## R2 Address
 
