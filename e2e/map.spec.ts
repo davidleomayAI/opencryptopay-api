@@ -466,10 +466,10 @@ test('Function: SqliteMapPlaceStore — a rejected PUT leaves the stored pin unc
     headers: { Authorization: 'Bearer e2e-ingest' },
     data: {
       ...pin,
-      street: 'Other Street',
-      houseNumber: '99',
-      postalCode: '10115',
-      city: 'Berlin',
+      street: 'Spitalgasse',
+      houseNumber: '7',
+      postalCode: '3011',
+      city: 'Bern',
     },
   });
   expect(again.status()).toBe(200);

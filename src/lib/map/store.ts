@@ -117,14 +117,7 @@ function isCompletePlace(row: StoredMapPlace): boolean {
   if (row.shopType !== 'SPAR' && row.shopType !== 'Others') {
     return false;
   }
-  if (row.lastTransactionAt === null) {
-    return true;
-  }
-  if (Number.isFinite(Date.parse(row.lastTransactionAt))) {
-    return true;
-  }
-  /* v8 ignore next -- memory writes null or canonical ISO; sqlite e2e covers an unparseable stored instant */
-  return false;
+  return row.lastTransactionAt === null || Number.isFinite(Date.parse(row.lastTransactionAt));
 }
 
 function matchesFilter(row: StoredMapPlace, filter?: MapPlaceListFilter): boolean {

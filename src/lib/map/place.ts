@@ -538,9 +538,7 @@ function normalizeCountry(
   return { ok: true, value: country };
 }
 
-function normalizeStreet(
-  raw: unknown,
-): { ok: true; value: string } | { ok: false; error: string } {
+function normalizeStreet(raw: unknown): { ok: true; value: string } | { ok: false; error: string } {
   if (typeof raw !== 'string') {
     return { ok: false, error: STREET_ERROR };
   }

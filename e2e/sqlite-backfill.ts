@@ -351,12 +351,7 @@ if (schemaOk) {
       }
       extraDays.push(day);
     }
-    let dailyPlace = activityStore.recordTransaction(
-      'dfx',
-      'act-recent',
-      'not-a-date',
-      nowMs,
-    );
+    let dailyPlace = activityStore.recordTransaction('dfx', 'act-recent', 'not-a-date', nowMs);
     let lastAfterExtra = dailyPlace?.lastTransactionAt;
     for (const day of extraDays) {
       dailyPlace = activityStore.recordTransaction(

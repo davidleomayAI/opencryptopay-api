@@ -224,11 +224,8 @@ describe('MemoryMapPlaceStore', () => {
       externalId: 'stated',
       supports: [{ blockchain: 'Polygon', asset: 'ZCHF' }],
     });
-    const ids = (filter: {
-      blockchain?: string;
-      asset?: string;
-      shopType?: ShopType;
-    }): string[] => store.list(10, filter).map((row) => row.externalId);
+    const ids = (filter: { blockchain?: string; asset?: string; shopType?: ShopType }): string[] =>
+      store.list(10, filter).map((row) => row.externalId);
 
     expect(ids({ blockchain: 'Ethereum' }).sort()).toEqual(['dfx-open']);
     expect(ids({ blockchain: 'Lightning', asset: 'BTC' }).sort()).toEqual([
@@ -298,6 +295,21 @@ describe('MemoryMapPlaceStore', () => {
       { blockchain: 'Ethereum', asset: 'ETH' },
       { blockchain: 'Ethereum', asset: 'ZCHF' },
       { blockchain: 'Polygon', asset: 'USDT' },
+    ]);
+  });
+
+  it('keeps same-chain supports that arrive in ascending asset order', () => {
+    const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
+    const created = store.insertIfNew({
+      ...input,
+      supports: [
+        { blockchain: 'Ethereum', asset: 'ETH' },
+        { blockchain: 'Ethereum', asset: 'ZCHF' },
+      ],
+    });
+    expect(created.place.supports).toEqual([
+      { blockchain: 'Ethereum', asset: 'ETH' },
+      { blockchain: 'Ethereum', asset: 'ZCHF' },
     ]);
   });
 

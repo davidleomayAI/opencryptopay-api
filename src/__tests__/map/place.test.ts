@@ -477,9 +477,7 @@ describe('normalizeMapPlace', () => {
       ok: false,
       error: 'Place description is invalid',
     });
-    expect(
-      normalizeMapPlace({ ...valid, name: longName, description: 'x'.repeat(20) }),
-    ).toEqual({
+    expect(normalizeMapPlace({ ...valid, name: longName, description: 'x'.repeat(20) })).toEqual({
       ok: false,
       error: 'Place description is invalid',
     });
@@ -1033,14 +1031,26 @@ describe('normalizePlaceTransaction', () => {
 describe('toPublicMapPlace', () => {
   it('omits the caller id and payment methods and derives shopName from shopType', () => {
     const stored: StoredMapPlace = {
-      ...valid,
-      shopType: 'Others',
+      origin: 'dfx',
+      externalId: 'store-1',
+      name: 'SPAR Triesen',
+      description: DESCRIPTION,
+      lat: 47.37,
+      lon: 8.54,
+      category: 'groceries',
+      paymentMethods: 'lightning',
       techProvider: 'DFX.swiss',
-      id: 'id-1',
-      createdAt: '2026-09-26T00:00:00.000Z',
+      shopType: 'Others',
+      street: 'Maschlinastrasse',
+      houseNumber: '4',
+      postalCode: '9495',
+      city: 'Triesen',
+      country: 'LI',
       supports: [],
       lastTransactionAt: null,
       activity: 'none',
+      id: 'id-1',
+      createdAt: '2026-09-26T00:00:00.000Z',
     };
     expect(toPublicMapPlace(stored)).toEqual({
       id: 'id-1',
@@ -1066,13 +1076,26 @@ describe('toPublicMapPlace', () => {
   it('returns SPAR shopName when shopType is SPAR and copies supports', () => {
     const supports = [{ blockchain: 'Ethereum', asset: 'ZCHF' }];
     const stored: StoredMapPlace = {
-      ...valid,
+      origin: 'dfx',
+      externalId: 'store-1',
+      name: 'SPAR Triesen',
+      description: DESCRIPTION,
+      lat: 47.37,
+      lon: 8.54,
+      category: 'groceries',
+      paymentMethods: 'lightning',
       techProvider: 'DFX.swiss',
-      id: 'id-1',
-      createdAt: '2026-09-26T00:00:00.000Z',
+      shopType: 'SPAR',
+      street: 'Maschlinastrasse',
+      houseNumber: '4',
+      postalCode: '9495',
+      city: 'Triesen',
+      country: 'LI',
       supports,
       lastTransactionAt: null,
       activity: 'daily',
+      id: 'id-1',
+      createdAt: '2026-09-26T00:00:00.000Z',
     };
     const publicPlace = toPublicMapPlace(stored);
     expect(publicPlace).toEqual({

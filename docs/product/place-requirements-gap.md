@@ -14,13 +14,13 @@ Every row below that is not "met" is a defect against the requirements.
 
 ## Summary
 
-| Req | Topic             | Code on `develop` | Production | Data                | Sources |
-| --- | ----------------- | ----------------- | ---------- | ------------------- | ------- |
-| R1  | Activity          | met               | not met    | unknown (see R1)    | partly  |
-| R2  | Address           | met               | not met    | 0 of 193 complete   | not met |
+| Req | Topic             | Code on `develop`                     | Production | Data                | Sources |
+| --- | ----------------- | ------------------------------------- | ---------- | ------------------- | ------- |
+| R1  | Activity          | met                                   | not met    | unknown (see R1)    | partly  |
+| R2  | Address           | met                                   | not met    | 0 of 193 complete   | not met |
 | R3  | GPS coordinates   | met except coordinates at the address | partly     | 193 of 193 present  | partly  |
-| R4  | Name, description | met               | not met    | 0 of 193 described  | not met |
-| R5  | Shop type         | met               | not met    | no enum (see R5)    | not met |
+| R4  | Name, description | met                                   | not met    | 0 of 193 described  | not met |
+| R5  | Shop type         | met                                   | not met    | no enum (see R5)    | not met |
 | R6  | Enforcement       | met except coordinates at the address | not met    | 193 of 193 accepted | n/a     |
 
 ## Live data
