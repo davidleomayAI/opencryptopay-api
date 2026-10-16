@@ -49,9 +49,10 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
   `within30Days`, `olderThan30Days`, `none` (`src/lib/map/place.ts`,
   `placeActivity`). `daily` is defined as at least five distinct UTC payment
   dates within the last seven UTC dates. A source cannot set it.
-- **Code, open point:** a stored transaction time that cannot be parsed is
-  classified `none`. The target reserves "never" for a shop with no
-  transaction at all.
+- **Code, open point:** unless the row is `daily`, a stored transaction time
+  that cannot be parsed is classified `none`. The target reserves "never" for
+  a shop with no transaction at all. New input with an unparseable time is
+  already rejected, so the case only affects rows stored earlier.
 - **Production:** not met. It runs `e603b76a`, which only knows
   `within7Days`, `within30Days`, and `none`. `daily` and `olderThan30Days` are
   missing, so an old transaction shows as `none`.
@@ -73,9 +74,9 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
   part that the request omits, and a new row stores null
   (`src/lib/map/store.ts`, `src/lib/map/sqlite.ts`). There is no check that
   the parts form a valid address.
-- **Code, derived values:** the store fills a missing `country` from the name:
-  the last four-digit word of a `spar` name, and a fixed name table for four
-  `21gifts` rows (`backfillMissingCountry` in `src/lib/map/sqlite.ts`). R6
+- **Code, derived values:** on startup, the SQLite store fills a null
+  `country` of existing rows from the name: the last four-digit word of a
+  `spar` name, and a fixed name table for four `21gifts` rows (`backfillMissingCountry` in `src/lib/map/sqlite.ts`). R6
   forbids deriving a field from another field.
 - **Production:** not met. The address fields do not exist in the response.
 - **Data:** no row has a street, house number, postal code, or city. The SPAR
@@ -122,9 +123,9 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
   the query filter and `shopNames` of `GET /map/filters` know `SPAR` and
   `others` (lowercase), and `others` matches every row whose `shopName` is not
   `SPAR`, including null (`src/lib/map/store.ts`, `src/lib/map/sqlite.ts`).
-- **Code, derived values:** the store sets `shopName` to `SPAR` for every
-  `spar` row that has none, derived from `origin`. R6 forbids that
-  derivation.
+- **Code, derived values:** on startup, the SQLite store sets `shopName` to
+  `SPAR` for every existing `spar` row that has none, derived from `origin`.
+  R6 forbids that derivation.
 - **Data:** no shop-type enum exists. `shopName` is `SPAR` on 170 rows and
   null on 23 (prod) and 21 (dev) rows.
 - **Sources:** neither sends a shop type.
@@ -149,9 +150,9 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
    the same values; make every address part required; validate the resulting
    stored shop of every `POST` and `PUT /map/places` against R2 to R5 and
    reject it when it fails; stop deriving `country` and `shopName`; leave
-   incomplete stored rows out of `GET /map/places`; classify an unparseable
-   transaction time other than as "never"; check that the coordinates lie at
-   the address.
+   incomplete stored rows out of `GET /map/places`; repair stored rows with an
+   unparseable transaction time, or leave them out of `GET /map/places` until
+   corrected; check that the coordinates lie at the address.
 2. DFX.swiss: send a short descriptive name without the address, a
    description, the shop type, the full address, and coordinates for every
    SPAR shop through `PUT /map/places`.
