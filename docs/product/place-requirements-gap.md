@@ -131,9 +131,10 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
 
 ## R6 Enforcement at registration
 
-- **Target:** a registration without every field of R2 to R5 in the expected
-  quality, or an update whose resulting stored shop would lack one, is
-  rejected and stores nothing; incomplete stored rows are not public.
+- **Target:** a registration or an update whose resulting stored shop lacks a
+  field of R2 to R5, or has one below the expected quality, is rejected. A
+  rejected registration stores nothing, and a rejected update leaves the
+  stored shop unchanged. Incomplete stored rows are not public.
 - **Code:** not met. `POST` and `PUT /map/places` accept a shop with only
   `origin`, `externalId`, `name`, `lat`, `lon`, and `category`. A missing
   country, address part, or brand is accepted. `GET /map/places` serves every
@@ -151,15 +152,18 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
    incomplete stored rows out of `GET /map/places`; classify an unparseable
    transaction time other than as "never"; check that the coordinates lie at
    the address.
-2. DFX.swiss: send name, description, shop type, the full address, and
-   coordinates for every SPAR shop through `PUT /map/places`.
+2. DFX.swiss: send a short descriptive name without the address, a
+   description, the shop type, the full address, and coordinates for every
+   SPAR shop through `PUT /map/places`.
 3. 21.gifts: collect a descriptive name without the address, a structured
    address, and a description for every shop, and send them with the shop
    type.
 4. Production: release `develop` so that R1 is served with all five levels.
-   The release stores at most one payment date per shop from its latest
-   transaction, so `daily` appears only after five payment dates are recorded
-   after the release.
+   The release stores at most one payment date per shop: the UTC date of its
+   latest transaction, and only if that date lies within the last seven.
+   `daily` needs five distinct payment dates in that window, so a shop needs
+   four more payment dates while the stored date stays in the window, and five
+   otherwise.
 
 Until steps 2 and 3 are done, step 1 removes every current shop from the
 public list.
