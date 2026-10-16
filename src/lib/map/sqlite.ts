@@ -302,7 +302,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
     const id = crypto.randomUUID();
     const createdAt = new Date().toISOString();
     const techProvider = input.techProvider ?? 'DFX.swiss';
-    const supports = storedSupports(input.supports ?? []);
+    const supports = storedSupports(input.supports);
     const result = this.#db
       .query(
         `INSERT INTO map_place (
@@ -394,7 +394,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
       return this.insertIfNew(input);
     }
     const techProvider = input.techProvider ?? 'DFX.swiss';
-    const supports = storedSupports(input.supports ?? []);
+    const supports = storedSupports(input.supports);
     this.#db
       .query(
         `UPDATE map_place

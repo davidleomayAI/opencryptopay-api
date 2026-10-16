@@ -166,7 +166,7 @@ function toStoredPlace(input: MapPlaceInput, id: string, createdAt: string): Sto
     postalCode: input.postalCode,
     city: input.city,
     country: input.country,
-    supports: storedSupports(input.supports ?? []),
+    supports: storedSupports(input.supports),
     lastTransactionAt: null,
     activity: 'none',
     id,
@@ -280,7 +280,7 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
     existing.postalCode = input.postalCode;
     existing.city = input.city;
     existing.country = input.country;
-    existing.supports = storedSupports(input.supports ?? []);
+    existing.supports = storedSupports(input.supports);
     return { created: false, place: copyStoredPlace(existing) };
   }
 

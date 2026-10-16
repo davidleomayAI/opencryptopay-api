@@ -1,13 +1,13 @@
 import { defineConfig } from '@playwright/test';
-import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const dbPath = join(tmpdir(), 'opencryptopay-e2e-map.sqlite');
-// Every run starts with an empty database; a leftover file would keep old rows.
-rmSync(dbPath, { force: true });
-rmSync(`${dbPath}-wal`, { force: true });
-rmSync(`${dbPath}-shm`, { force: true });
+// Every run gets its own empty database; a reused file would keep rows from an
+// older run. Workers load this config again, so the path travels in the env.
+const dbPath =
+  process.env['OCP_E2E_PLACE_DB'] ??
+  join(tmpdir(), `opencryptopay-e2e-map-${String(process.pid)}-${String(Date.now())}.sqlite`);
+process.env['OCP_E2E_PLACE_DB'] = dbPath;
 
 /**
  * HTTP end-to-end tests against `bun src/index.ts`. No browser.
