@@ -5,7 +5,8 @@ with the current state. It was checked on 2026-10-16 against:
 
 - code: `develop` at `707b349`
 - production: `api.opencryptopay.io`, image built from `e603b76a` (#17), which
-  does not contain #18 (address fields) or #19 (activity levels)
+  does not contain #18 (street, house number, postal code, and city fields)
+  or #19 (activity levels)
 - development: `dev-api.opencryptopay.io`, image `beta` built from `develop`
 - live data: `GET /map/places` on both hosts, all rows
 
@@ -78,7 +79,9 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
   `country` of existing rows from the name: the last four-digit word of a
   `spar` name, and a fixed name table for four `21gifts` rows (`backfillMissingCountry` in `src/lib/map/sqlite.ts`). R6
   forbids deriving a field from another field.
-- **Production:** not met. The address fields do not exist in the response.
+- **Production:** not met. `street`, `houseNumber`, `postalCode`, and `city`
+  do not exist in the response. `country` does: 170 of 170 SPAR rows and 4 of
+  23 21.gifts rows have one.
 - **Data:** no row has a street, house number, postal code, or city. The SPAR
   address is only inside `name`. The 21.gifts names are free text with
   landmarks, not addresses.
@@ -86,11 +89,15 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
   `POST /map/places/transactions`. The 170 SPAR rows were registered by a
   manual import that accepts `origin`, `externalId`, `name`, `lat`, `lon`,
   `category`, `techProvider`, `paymentMethods`, and `country` and rejects any
-  other key, so it cannot send the address fields either. DFX.swiss does hold
+  other key, so it cannot send `street`, `houseNumber`, `postalCode`, or
+  `city` either. DFX.swiss does hold
   a structured merchant address for a payment link but does not send it.
 - **21.gifts:** sends `origin`, `externalId`, `name`, `lat`, `lon`,
-  `category`, `paymentMethods`, and `techProvider`. It sends no address and
-  holds no structured address for a shop.
+  `category`, `paymentMethods`, and `techProvider`. It sends no address part,
+  including no `country`, and holds no structured address for a shop. On
+  production, 4 of its rows have a `country` from the fixed name table. On
+  development, all 21 of its rows have one; how those values got there is not
+  established.
 
 ## R3 GPS coordinates
 
