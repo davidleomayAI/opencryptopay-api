@@ -78,6 +78,7 @@ describe('payment-link filter catalog', () => {
       blockchains: ['Plasma'],
       assets: ['ONDO', 'ZCHF'],
     });
+    expect(merged.shopTypes).toEqual(['SPAR', 'Others']);
     expect(merged.shopNames).toEqual(['SPAR', 'others']);
     expect(merged.countries).toEqual(['CH']);
     expect(merged.blockchains).toContain('Plasma');

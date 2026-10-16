@@ -96,6 +96,8 @@ export type MapFilterTechProvider = {
 };
 
 export type PublicMapFilters = {
+  shopTypes: ['SPAR', 'Others'];
+  /** Deprecated, one release: removed in the release after the rollout. */
   shopNames: ['SPAR', 'others'];
   countries: string[];
   blockchains: string[];
@@ -245,13 +247,14 @@ export function unstatedPaymentSql(
  *
  * @param stored - Distinct countries, blockchains, and assets already stored.
  * @param blockchain - When set, top-level assets are limited to that network.
- * @returns Shop-name tokens, countries, networks, assets, and per-provider offers.
+ * @returns Shop-type tokens, the deprecated shop-name alias, countries, networks, assets, and per-provider offers.
  */
 export function publicFilterResponse(
   stored: { countries: string[]; blockchains: string[]; assets: string[] },
   blockchain?: string | undefined,
 ): PublicMapFilters {
   return {
+    shopTypes: ['SPAR', 'Others'],
     shopNames: ['SPAR', 'others'],
     countries: stored.countries,
     blockchains: uniqueSorted([...DFX_BLOCKCHAINS, ...stored.blockchains]),

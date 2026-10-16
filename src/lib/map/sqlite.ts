@@ -5,18 +5,31 @@ import {
   type MapPlaceInput,
   type MapPlaceSupport,
   type PlaceActivity,
+  type ShopType,
   type StoredMapPlace,
 } from '@/lib/map/place';
 import { MAP_PLACE_SCHEMA_SQL, type MapPlaceListFilter, type MapPlaceStore } from '@/lib/map/store';
 
 const MAP_PLACE_COLUMNS =
-  'id, origin, external_id, name, lat, lon, category, payment_methods, created_at, tech_provider, country, street, house_number, postal_code, city, shop_name, last_transaction_at, activity';
+  'id, origin, external_id, name, description, lat, lon, category, payment_methods, created_at, tech_provider, country, street, house_number, postal_code, city, shop_type, last_transaction_at, activity';
+
+/** SQL predicate: a row is complete and may appear in GET /map/places and countries. */
+const COMPLETE_PLACE_SQL = `(name IS NOT NULL AND name != ''
+  AND description IS NOT NULL AND description != ''
+  AND shop_type IN ('SPAR', 'Others')
+  AND street IS NOT NULL AND street != ''
+  AND house_number IS NOT NULL AND house_number != ''
+  AND postal_code IS NOT NULL AND postal_code != ''
+  AND city IS NOT NULL AND city != ''
+  AND country IS NOT NULL AND country != ''
+  AND (last_transaction_at IS NULL OR julianday(last_transaction_at) IS NOT NULL))`;
 
 type MapPlaceRow = {
   id: string;
   origin: string;
   external_id: string;
   name: string;
+  description: string | null;
   lat: number;
   lon: number;
   category: string;
@@ -28,7 +41,7 @@ type MapPlaceRow = {
   house_number: string | null;
   postal_code: string | null;
   city: string | null;
-  shop_name: string | null;
+  shop_type: string | null;
   last_transaction_at: string | null;
   activity: PlaceActivity;
 };
@@ -64,24 +77,32 @@ function storedSupports(items: MapPlaceSupport[]): MapPlaceSupport[] {
   return unique;
 }
 
+function asShopType(value: string | null): ShopType {
+  if (value === 'SPAR' || value === 'Others') {
+    return value;
+  }
+  return 'Others';
+}
+
 function mapRow(row: MapPlaceRow, supports: MapPlaceSupport[]): StoredMapPlace {
   return {
     id: row.id,
     origin: row.origin,
     externalId: row.external_id,
     name: row.name,
+    description: row.description ?? '',
     lat: row.lat,
     lon: row.lon,
     category: row.category,
     paymentMethods: row.payment_methods,
     createdAt: row.created_at,
     techProvider: row.tech_provider,
-    country: row.country,
-    street: row.street,
-    houseNumber: row.house_number,
-    postalCode: row.postal_code,
-    city: row.city,
-    shopName: row.shop_name,
+    country: row.country ?? '',
+    street: row.street ?? '',
+    houseNumber: row.house_number ?? '',
+    postalCode: row.postal_code ?? '',
+    city: row.city ?? '',
+    shopType: asShopType(row.shop_type),
     lastTransactionAt: row.last_transaction_at,
     activity: row.activity,
     supports: supports.map((item) => ({ blockchain: item.blockchain, asset: item.asset })),
@@ -161,78 +182,6 @@ function mapOne(db: Database, row: MapPlaceRow): StoredMapPlace {
   return place;
 }
 
-const LI_POSTAL_CODES: ReadonlySet<string> = new Set([
-  '9485',
-  '9486',
-  '9487',
-  '9488',
-  '9490',
-  '9491',
-  '9492',
-  '9493',
-  '9494',
-  '9495',
-  '9496',
-  '9497',
-  '9498',
-]);
-
-const GIFTS_COUNTRY_BY_EXACT_NAME: ReadonlyMap<string, string> = new Map([
-  ['Happyland Court Barangay 105 Tondo, Manila', 'PH'],
-  ['Rose st.Happyland Barangay 105 Tondo,Manila', 'PH'],
-  ['Machakos Bitcoin Academy', 'KE'],
-  ['bitcoinmakueni', 'KE'],
-]);
-
-function lastFourDigitWord(name: string): string | undefined {
-  let found: string | undefined;
-  for (const word of name.split(/\s+/)) {
-    if (/^[0-9]{4}$/.test(word)) {
-      found = word;
-    }
-  }
-  return found;
-}
-
-function countryFromSparName(name: string): 'LI' | 'CH' | undefined {
-  const code = lastFourDigitWord(name);
-  if (code === undefined) {
-    return undefined;
-  }
-  if (LI_POSTAL_CODES.has(code)) {
-    return 'LI';
-  }
-  const numeric = Number(code);
-  if (numeric >= 1000 && numeric <= 9999) {
-    return 'CH';
-  }
-  return undefined;
-}
-
-function backfillMissingCountry(db: Database): void {
-  const rows = db
-    .query(
-      `SELECT id, origin, name
-       FROM map_place
-       WHERE country IS NULL AND (origin = 'spar' OR origin = '21gifts')`,
-    )
-    .all() as Array<{ id: string; origin: string; name: string }>;
-  const update = db.query('UPDATE map_place SET country = ? WHERE id = ? AND country IS NULL');
-  for (const row of rows) {
-    let country: string | undefined;
-    if (row.origin === 'spar') {
-      country = countryFromSparName(row.name);
-    } else if (row.origin === '21gifts') {
-      country = GIFTS_COUNTRY_BY_EXACT_NAME.get(row.name);
-    } else {
-      throw new Error('country backfill unexpected origin');
-    }
-    if (country !== undefined) {
-      update.run(country, row.id);
-    }
-  }
-}
-
 function backfillActivityFromLastTransaction(db: Database): void {
   const nowMs = Date.now();
   const rows = db.query('SELECT id, last_transaction_at FROM map_place').all() as Array<{
@@ -275,11 +224,10 @@ function replaceSupportRows(db: Database, placeId: string, supports: MapPlaceSup
 
 /**
  * SQLite {@link MapPlaceStore}. Opened by the process entrypoint.
- * Insert, list, delete, and an upsert that omits or replaces country,
- * street, house number, postal code, and city are exercised by the HTTP
+ * Insert, list, delete, and a full-replace upsert are exercised by the HTTP
  * end-to-end run.
- * The SPAR shop-name backfill, the country backfill (null country only),
- * and the activity backfill are exercised by e2e/sqlite-backfill.ts.
+ * Opening an old-schema file (shop_name present, description and shop_type
+ * missing) and hiding incomplete rows is exercised by e2e/sqlite-backfill.ts.
  */
 export class SqliteMapPlaceStore implements MapPlaceStore {
   readonly #db: Database;
@@ -320,8 +268,11 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
         if (!columns.some((column) => column.name === 'city')) {
           this.#db.exec('ALTER TABLE map_place ADD COLUMN city TEXT');
         }
-        if (!columns.some((column) => column.name === 'shop_name')) {
-          this.#db.exec('ALTER TABLE map_place ADD COLUMN shop_name TEXT');
+        if (!columns.some((column) => column.name === 'description')) {
+          this.#db.exec('ALTER TABLE map_place ADD COLUMN description TEXT');
+        }
+        if (!columns.some((column) => column.name === 'shop_type')) {
+          this.#db.exec('ALTER TABLE map_place ADD COLUMN shop_type TEXT');
         }
         if (!columns.some((column) => column.name === 'last_transaction_at')) {
           this.#db.exec('ALTER TABLE map_place ADD COLUMN last_transaction_at TEXT');
@@ -335,10 +286,6 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
         }
       }
     }
-    this.#db.exec(
-      "UPDATE map_place SET shop_name = 'SPAR' WHERE origin = 'spar' AND shop_name IS NULL",
-    );
-    backfillMissingCountry(this.#db);
     if (addedActivity) {
       backfillActivityFromLastTransaction(this.#db);
     }
@@ -355,20 +302,14 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
     const id = crypto.randomUUID();
     const createdAt = new Date().toISOString();
     const techProvider = input.techProvider ?? 'DFX.swiss';
-    const country = input.country ?? null;
-    const street = input.street ?? null;
-    const houseNumber = input.houseNumber ?? null;
-    const postalCode = input.postalCode ?? null;
-    const city = input.city ?? null;
-    const shopName = input.shopName ?? null;
     const supports = storedSupports(input.supports ?? []);
     const result = this.#db
       .query(
         `INSERT INTO map_place (
-           id, origin, external_id, name, lat, lon, category, payment_methods,
+           id, origin, external_id, name, description, lat, lon, category, payment_methods,
            created_at, tech_provider, country, street, house_number, postal_code, city,
-           shop_name, last_transaction_at, activity, activity_until
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           shop_type, last_transaction_at, activity, activity_until
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (origin, external_id) DO NOTHING`,
       )
       .run(
@@ -376,18 +317,19 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
         input.origin,
         input.externalId,
         input.name,
+        input.description,
         input.lat,
         input.lon,
         input.category,
         input.paymentMethods,
         createdAt,
         techProvider,
-        country,
-        street,
-        houseNumber,
-        postalCode,
-        city,
-        shopName,
+        input.country,
+        input.street,
+        input.houseNumber,
+        input.postalCode,
+        input.city,
+        input.shopType,
         null,
         'none',
         null,
@@ -400,17 +342,18 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
           origin: input.origin,
           externalId: input.externalId,
           name: input.name,
+          description: input.description,
           lat: input.lat,
           lon: input.lon,
           category: input.category,
           paymentMethods: input.paymentMethods,
           techProvider,
-          country,
-          street,
-          houseNumber,
-          postalCode,
-          city,
-          shopName,
+          country: input.country,
+          street: input.street,
+          houseNumber: input.houseNumber,
+          postalCode: input.postalCode,
+          city: input.city,
+          shopType: input.shopType,
           supports: supports.map((item) => ({
             blockchain: item.blockchain,
             asset: item.asset,
@@ -435,7 +378,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Insert when the pair is new, otherwise update the stored pin.
+   * Insert when the pair is new, otherwise replace every field of the stored pin.
    *
    * @param input - Validated pin.
    * @returns Whether this call inserted the row.
@@ -450,55 +393,51 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
     if (existing === null) {
       return this.insertIfNew(input);
     }
-    const techProvider =
-      input.techProvider !== undefined ? input.techProvider : existing.tech_provider;
-    const country = input.country !== undefined ? input.country : existing.country;
-    const street = input.street !== undefined ? input.street : existing.street;
-    const houseNumber = input.houseNumber !== undefined ? input.houseNumber : existing.house_number;
-    const postalCode = input.postalCode !== undefined ? input.postalCode : existing.postal_code;
-    const city = input.city !== undefined ? input.city : existing.city;
-    const shopName = input.shopName ?? null;
+    const techProvider = input.techProvider ?? 'DFX.swiss';
+    const supports = storedSupports(input.supports ?? []);
     this.#db
       .query(
         `UPDATE map_place
-         SET name = ?, lat = ?, lon = ?, category = ?, payment_methods = ?, tech_provider = ?, country = ?, street = ?, house_number = ?, postal_code = ?, city = ?, shop_name = ?
+         SET name = ?, description = ?, lat = ?, lon = ?, category = ?, payment_methods = ?,
+             tech_provider = ?, country = ?, street = ?, house_number = ?, postal_code = ?,
+             city = ?, shop_type = ?
          WHERE origin = ? AND external_id = ?`,
       )
       .run(
         input.name,
+        input.description,
         input.lat,
         input.lon,
         input.category,
         input.paymentMethods,
         techProvider,
-        country,
-        street,
-        houseNumber,
-        postalCode,
-        city,
-        shopName,
+        input.country,
+        input.street,
+        input.houseNumber,
+        input.postalCode,
+        input.city,
+        input.shopType,
         input.origin,
         input.externalId,
       );
-    if (input.supports !== undefined) {
-      replaceSupportRows(this.#db, existing.id, storedSupports(input.supports));
-    }
+    replaceSupportRows(this.#db, existing.id, supports);
     return {
       created: false,
       place: mapOne(this.#db, {
         ...existing,
         name: input.name,
+        description: input.description,
         lat: input.lat,
         lon: input.lon,
         category: input.category,
         payment_methods: input.paymentMethods,
         tech_provider: techProvider,
-        country,
-        street,
-        house_number: houseNumber,
-        postal_code: postalCode,
-        city,
-        shop_name: shopName,
+        country: input.country,
+        street: input.street,
+        house_number: input.houseNumber,
+        postal_code: input.postalCode,
+        city: input.city,
+        shop_type: input.shopType,
       }),
     };
   }
@@ -615,14 +554,14 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Newest pins first, then id descending.
+   * Newest complete pins first, then id descending.
    *
    * @param limit - Maximum rows.
    * @param filter - Optional AND predicates, applied before sort and limit.
    * @returns Stored pins.
    */
   list(limit: number, filter?: MapPlaceListFilter): StoredMapPlace[] {
-    const where: string[] = [];
+    const where: string[] = [COMPLETE_PLACE_SQL];
     const params: Array<string | number> = [];
     if (filter?.origin !== undefined) {
       where.push('origin = ?');
@@ -632,12 +571,9 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
       where.push('country = ?');
       params.push(filter.country);
     }
-    if (filter?.shopName === 'SPAR') {
-      where.push('shop_name = ?');
-      params.push('SPAR');
-    } else if (filter?.shopName === 'others') {
-      where.push('(shop_name IS NULL OR shop_name <> ?)');
-      params.push('SPAR');
+    if (filter?.shopType !== undefined) {
+      where.push('shop_type = ?');
+      params.push(filter.shopType);
     }
     if (filter !== undefined && (filter.blockchain !== undefined || filter.asset !== undefined)) {
       const payment = unstatedPaymentSql(filter.blockchain, filter.asset);
@@ -657,7 +593,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
         params.push(filter.asset);
       }
     }
-    const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    const whereSql = `WHERE ${where.join(' AND ')}`;
     const rows = this.#db
       .query(
         `SELECT ${MAP_PLACE_COLUMNS}
@@ -674,7 +610,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
    * Distinct stored filter values, sorted.
    *
    * @param blockchain - When set, only assets stored on that network.
-   * @returns Countries, blockchains, and assets. Shop names are not read.
+   * @returns Countries of complete rows, plus blockchains and assets from every row.
    */
   filters(blockchain?: string | undefined): {
     countries: string[];
@@ -685,7 +621,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
       .query(
         `SELECT DISTINCT country
          FROM map_place
-         WHERE country IS NOT NULL
+         WHERE ${COMPLETE_PLACE_SQL}
          ORDER BY country`,
       )
       .all() as Array<{ country: string }>;
