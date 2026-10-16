@@ -7,6 +7,7 @@ import {
   type PlaceActivity,
   type StoredMapPlace,
 } from '@/lib/map/place';
+import type { SparAddressUpdate } from '@/lib/map/spar-address';
 import { MAP_PLACE_SCHEMA_SQL, type MapPlaceListFilter, type MapPlaceStore } from '@/lib/map/store';
 
 const MAP_PLACE_COLUMNS =
@@ -501,6 +502,50 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
         shop_name: shopName,
       }),
     };
+  }
+
+  /**
+   * Write name and the four address fields on existing pins. Other columns stay.
+   *
+   * @param updates - Rows keyed by origin and external id.
+   * @returns How many stored rows changed.
+   */
+  applySparPaymentLinkAddresses(updates: readonly SparAddressUpdate[]): number {
+    const find = this.#db.query(
+      `SELECT ${MAP_PLACE_COLUMNS}
+       FROM map_place WHERE origin = ? AND external_id = ?`,
+    );
+    const write = this.#db.query(
+      `UPDATE map_place SET name = ?, street = ?, house_number = ?, postal_code = ?, city = ?
+       WHERE origin = ? AND external_id = ?`,
+    );
+    let changed = 0;
+    for (const update of updates) {
+      const existing = find.get(update.origin, update.externalId) as MapPlaceRow | null;
+      if (existing === null) {
+        continue;
+      }
+      if (
+        existing.name === update.name &&
+        existing.street === update.street &&
+        existing.house_number === update.houseNumber &&
+        existing.postal_code === update.postalCode &&
+        existing.city === update.city
+      ) {
+        continue;
+      }
+      write.run(
+        update.name,
+        update.street,
+        update.houseNumber,
+        update.postalCode,
+        update.city,
+        update.origin,
+        update.externalId,
+      );
+      changed += 1;
+    }
+    return changed;
   }
 
   /**

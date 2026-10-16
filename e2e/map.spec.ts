@@ -928,3 +928,8 @@ test('Function: SqliteMapPlaceStore — opening backfills only a null SPAR shop 
   const stdout = execFileSync('bun', ['e2e/sqlite-backfill.ts'], { encoding: 'utf8' });
   expect(stdout.trim()).toBe('ok');
 });
+
+test('Function: sparPaymentLinkAddressUpdates — a stored composite becomes the payment-link name', () => {
+  const stdout = execFileSync('bun', ['e2e/spar-address.ts'], { encoding: 'utf8' });
+  expect(stdout.trim()).toBe('ok');
+});

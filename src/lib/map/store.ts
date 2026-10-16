@@ -6,6 +6,7 @@ import {
   type MapPlaceSupport,
   type StoredMapPlace,
 } from '@/lib/map/place';
+import type { SparAddressUpdate } from '@/lib/map/spar-address';
 
 const DEFAULT_TECH_PROVIDER = 'DFX.swiss';
 
@@ -182,6 +183,7 @@ function storedPaymentDays(days: Set<string> | undefined): string[] {
 export interface MapPlaceStore {
   insertIfNew(input: MapPlaceInput): { created: boolean; place: StoredMapPlace };
   upsert(input: MapPlaceInput): { created: boolean; place: StoredMapPlace };
+  applySparPaymentLinkAddresses(updates: readonly SparAddressUpdate[]): number;
   recordTransaction(
     origin: string,
     externalId: string,
@@ -274,6 +276,40 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
       existing.supports = storedSupports(input.supports);
     }
     return { created: false, place: copyStoredPlace(existing) };
+  }
+
+  /**
+   * Write name and the four address fields on existing pins. Other columns stay.
+   *
+   * @param updates - Rows keyed by origin and external id.
+   * @returns How many stored rows changed.
+   */
+  applySparPaymentLinkAddresses(updates: readonly SparAddressUpdate[]): number {
+    let changed = 0;
+    for (const update of updates) {
+      const existing = this.#rows.find(
+        (row) => row.origin === update.origin && row.externalId === update.externalId,
+      );
+      if (existing === undefined) {
+        continue;
+      }
+      if (
+        existing.name === update.name &&
+        existing.street === update.street &&
+        existing.houseNumber === update.houseNumber &&
+        existing.postalCode === update.postalCode &&
+        existing.city === update.city
+      ) {
+        continue;
+      }
+      existing.name = update.name;
+      existing.street = update.street;
+      existing.houseNumber = update.houseNumber;
+      existing.postalCode = update.postalCode;
+      existing.city = update.city;
+      changed += 1;
+    }
+    return changed;
   }
 
   /**

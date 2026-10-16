@@ -645,4 +645,54 @@ describe('MemoryMapPlaceStore', () => {
     store.refreshActivity(nowMs + 1);
     expect(store.list(1)[0]?.activity).toBe('olderThan30Days');
   });
+
+  it('applySparPaymentLinkAddresses changes only name and the four address fields', () => {
+    const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
+    const created = store.insertIfNew({
+      ...input,
+      origin: 'spar',
+      externalId: 'spar-1',
+      name: 'SPAR Teststrasse 7, 1234 Testort',
+      lat: 47.14,
+      lon: 9.52,
+      country: 'LI',
+      shopName: 'SPAR',
+    });
+    const update = {
+      origin: 'spar',
+      externalId: 'spar-1',
+      name: 'SPAR',
+      street: 'Teststrasse',
+      houseNumber: '7',
+      postalCode: '1234',
+      city: 'Testort',
+    };
+    const counted = store.applySparPaymentLinkAddresses([
+      update,
+      {
+        origin: 'spar',
+        externalId: 'missing',
+        name: 'SPAR',
+        street: 'Andere',
+        houseNumber: '1',
+        postalCode: '8000',
+        city: 'Teststadt',
+      },
+    ]);
+    expect(counted).toBe(1);
+    const listed = store.list(1)[0];
+    expect(listed?.name).toBe('SPAR');
+    expect(listed?.street).toBe('Teststrasse');
+    expect(listed?.houseNumber).toBe('7');
+    expect(listed?.postalCode).toBe('1234');
+    expect(listed?.city).toBe('Testort');
+    expect(listed?.shopName).toBe('SPAR');
+    expect(listed?.country).toBe('LI');
+    expect(listed?.lat).toBe(47.14);
+    expect(listed?.lon).toBe(9.52);
+    expect(listed?.id).toBe(created.place.id);
+    expect(listed?.category).toBe(input.category);
+    expect(listed?.techProvider).toBe('DFX.swiss');
+    expect(store.applySparPaymentLinkAddresses([update])).toBe(0);
+  });
 });

@@ -950,4 +950,237 @@ describe('map routes', () => {
     };
     expect(after.places.find((row) => row.name === 'Stale Clock')?.activity).toBe('within30Days');
   });
+
+  it('fills SPAR address fields from the public location list and caches the array', async () => {
+    const street = 'Teststrasse';
+    const houseNumber = '7';
+    const zip = '1234';
+    const city = 'Testort';
+    const composite = `SPAR ${street} ${houseNumber}, ${zip} ${city}`;
+    const locationsUrl = 'https://locations.test/v1/paymentLink/locations';
+    const store = new MemoryMapPlaceStore();
+    store.insertIfNew({
+      origin: 'spar',
+      externalId: 'spar-1',
+      name: composite,
+      lat: 47.14,
+      lon: 9.52,
+      category: 'groceries',
+      paymentMethods: 'lightning',
+      country: 'LI',
+      shopName: 'SPAR',
+    });
+    const calls: Array<{ url: string; method: string | undefined; headers: Headers }> = [];
+    let clock = Date.parse('2026-10-16T00:00:00.000Z');
+    const api = app({
+      store,
+      env: { DFX_SPAR_LOCATIONS_URL: locationsUrl },
+      now: () => clock,
+      fetchImpl: async (input, init) => {
+        calls.push({
+          url: input,
+          method: init.method,
+          headers: new Headers(init.headers),
+        });
+        return new Response(
+          JSON.stringify([
+            {
+              street,
+              houseNumber,
+              zip,
+              city,
+              country: 'CH',
+            },
+          ]),
+          { status: 200 },
+        );
+      },
+    });
+    const listed = await api.request('/map/places');
+    expect(listed.status).toBe(200);
+    const json = (await listed.json()) as {
+      places: Array<{
+        name: string;
+        street: string | null;
+        houseNumber: string | null;
+        postalCode: string | null;
+        city: string | null;
+        country: string | null;
+        lat: number;
+        shopName: string | null;
+      }>;
+    };
+    expect(json.places).toHaveLength(1);
+    expect(json.places[0]?.name).toBe('SPAR');
+    expect(json.places[0]?.street).toBe(street);
+    expect(json.places[0]?.houseNumber).toBe(houseNumber);
+    expect(json.places[0]?.postalCode).toBe(zip);
+    expect(json.places[0]?.city).toBe(city);
+    expect(json.places[0]?.country).toBe('LI');
+    expect(json.places[0]?.lat).toBe(47.14);
+    expect(json.places[0]?.shopName).toBe('SPAR');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe(locationsUrl);
+    expect(calls[0]?.method).toBe('GET');
+    expect(calls[0]?.headers.get('Accept')).toBe('application/json');
+    expect(calls[0]?.headers.get('User-Agent')).toBe('opencryptopay-api');
+    const cached = await api.request('/map/places');
+    expect(cached.status).toBe(200);
+    expect(calls).toHaveLength(1);
+    clock += 10 * 60 * 1000;
+    const expired = await api.request('/map/places');
+    expect(expired.status).toBe(200);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('returns stored SPAR rows when the location fetch rejects', async () => {
+    const composite = 'SPAR Teststrasse 7, 1234 Testort';
+    const store = new MemoryMapPlaceStore();
+    store.insertIfNew({
+      origin: 'spar',
+      externalId: 'spar-1',
+      name: composite,
+      lat: 47.14,
+      lon: 9.52,
+      category: 'groceries',
+      paymentMethods: 'lightning',
+      country: 'LI',
+      shopName: 'SPAR',
+    });
+    const calls: string[] = [];
+    const api = app({
+      store,
+      env: { DFX_SPAR_LOCATIONS_URL: 'https://locations.test/v1/paymentLink/locations' },
+      fetchImpl: async (input) => {
+        calls.push(input);
+        throw new Error('down');
+      },
+    });
+    const listed = await api.request('/map/places');
+    expect(listed.status).toBe(200);
+    const json = (await listed.json()) as {
+      places: Array<{
+        name: string;
+        street: string | null;
+        houseNumber: string | null;
+        postalCode: string | null;
+        city: string | null;
+      }>;
+    };
+    expect(json.places[0]?.name).toBe(composite);
+    expect(json.places[0]?.street).toBeNull();
+    expect(json.places[0]?.houseNumber).toBeNull();
+    expect(json.places[0]?.postalCode).toBeNull();
+    expect(json.places[0]?.city).toBeNull();
+    expect(calls).toHaveLength(1);
+    const again = await api.request('/map/places');
+    expect(again.status).toBe(200);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('does not fetch when DFX_SPAR_LOCATIONS_URL is off or blank', async () => {
+    const composite = 'SPAR Teststrasse 7, 1234 Testort';
+    const pin = {
+      origin: 'spar' as const,
+      externalId: 'spar-1',
+      name: composite,
+      lat: 47.14,
+      lon: 9.52,
+      category: 'groceries',
+      paymentMethods: 'lightning',
+      country: 'LI',
+      shopName: 'SPAR',
+    };
+    for (const url of ['off', '  ']) {
+      const store = new MemoryMapPlaceStore();
+      store.insertIfNew(pin);
+      const calls: string[] = [];
+      const api = app({
+        store,
+        env: { DFX_SPAR_LOCATIONS_URL: url },
+        fetchImpl: async (input) => {
+          calls.push(input);
+          return new Response('[]', { status: 200 });
+        },
+      });
+      const listed = await api.request('/map/places');
+      expect(listed.status).toBe(200);
+      const json = (await listed.json()) as { places: Array<{ name: string }> };
+      expect(json.places[0]?.name).toBe(composite);
+      expect(calls).toHaveLength(0);
+    }
+  });
+
+  it('rejects an invalid limit before fetching SPAR locations', async () => {
+    const store = new MemoryMapPlaceStore();
+    store.insertIfNew({
+      origin: 'spar',
+      externalId: 'spar-1',
+      name: 'SPAR Teststrasse 7, 1234 Testort',
+      lat: 47.14,
+      lon: 9.52,
+      category: 'groceries',
+      paymentMethods: 'lightning',
+      country: 'LI',
+      shopName: 'SPAR',
+    });
+    const calls: string[] = [];
+    const api = app({
+      store,
+      env: { DFX_SPAR_LOCATIONS_URL: 'https://locations.test/v1/paymentLink/locations' },
+      fetchImpl: async (input) => {
+        calls.push(input);
+        return new Response('[]', { status: 200 });
+      },
+    });
+    const bad = await api.request('/map/places?limit=no');
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toEqual({ error: 'Invalid limit' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('leaves stored SPAR rows when the location list is not a 200 JSON array', async () => {
+    const composite = 'SPAR Teststrasse 7, 1234 Testort';
+    const store = new MemoryMapPlaceStore();
+    store.insertIfNew({
+      origin: 'spar',
+      externalId: 'spar-1',
+      name: composite,
+      lat: 47.14,
+      lon: 9.52,
+      category: 'groceries',
+      paymentMethods: 'lightning',
+      country: 'LI',
+      shopName: 'SPAR',
+    });
+    const calls: string[] = [];
+    let body: string | undefined;
+    let status = 201;
+    const api = app({
+      store,
+      fetchImpl: async (input) => {
+        calls.push(input);
+        if (body === undefined) {
+          return new Response('{}', { status });
+        }
+        return new Response(body, { status });
+      },
+    });
+    const first = await api.request('/map/places');
+    expect(first.status).toBe(200);
+    expect(calls).toEqual(['https://api.dfx.swiss/v1/paymentLink/locations?publicName=SPAR']);
+    status = 200;
+    body = '{';
+    expect((await api.request('/map/places')).status).toBe(200);
+    body = '{}';
+    expect((await api.request('/map/places')).status).toBe(200);
+    body = 'x'.repeat(1_000_001);
+    expect((await api.request('/map/places')).status).toBe(200);
+    const listed = (await (await api.request('/map/places')).json()) as {
+      places: Array<{ name: string; street: string | null }>;
+    };
+    expect(listed.places[0]?.name).toBe(composite);
+    expect(listed.places[0]?.street).toBeNull();
+    expect(calls).toHaveLength(5);
+  });
 });

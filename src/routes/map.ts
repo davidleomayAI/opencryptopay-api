@@ -11,7 +11,26 @@ import {
   normalizePlaceTransaction,
   toPublicMapPlace,
 } from '@/lib/map/place';
+import { sparPaymentLinkAddressUpdates } from '@/lib/map/spar-address';
 import type { MapPlaceListFilter, MapPlaceStore } from '@/lib/map/store';
+
+const DEFAULT_SPAR_LOCATIONS_URL = 'https://api.dfx.swiss/v1/paymentLink/locations?publicName=SPAR';
+const SPAR_LOCATIONS_CACHE_MS = 10 * 60 * 1000;
+const SPAR_LOCATIONS_TIMEOUT_MS = 3_000;
+const SPAR_LOCATIONS_BODY_MAX = 1_000_000;
+const SPAR_PAYMENT_LINK_NAME = 'SPAR';
+
+function sparLocationsUrl(env: Record<string, string | undefined>): string | undefined {
+  const raw = env['DFX_SPAR_LOCATIONS_URL'];
+  if (raw === undefined) {
+    return DEFAULT_SPAR_LOCATIONS_URL;
+  }
+  const trimmed = raw.trim();
+  if (trimmed === '' || trimmed === 'off') {
+    return undefined;
+  }
+  return trimmed;
+}
 
 export type MapRouteDeps = {
   store: MapPlaceStore;
@@ -50,6 +69,7 @@ function checkIngest(
  */
 export function mapRoutes(deps: MapRouteDeps): Hono {
   const now = deps.now ?? (() => Date.now());
+  let sparLocationsCache: { fetchedAt: number; locations: unknown[] } | undefined;
   const app = new Hono();
   app.use(
     '*',
@@ -59,7 +79,41 @@ export function mapRoutes(deps: MapRouteDeps): Hono {
     }),
   );
 
-  app.get('/places', (c) => {
+  async function loadSparPaymentLinkLocations(url: string): Promise<unknown[] | undefined> {
+    if (
+      sparLocationsCache !== undefined &&
+      now() - sparLocationsCache.fetchedAt < SPAR_LOCATIONS_CACHE_MS
+    ) {
+      return sparLocationsCache.locations;
+    }
+    try {
+      const response = await deps.fetchImpl(url, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': 'opencryptopay-api',
+        },
+        signal: AbortSignal.timeout(SPAR_LOCATIONS_TIMEOUT_MS),
+      });
+      if (response.status !== 200) {
+        return undefined;
+      }
+      const body = await response.text();
+      if (body.length > SPAR_LOCATIONS_BODY_MAX) {
+        return undefined;
+      }
+      const parsed: unknown = JSON.parse(body);
+      if (!Array.isArray(parsed)) {
+        return undefined;
+      }
+      sparLocationsCache = { fetchedAt: now(), locations: parsed };
+      return parsed;
+    } catch {
+      return undefined;
+    }
+  }
+
+  app.get('/places', async (c) => {
     const limitQuery = c.req.query('limit');
     let limit = 1000;
     if (limitQuery !== undefined) {
@@ -93,6 +147,18 @@ export function mapRoutes(deps: MapRouteDeps): Hono {
     const filter: MapPlaceListFilter = { ...parsedFilter.value };
     if (origin !== undefined) {
       filter.origin = origin;
+    }
+    const locationsUrl = sparLocationsUrl(deps.env);
+    if (locationsUrl !== undefined) {
+      const sparPlaces = deps.store.list(1000, { origin: 'spar', shopName: 'SPAR' });
+      if (sparPlaces.length > 0) {
+        const locations = await loadSparPaymentLinkLocations(locationsUrl);
+        if (locations !== undefined) {
+          deps.store.applySparPaymentLinkAddresses(
+            sparPaymentLinkAddressUpdates(sparPlaces, SPAR_PAYMENT_LINK_NAME, locations),
+          );
+        }
+      }
     }
     const places = deps.store.list(limit, filter).map((place) => toPublicMapPlace(place));
     return c.json({ places });

@@ -25,6 +25,7 @@ export default defineConfig({
       OCP_PLACE_INGEST_TOKEN: 'e2e-ingest',
       BTCMAP_ACCESS_TOKEN: '',
       BTCMAP_SUBMIT_URL: '',
+      DFX_SPAR_LOCATIONS_URL: 'off',
     },
   },
 });
