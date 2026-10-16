@@ -10,19 +10,22 @@ the API guarantees it for every shop in that list, without exception.
 
 ## R1 Activity
 
-Every shop must state how active it is, as exactly one of these levels:
+Every shop must state how active it is, as exactly one of these levels. The
+first level that applies, top to bottom, is the shop's level:
 
-| Level              | Meaning                                                     |
-| ------------------ | ----------------------------------------------------------- |
-| daily              | The shop takes payments on a daily basis.                   |
-| last 7 days        | The latest transaction is at most 7 days old.               |
-| last 30 days       | The latest transaction is older than 7 and at most 30 days. |
-| older than 30 days | The latest transaction is older than 30 days.               |
-| never              | The shop has never had a transaction.                       |
+| Level              | Token             | Meaning                                                                  |
+| ------------------ | ----------------- | ------------------------------------------------------------------------ |
+| daily              | `daily`           | Payments on at least five distinct UTC dates within the last seven.      |
+| last 7 days        | `within7Days`     | Not daily, and the latest transaction is at most 7×24 hours old.         |
+| last 30 days       | `within30Days`    | The latest transaction is older than 7×24 hours and at most 30×24 hours. |
+| older than 30 days | `olderThan30Days` | The latest transaction is older than 30×24 hours.                        |
+| never              | `none`            | The shop has never had a transaction.                                    |
 
+- The token is the value of `activity` in `GET /map/places`. The exact
+  boundaries are in the [handbook](../handbook/endpoints.md).
 - The level is always present. It is never null and never omitted.
-- "Never" is only for a shop with no transaction at all. A shop with an old
-  transaction is "older than 30 days", not "never".
+- "Never" (`none`) is only for a shop with no transaction at all. A shop with
+  an old transaction is "older than 30 days", not "never".
 
 ## R2 Address
 

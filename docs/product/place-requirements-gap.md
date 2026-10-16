@@ -15,11 +15,11 @@ Every row below that is not "met" is a defect against the requirements.
 
 | Req | Topic             | Code on `develop` | Production | Data                | Sources |
 | --- | ----------------- | ----------------- | ---------- | ------------------- | ------- |
-| R1  | Activity          | met               | not met    | not met (see R1)    | partly  |
+| R1  | Activity          | met               | not met    | unknown (see R1)    | partly  |
 | R2  | Address           | not met           | not met    | 0 of 193 complete   | not met |
 | R3  | GPS coordinates   | met               | met        | 193 of 193          | met     |
 | R4  | Name, description | not met           | not met    | 0 of 193 described  | not met |
-| R5  | Shop type         | not met           | not met    | no such field       | not met |
+| R5  | Shop type         | not met           | not met    | no enum (see R5)    | not met |
 | R6  | Enforcement       | not met           | not met    | 193 of 193 accepted | n/a     |
 
 ## Live data
@@ -55,6 +55,9 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
 - **Production:** not met. It runs `e603b76a`, which only knows
   `within7Days`, `within30Days`, and `none`. `daily` and `olderThan30Days` are
   missing, so an old transaction shows as `none`.
+- **Data:** unknown. Production shows `none` for all 170 SPAR rows and 3
+  21.gifts rows, and development shows `none` for every row. `none` is correct
+  only if those shops never had a transaction, which is not established.
 - **Sources:** both report transactions through
   `POST /map/places/transactions`. All 170 SPAR rows show `none` on both
   hosts, so either no SPAR transaction has been reported or reports do not
@@ -64,10 +67,12 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
 
 - **Target:** street, house number, postal code, city, country; all required,
   each its own field, official spelling.
-- **Code:** not met. `street`, `houseNumber`, `postalCode`, `city`, and
-  `country` exist but are optional; an omitted part keeps the stored value or
-  stays null (`normalizeOptionalAddressPart` in `src/lib/map/place.ts`). There
-  is no check that the parts form a valid address.
+- **Code:** not met. `street`, `houseNumber`, `postalCode`, and `city` are
+  optional (`normalizeOptionalAddressPart` in `src/lib/map/place.ts`), and so
+  is `country` (`normalizeMapPlace`). On an update, the store keeps a stored
+  part that the request omits, and a new row stores null
+  (`src/lib/map/store.ts`, `src/lib/map/sqlite.ts`). There is no check that
+  the parts form a valid address.
 - **Code, derived values:** the store fills a missing `country` from the name:
   the last four-digit word of a `spar` name, and a fixed name table for four
   `21gifts` rows (`backfillMissingCountry` in `src/lib/map/sqlite.ts`). R6
@@ -112,12 +117,14 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
 - **Target:** its own required enum field, values `SPAR` and `Others` for
   now, extensible, independent of the name.
 - **Code:** not met. `shopName` is an optional free string of up to 40
-  characters, not an enum. Only the query filter knows `SPAR` and `others`
-  (lowercase), and `others` matches a row without a brand
-  (`src/lib/map/store.ts`, `src/lib/map/sqlite.ts`).
+  characters, not an enum. It is the field that holds the brand today. Only
+  the query filter and `shopNames` of `GET /map/filters` know `SPAR` and
+  `others` (lowercase), and `others` matches every row whose `shopName` is not
+  `SPAR`, including null (`src/lib/map/store.ts`, `src/lib/map/sqlite.ts`).
 - **Code, derived values:** the store sets `shopName` to `SPAR` for every
   `spar` row that has none. R5 forbids that derivation.
-- **Data:** 170 rows `SPAR`, 23 (prod) and 21 (dev) rows null.
+- **Data:** no shop-type enum exists. `shopName` is `SPAR` on 170 rows and
+  null on 23 (prod) and 21 (dev) rows.
 - **Sources:** neither sends a shop type.
 
 ## R6 Enforcement at registration
@@ -134,8 +141,9 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
 
 ## What closes the gap
 
-1. API: add a required description and a required shop type enum (`SPAR`,
-   `Others`); make every address part required; reject incomplete or invalid
+1. API: add a required description; turn `shopName` into the required shop
+   type enum (`SPAR`, `Others`), with the filter and `GET /map/filters` on
+   the same values; make every address part required; reject incomplete or invalid
    input on `POST` and `PUT /map/places`; stop deriving `country` and
    `shopName`; leave incomplete stored rows out of `GET /map/places`.
 2. DFX.swiss: send name, description, shop type, the full address, and
