@@ -15,9 +15,9 @@ Every row below that is not "met" is a defect against the requirements.
 
 | Req | Topic             | Code on `develop` | Production | Data                | Sources |
 | --- | ----------------- | ----------------- | ---------- | ------------------- | ------- |
-| R1  | Activity          | met               | not met    | unknown (see R1)    | partly  |
+| R1  | Activity          | partly            | not met    | unknown (see R1)    | partly  |
 | R2  | Address           | not met           | not met    | 0 of 193 complete   | not met |
-| R3  | GPS coordinates   | met               | met        | 193 of 193          | met     |
+| R3  | GPS coordinates   | partly            | partly     | 193 of 193 present  | partly  |
 | R4  | Name, description | not met           | not met    | 0 of 193 described  | not met |
 | R5  | Shop type         | not met           | not met    | no enum (see R5)    | not met |
 | R6  | Enforcement       | not met           | not met    | 193 of 193 accepted | n/a     |
@@ -45,7 +45,7 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
 
 - **Target:** one of daily, last 7 days, last 30 days, older than 30 days,
   never; always present.
-- **Code:** met. `activity` is always one of `daily`, `within7Days`,
+- **Code:** partly met. `activity` is always one of `daily`, `within7Days`,
   `within30Days`, `olderThan30Days`, `none` (`src/lib/map/place.ts`,
   `placeActivity`). `daily` is defined as at least five distinct UTC payment
   dates within the last seven UTC dates. A source cannot set it.
@@ -94,11 +94,12 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
 ## R3 GPS coordinates
 
 - **Target:** latitude and longitude, required, at the shop.
-- **Code:** met. `lat` and `lon` are required numbers in range and are
-  rounded to six decimal places.
-- **Data:** every row on both hosts has both.
-- **Open point:** no check that the point lies at the R2 address, because R2
-  data does not exist yet.
+- **Code:** partly met. `lat` and `lon` are required numbers in range and are
+  rounded to six decimal places. Nothing checks that the point lies at the R2
+  address, because R2 data does not exist yet.
+- **Data:** every row on both hosts has both. Whether each point lies at the
+  shop is not checked.
+- **Sources:** both send coordinates. Neither ties them to an address.
 
 ## R4 Name and description
 
@@ -122,16 +123,17 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
   `others` (lowercase), and `others` matches every row whose `shopName` is not
   `SPAR`, including null (`src/lib/map/store.ts`, `src/lib/map/sqlite.ts`).
 - **Code, derived values:** the store sets `shopName` to `SPAR` for every
-  `spar` row that has none. R5 forbids that derivation.
+  `spar` row that has none, derived from `origin`. R6 forbids that
+  derivation.
 - **Data:** no shop-type enum exists. `shopName` is `SPAR` on 170 rows and
   null on 23 (prod) and 21 (dev) rows.
 - **Sources:** neither sends a shop type.
 
 ## R6 Enforcement at registration
 
-- **Target:** a registration or update without every field of R2 to R5 in the
-  expected quality is rejected and stores nothing; incomplete stored rows are
-  not public.
+- **Target:** a registration without every field of R2 to R5 in the expected
+  quality, or an update whose resulting stored shop would lack one, is
+  rejected and stores nothing; incomplete stored rows are not public.
 - **Code:** not met. `POST` and `PUT /map/places` accept a shop with only
   `origin`, `externalId`, `name`, `lat`, `lon`, and `category`. A missing
   country, address part, or brand is accepted. `GET /map/places` serves every
@@ -143,14 +145,21 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
 
 1. API: add a required description; turn `shopName` into the required shop
    type enum (`SPAR`, `Others`), with the filter and `GET /map/filters` on
-   the same values; make every address part required; reject incomplete or invalid
-   input on `POST` and `PUT /map/places`; stop deriving `country` and
-   `shopName`; leave incomplete stored rows out of `GET /map/places`.
+   the same values; make every address part required; validate the resulting
+   stored shop of every `POST` and `PUT /map/places` against R2 to R5 and
+   reject it when it fails; stop deriving `country` and `shopName`; leave
+   incomplete stored rows out of `GET /map/places`; classify an unparseable
+   transaction time other than as "never"; check that the coordinates lie at
+   the address.
 2. DFX.swiss: send name, description, shop type, the full address, and
    coordinates for every SPAR shop through `PUT /map/places`.
-3. 21.gifts: collect a structured address and a description for every shop
-   and send them with the shop type.
+3. 21.gifts: collect a descriptive name without the address, a structured
+   address, and a description for every shop, and send them with the shop
+   type.
 4. Production: release `develop` so that R1 is served with all five levels.
+   The release stores at most one payment date per shop from its latest
+   transaction, so `daily` appears only after five payment dates are recorded
+   after the release.
 
 Until steps 2 and 3 are done, step 1 removes every current shop from the
 public list.
