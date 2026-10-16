@@ -114,6 +114,11 @@ describe('normalizeMapPlace', () => {
       ok: false,
       error: 'Place field is not allowed: address',
     });
+    const longKey = 'k'.repeat(60);
+    expect(normalizeMapPlace({ ...valid, [longKey]: 1 })).toEqual({
+      ok: false,
+      error: `Place field is not allowed: ${'k'.repeat(40)}`,
+    });
   });
 
   it('rejects coordinates that are not finite numbers in range', () => {
@@ -185,6 +190,29 @@ describe('normalizeMapPlace', () => {
       ok: false,
       error: 'Place name must not contain the address',
     });
+    expect(normalizeMapPlace({ ...valid, name: 'SPAR Dorf 3', street: 'Dorf' })).toEqual({
+      ok: false,
+      error: 'Place name must not contain the address',
+    });
+  });
+
+  it('accepts a name that only shares a street prefix or a longer postal code', () => {
+    const village = normalizeMapPlace({
+      ...valid,
+      name: 'SPAR Dorfladen',
+      street: 'Dorf',
+    });
+    expect(village.ok && village.value.name).toBe('SPAR Dorfladen');
+    const longerPostal = normalizeMapPlace({ ...valid, name: 'SPAR 94950' });
+    expect(longerPostal.ok && longerPostal.value.name).toBe('SPAR 94950');
+    const gluedPostal = normalizeMapPlace({ ...valid, name: 'Shop9495' });
+    expect(gluedPostal.ok && gluedPostal.value.name).toBe('Shop9495');
+    const dottedStreet = normalizeMapPlace({
+      ...valid,
+      name: 'SPAR St. Gallen',
+      street: 'St. Gallerstrasse',
+    });
+    expect(dottedStreet.ok && dottedStreet.value.name).toBe('SPAR St. Gallen');
   });
 
   it('omits an absent, null, or trim-empty tech provider', () => {
@@ -281,7 +309,8 @@ describe('normalizeMapPlace', () => {
   it('requires shopType SPAR or Others and rejects the old shop name values', () => {
     const others = normalizeMapPlace({ ...valid, shopType: 'Others' });
     expect(others.ok && others.value.shopType).toBe('Others');
-    expect(normalizeMapPlace({ ...valid, shopType: ' SPAR ' }).ok && true).toBe(true);
+    const trimmedSpar = normalizeMapPlace({ ...valid, shopType: ' SPAR ' });
+    expect(trimmedSpar.ok && trimmedSpar.value.shopType).toBe('SPAR');
     expect(normalizeMapPlace({ ...valid, shopType: 'others' })).toEqual({
       ok: false,
       error: 'Place shop type is invalid',
@@ -391,6 +420,10 @@ describe('normalizeMapPlace', () => {
       ok: false,
       error: 'Place house number is invalid',
     });
+    expect(normalizeMapPlace({ ...valid, houseNumber: '4\n' })).toEqual({
+      ok: false,
+      error: 'Place house number is invalid',
+    });
   });
 
   it('rejects an invalid postal code, including CH and LI that are not four digits', () => {
@@ -415,6 +448,18 @@ describe('normalizeMapPlace', () => {
       error: 'Place postal code is invalid',
     });
     expect(normalizeMapPlace({ ...valid, country: 'CH', postalCode: '800' })).toEqual({
+      ok: false,
+      error: 'Place postal code is invalid',
+    });
+    expect(normalizeMapPlace({ ...valid, country: 'CH', postalCode: '80011' })).toEqual({
+      ok: false,
+      error: 'Place postal code is invalid',
+    });
+    expect(normalizeMapPlace({ ...valid, country: 'LI', postalCode: '94951' })).toEqual({
+      ok: false,
+      error: 'Place postal code is invalid',
+    });
+    expect(normalizeMapPlace({ ...valid, postalCode: '8001\n' })).toEqual({
       ok: false,
       error: 'Place postal code is invalid',
     });
@@ -504,6 +549,33 @@ describe('normalizeMapPlace', () => {
       description: `${DESCRIPTION}\nSecond line about the checkout.`,
     });
     expect(withNewline.ok && withNewline.value.description).toContain('\n');
+    const withCrlf = normalizeMapPlace({
+      ...valid,
+      description: `${DESCRIPTION}\r\nSecond line about the checkout.`,
+    });
+    expect(withCrlf.ok && withCrlf.value.description).toBe(
+      `${DESCRIPTION}\nSecond line about the checkout.`,
+    );
+    const withCr = normalizeMapPlace({
+      ...valid,
+      description: `${DESCRIPTION}\rSecond line about the checkout.`,
+    });
+    expect(withCr.ok && withCr.value.description).toBe(
+      `${DESCRIPTION}\nSecond line about the checkout.`,
+    );
+    const shortName = 'SPAR';
+    const twenty = normalizeMapPlace({
+      ...valid,
+      name: shortName,
+      description: 'd'.repeat(20),
+    });
+    expect(twenty.ok && twenty.value.description).toBe('d'.repeat(20));
+    const thousand = normalizeMapPlace({
+      ...valid,
+      name: shortName,
+      description: 'd'.repeat(1000),
+    });
+    expect(thousand.ok && thousand.value.description).toBe('d'.repeat(1000));
     expect(
       normalizeMapPlace({
         ...valid,
@@ -513,6 +585,24 @@ describe('normalizeMapPlace', () => {
       ok: false,
       error: 'Place description is invalid',
     });
+  });
+
+  it('rejects an omitted, null, or undefined required place field', () => {
+    const cases = [
+      ['description', 'Place description is invalid'],
+      ['shopType', 'Place shop type is invalid'],
+      ['street', 'Place street is invalid'],
+      ['houseNumber', 'Place house number is invalid'],
+      ['postalCode', 'Place postal code is invalid'],
+      ['city', 'Place city is invalid'],
+    ] as const;
+    for (const [field, error] of cases) {
+      const omitted: Record<string, unknown> = { ...valid };
+      delete omitted[field];
+      expect(normalizeMapPlace(omitted)).toEqual({ ok: false, error });
+      expect(normalizeMapPlace({ ...valid, [field]: null })).toEqual({ ok: false, error });
+      expect(normalizeMapPlace({ ...valid, [field]: undefined })).toEqual({ ok: false, error });
+    }
   });
 
   it('stores an empty supports list when omitted', () => {

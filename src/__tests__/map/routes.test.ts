@@ -311,6 +311,16 @@ describe('map routes', () => {
     });
     expect(unknownKey.status).toBe(400);
     expect(await unknownKey.json()).toEqual({ error: 'Place field is not allowed: shopName' });
+    const longKey = 'k'.repeat(60);
+    const longUnknown = await api.request('/map/places', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify({ ...body, [longKey]: 1 }),
+    });
+    expect(longUnknown.status).toBe(400);
+    expect(await longUnknown.json()).toEqual({
+      error: `Place field is not allowed: ${'k'.repeat(40)}`,
+    });
     const deleteNoHeader = await api.request('/map/places', {
       method: 'DELETE',
       body: JSON.stringify({ origin: 'dfx', externalId: 'store-1' }),

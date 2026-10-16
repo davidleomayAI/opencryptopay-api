@@ -435,16 +435,14 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function containsStandalonePostalCode(name: string, postalCode: string): boolean {
-  const pattern = new RegExp(`(^|[^A-Za-z0-9])${escapeRegex(postalCode)}([^A-Za-z0-9]|$)`, 'i');
+function containsStandaloneToken(name: string, token: string): boolean {
+  const escaped = escapeRegex(token);
+  const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'iu');
   return pattern.test(name);
 }
 
 function nameContainsAddress(name: string, street: string, postalCode: string): boolean {
-  if (name.toLowerCase().includes(street.toLowerCase())) {
-    return true;
-  }
-  return containsStandalonePostalCode(name, postalCode);
+  return containsStandaloneToken(name, street) || containsStandaloneToken(name, postalCode);
 }
 
 function compareSupport(a: MapPlaceSupport, b: MapPlaceSupport): number {
@@ -555,6 +553,9 @@ function normalizeHouseNumber(
   if (typeof raw !== 'string') {
     return { ok: false, error: HOUSE_NUMBER_ERROR };
   }
+  if (!hasNoControls(raw)) {
+    return { ok: false, error: HOUSE_NUMBER_ERROR };
+  }
   const houseNumber = raw.trim();
   if (!HOUSE_NUMBER.test(houseNumber)) {
     return { ok: false, error: HOUSE_NUMBER_ERROR };
@@ -567,6 +568,9 @@ function normalizePostalCode(
   country: string,
 ): { ok: true; value: string } | { ok: false; error: string } {
   if (typeof raw !== 'string') {
+    return { ok: false, error: POSTAL_CODE_ERROR };
+  }
+  if (!hasNoControls(raw)) {
     return { ok: false, error: POSTAL_CODE_ERROR };
   }
   const postalCode = raw.trim();
@@ -613,7 +617,7 @@ function normalizeDescription(
   if (typeof raw !== 'string') {
     return { ok: false, error: DESCRIPTION_ERROR };
   }
-  const description = raw.trim();
+  const description = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
   if (
     description.length < 20 ||
     description.length > 1000 ||
@@ -745,7 +749,7 @@ export function normalizeMapPlace(
   const rec = input as Record<string, unknown>;
   for (const key of Object.keys(rec)) {
     if (!ALLOWED_PLACE_KEYS.has(key)) {
-      return { ok: false, error: `Place field is not allowed: ${key}` };
+      return { ok: false, error: `Place field is not allowed: ${key.slice(0, 40)}` };
     }
   }
 

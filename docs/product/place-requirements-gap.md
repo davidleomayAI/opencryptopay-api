@@ -110,10 +110,10 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
 
 - **Target:** a short descriptive name without the address, and a longer
   description; both required.
-- **Code:** met. `name` is required, 1 to 80 characters, and is rejected when
-  it contains the street text or the postal code as a standalone token.
-  `description` is required, 20 to 1000 characters, longer than the name and
-  not equal to it, and is stored and returned.
+- **Code:** met. `name` is required, 1 to 80 characters. The name must not
+  contain the street as a whole word. It must not contain the postal code as a
+  standalone token. `description` is required, 20 to 1000 characters, longer
+  than the name and not equal to it, and is stored and returned.
 - **Data:** all 170 SPAR names are `SPAR` plus the full address. 21.gifts names
   are the pin label, the author name, or `Shop`, cut to 80 characters.
 - **Sources:** neither sends a description. 21.gifts has the shop post text,
@@ -143,7 +143,9 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
   `PUT /map/places` reject a shop that lacks name, description, shop type,
   any address part, or coordinates, and store nothing on 400. `PUT` is a full
   replace. Unknown keys including `shopName` are rejected. Incomplete stored
-  rows are not public. The API does not derive a field from another field.
+  rows are not public. No stored field is derived from another field; the
+  response field `shopName` is a read-only alias of `shopType` kept for one
+  release.
 - **Data:** every one of the 193 production rows was accepted without a
   complete address, description, or shop type.
 
