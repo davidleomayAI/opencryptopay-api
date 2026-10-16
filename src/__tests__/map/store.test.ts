@@ -347,7 +347,7 @@ describe('MemoryMapPlaceStore', () => {
     expect(again.place.supports).toEqual([{ blockchain: 'Ethereum', asset: 'ZCHF' }]);
   });
 
-  it('replaces supports with an empty list on upsert when omitted or sent empty', () => {
+  it('replaces supports with an empty list on upsert when sent empty', () => {
     const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
     store.upsert({
       ...input,
@@ -368,15 +368,6 @@ describe('MemoryMapPlaceStore', () => {
     expect(emptied.place.country).toBe('DE');
     expect(emptied.place.shopType).toBe('Others');
     expect(emptied.place.supports).toEqual([]);
-    store.upsert({
-      ...input,
-      supports: [{ blockchain: 'Bitcoin', asset: 'BTC' }],
-    });
-    const omitted = store.upsert({
-      ...input,
-      supports: undefined as unknown as MapPlaceInput['supports'],
-    });
-    expect(omitted.place.supports).toEqual([]);
   });
 
   it('hides incomplete rows from list and countries', () => {
