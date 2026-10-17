@@ -58,8 +58,10 @@ Every shop must state a NOSTR public key:
 - `nostrPubkey` is added to `ALLOWED_PLACE_KEYS`.
 - A stored row without `nostrPubkey` is not complete. `COMPLETE_PLACE_SQL`
   and the memory store's `isCompletePlace` both require it, so such a row
-  stays out of every public response, in the same way PR #22 handles the
-  other fields. An existing row becomes public once it carries a key and
+  stays out of `GET /map/places` and `GET /map/places/{npub}`, in the same
+  way PR #22 handles the other fields. `GET /map/filters` keeps reading
+  blockchains and assets from every row, as it does today for any
+  incomplete row. An existing row becomes public once it carries a key and
   passes the completeness check of PR #22 (R2 to R5), whether the key
   arrives with a `PUT` or, as described above, with a `POST`.
 
@@ -190,11 +192,31 @@ stored bytes are the stripped bytes.
 
 ### Storage and URL
 
-- `map_photo (sha256 TEXT PRIMARY KEY, content_type, width, height, data BLOB)`
-  holds each distinct file once. `sha256` is the hash of the stripped bytes.
-- `map_place_photo (place_id, position, sha256, caption)` with primary key
-  `(place_id, position)`, position 0–9, foreign key to `map_place` with
-  `ON DELETE CASCADE`.
+- `map_photo` holds each distinct file once; `sha256` is the hash of the
+  stripped bytes. `map_place_photo` orders a place's photos:
+
+  ```sql
+  CREATE TABLE IF NOT EXISTS map_photo (
+    sha256 TEXT PRIMARY KEY,
+    content_type TEXT NOT NULL CHECK (content_type IN ('image/jpeg', 'image/png', 'image/webp')),
+    width INTEGER NOT NULL CHECK (width BETWEEN 1 AND 4096),
+    height INTEGER NOT NULL CHECK (height BETWEEN 1 AND 4096),
+    data BLOB NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS map_place_photo (
+    place_id TEXT NOT NULL,
+    position INTEGER NOT NULL CHECK (position BETWEEN 0 AND 9),
+    sha256 TEXT NOT NULL,
+    caption TEXT,
+    PRIMARY KEY (place_id, position),
+    FOREIGN KEY (place_id) REFERENCES map_place(id) ON DELETE CASCADE,
+    FOREIGN KEY (sha256) REFERENCES map_photo(sha256)
+  );
+  ```
+
+  The second foreign key has no cascade, so a file that a shop still uses
+  cannot be deleted.
+
 - `PUT /map/places` keeps the photos. `DELETE /map/places` removes them.
 - After `PUT /map/places/photos` and after `DELETE /map/places`, the same
   transaction deletes every `map_photo` row that no `map_place_photo` row of
@@ -267,6 +289,18 @@ shared link shows the shop's name and photo.
     photo, otherwise the site OG image), `twitter:*`;
   - `<link rel="canonical" href="https://opencryptopay.io/{npub}">`;
   - JSON-LD `LocalBusiness` with name, address, geo and image.
+- **Encoding:** names, descriptions, addresses and captions are source data
+  and may contain `<`, `>`, quotes or `</script>`. `shop.php` escapes every
+  value for its context:
+  - text and attributes: `htmlspecialchars` with `ENT_QUOTES`;
+  - the JSON-LD block: `json_encode` with
+    `JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT`;
+  - URLs: built only from the npub and the photo URLs the API returns.
+
+  The fixed sample shop behind the baseline has quotes, tags and
+  `</script>` in its name and description, so the baseline shows that the
+  escaping works.
+
 - **Statuses:** API 404 → HTTP 404 with a shop-not-found page. Any other
   status, a network error or a timeout → HTTP 503 with a retry message,
   never a blank page.
