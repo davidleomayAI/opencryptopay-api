@@ -342,9 +342,11 @@ shared link shows the shop's name and photo.
   `</script>` in its name and description, so the baseline shows that the
   escaping works.
 
-- **Statuses:** API 404 → HTTP 404 with a shop-not-found page. Any other
-  status, a network error or a timeout → HTTP 503 with a retry message,
-  never a blank page.
+- **Statuses:** the API call does not follow redirects. API 200 → the page
+  is rendered. API 301 (hex path) → HTTP 301 to `/{npub}`, with the npub
+  taken from the redirect target and checked against the npub pattern. API
+  404 → HTTP 404 with a shop-not-found page. Any other status, a network
+  error or a timeout → HTTP 503 with a retry message, never a blank page.
 - **Content:**
   - photo gallery: grid, opens full screen, keyboard and swipe navigation;
   - name and description;
