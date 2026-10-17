@@ -114,6 +114,37 @@ UUID no longer appears in any JSON: the `id` in the answers of `POST` and
 `PUT /map/places` is the npub, or `null` for a place without a key (step 1a
 only).
 
+## R8 Request order
+
+A source can time out a request that OpenCryptoPay still applies later. So
+that such a late request can never overwrite newer state, every write may
+carry a revision:
+
+- Field `revision` (integer, 1 or more) in `POST`, `PUT` and `DELETE` on
+  `/map/places` and in `PUT /map/places/photos`. It is optional; a source
+  that sends it must raise it for every request of the same place, places
+  and photos sharing one counter.
+- OpenCryptoPay keeps the highest accepted revision per `origin` +
+  `externalId` in its own table, which a place `DELETE` does not touch:
+
+  ```sql
+  CREATE TABLE IF NOT EXISTS map_place_revision (
+    origin TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    PRIMARY KEY (origin, external_id)
+  );
+  ```
+
+- A write whose revision is not higher than the stored one changes nothing
+  and gets **409** `{ "error": "Stale revision" }`. An accepted write stores
+  its revision in the same transaction. The photo route finds the pair
+  through the stored key.
+- A write without `revision` is not checked and stores nothing, as today.
+  A source that has sent a revision once keeps sending one.
+- `revision` is added to `ALLOWED_PLACE_KEYS` and to the allowed keys of the
+  photo route and of `DELETE /map/places`.
+
 ## Photos
 
 ### Delivery by the source
@@ -124,6 +155,7 @@ New endpoint `PUT /map/places/photos`, same bearer as the other write routes
 ```json
 {
   "nostrPubkey": "<64 hex>",
+  "revision": 42,
   "photos": [{ "contentType": "image/jpeg", "data": "<base64>", "caption": "Front" }]
 }
 ```
@@ -136,8 +168,8 @@ New endpoint `PUT /map/places/photos`, same bearer as the other write routes
 - At most 10 photos per shop.
 - Photos are separate from `PUT /map/places`, so a source does not resend
   megabytes on every text change.
-- Allowed keys: `nostrPubkey`, `photos`; per photo `contentType`, `data`,
-  `caption`. Any other key rejects the request, as `POST` and
+- Allowed keys: `nostrPubkey`, `revision` (R8), `photos`; per photo
+  `contentType`, `data`, `caption`. Any other key rejects the request, as `POST` and
   `PUT /map/places` do.
 - The route accepts a body of up to 15 MiB. Larger bodies get **413**
   before any photo is checked, so the guarantee below holds only while each
@@ -390,7 +422,8 @@ shared link shows the shop's name and photo.
 
 ## Sources
 
-- **21.gifts:** sends the shop's `nostrPubkey` with every place `PUT`. It
+- **21.gifts:** sends the shop's `nostrPubkey` with every place `PUT` and a
+  `revision` (R8) with every write. It
   sends the shop note's photos (up to 10, in note order) to
   `PUT /map/places/photos` whenever the photo set differs from the one it
   last sent, and again after the place was deleted and registered anew. It
@@ -406,7 +439,7 @@ shared link shows the shop's name and photo.
 
 The steps are named by label, in this order:
 
-- **Step 1a, R7 accepted:** `nostrPubkey` accepted, validated, unique and
+- **Step 1a, R7 accepted and R8:** `revision` checked and stored; `nostrPubkey` accepted, validated, unique and
   fixed; shops without a key are not complete and leave the public list;
   `id` = npub; `GET /map/places/{npub}` without photos. A write without the
   key is still stored, so no source breaks while it adds keys.
