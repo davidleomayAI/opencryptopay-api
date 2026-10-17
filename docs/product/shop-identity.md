@@ -9,7 +9,7 @@ yet. A change that builds a part of this adds its routes to the
 
 Every shop is registered with a NOSTR public key. That key is the shop's
 identifier everywhere: in the API, in the public page
-`https://opencryptopay.io/{npub}`, and in the routes that address a shop. The
+`https://opencryptopay.io/{npub}`, and in every new route. The
 page shows everything the API knows about the shop, including its photos. The
 API stores the photos and serves them.
 
@@ -54,9 +54,10 @@ Every shop must state a NOSTR public key:
   is.
 - `nostrPubkey` is added to `ALLOWED_PLACE_KEYS`.
 - A stored row without `nostrPubkey` is not complete. `COMPLETE_PLACE_SQL`
-  requires it, so such a row stays out of every public response, in the same
-  way PR #22 handles the other fields. Existing rows become visible again when
-  their source sends them with a key.
+  and the memory store's `isCompletePlace` both require it, so such a row
+  stays out of every public response, in the same way PR #22 handles the
+  other fields. Existing rows become visible again when their source sends
+  them with a key.
 
 The npub is not stored. It is `nip19.npubEncode(nostrPubkey)` wherever it is
 shown.
@@ -94,8 +95,9 @@ New endpoint `PUT /map/places/photos`, same bearer as the other write routes
 }
 ```
 
-- The shop is addressed by its `nostrPubkey`. An unknown key gets **404**
-  `{ "error": "Place not found" }`.
+- The shop is addressed by its `nostrPubkey`. Photos are accepted for every
+  stored place with that key, listed or not. **404**
+  `{ "error": "Place not found" }` only when no stored place has the key.
 - `photos` replaces the whole photo list of that shop. An empty array removes
   every photo. Order is the order shown; the first photo is the cover.
 - At most 10 photos per shop.
@@ -125,6 +127,10 @@ uploads, so the header rules here are stricter:
 - `contentType` is `image/jpeg`, `image/png` or `image/webp`.
 - `data` is strict base64. The decoded size is at most 1 048 576 bytes.
 - The file type is read from the magic bytes and must equal `contentType`.
+- The markers or chunks must walk cleanly: a JPEG to its `EOI`, a PNG or
+  WebP to the end of the file, with no segment or chunk length past the end.
+  Otherwise the photo is skipped (`Photo N could not be read`), so metadata
+  that cannot be found is never stored.
 - Width and height are read from the file header, which must parse. Each is
   between 1 and 4096. The API returns the displayed size: for a JPEG whose
   EXIF orientation is 5 to 8, width and height are swapped. Orientation
@@ -150,9 +156,10 @@ having re-encoded the image, because a phone photo can carry its GPS position:
   - walk the markers through the whole image, also between the scans of a
     progressive JPEG. Keep every marker other than `APPn` and `COM`, among
     them `SOI`, `SOFn`, `DHT`, `DAC`, `DQT`, `DRI`, `DNL`, `SOS` with its
-    entropy-coded data, `RSTn` and `EOI`. Every `APPn` and `COM` goes through the
-    allow-list above. Cut every byte after the main image's `EOI`; this
-    removes appended previews, depth maps and motion-photo videos.
+    entropy-coded data, `RSTn` and `EOI`. Every `APPn` and `COM` goes
+    through the allow-list above. Cut every byte after the main image's
+    `EOI`; this removes appended previews, depth maps and motion-photo
+    videos.
 - PNG: drop `eXIf`, `tEXt`, `zTXt`, `iTXt` and `tIME` chunks. PNG and WebP
   keep no orientation; their width and height are the raw header values.
 - WebP: drop the `EXIF` and `XMP ` chunks, each together with its pad byte
@@ -270,18 +277,21 @@ shared link shows the shop's name and photo.
 
 ## Order of work
 
-1. 1a, R7 accepted: `nostrPubkey` accepted, validated, unique and fixed;
-   shops without a key are not complete and leave the public list; `id` =
-   npub; `GET /map/places/{npub}` without photos. A write without the key is
-   still stored, so no source breaks while it adds keys.
-2. Photos: photo endpoint, photo route, metadata removal, `coverPhoto` and
-   `photos`.
-3. Sources, after 1a and 2: 21.gifts sends its keys and photos; DFX.swiss
-   creates and sends keys for SPAR.
-4. 1b, R7 enforced: once every source sends keys, a write without
-   `nostrPubkey` is rejected with **400**.
-5. Website, any time after 1a: shop page, map and table links. Until step 2
-   is live the page treats missing `coverPhoto` and `photos` as no photos.
+The steps are named by label, in this order:
+
+- **Step 1a, R7 accepted:** `nostrPubkey` accepted, validated, unique and
+  fixed; shops without a key are not complete and leave the public list;
+  `id` = npub; `GET /map/places/{npub}` without photos. A write without the
+  key is still stored, so no source breaks while it adds keys.
+- **Step 2, photos:** photo endpoint, photo route, metadata removal,
+  `coverPhoto` and `photos`.
+- **Step 3, sources,** after steps 1a and 2: 21.gifts sends its keys and
+  photos; DFX.swiss creates and sends keys for SPAR.
+- **Step 1b, R7 enforced:** once every source sends keys, a write without
+  `nostrPubkey` is rejected with **400**.
+- **Step 4, website,** any time after step 1a: shop page, map and table
+  links. Until step 2 is live the page treats missing `coverPhoto` and
+  `photos` as no photos.
 
 Steps 1a, 2 and 1b are each one pull request with handbook entries, e2e tests
 and the 100% coverage gate, as in [CONTRIBUTING.md](../../CONTRIBUTING.md).
