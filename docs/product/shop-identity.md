@@ -161,7 +161,10 @@ carry a revision:
 - `revision` is added to `ALLOWED_PLACE_KEYS` and to the allowed keys of the
   photo route. `DELETE /map/places` today ignores unknown keys; from step 1a
   it accepts exactly `origin`, `externalId` and `revision` and answers
-  **400** to any other key, like the other write routes.
+  **400** to any other key, like `POST`, `PUT /map/places` and the photo
+  route. This check belongs to the `DELETE` route only:
+  `POST /map/places/transactions` reads its key through the same
+  `normalizeMapPlaceKey` and keeps ignoring unknown keys.
 
 ## Photos
 
