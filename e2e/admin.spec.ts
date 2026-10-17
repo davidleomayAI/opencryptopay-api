@@ -169,3 +169,15 @@ test('Function: deletePlace — DELETE /admin/places removes the pin', async ({ 
   expect(res.status()).toBe(200);
   expect(await res.json()).toEqual({ deleted: true });
 });
+
+test('Function: adminRoutes — a body above 64 KiB with Content-Length is 413', async ({
+  request,
+}) => {
+  const response = await request.put('/admin/places', {
+    data: Buffer.alloc(64 * 1024 + 1, 0x61),
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  expect(response.status()).toBe(413);
+  await expect(response.json()).resolves.toEqual({ error: 'Payload too large' });
+});

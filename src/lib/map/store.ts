@@ -106,7 +106,10 @@ function copyStoredPlace(place: StoredMapPlace): StoredMapPlace {
 }
 
 /**
- * Reasons the public list hides a stored pin. Empty when the pin is complete.
+ * List why the public map hides a stored pin. This defines the completeness rule for
+ * `MemoryMapPlaceStore` and supplies `complete` and `problems` on `GET /admin/places`.
+ * `SqliteMapPlaceStore` applies the same rule in SQL via `COMPLETE_PLACE_SQL` for its public list.
+ * Empty when the pin is complete.
  * A row is complete when name, description, street, house number, postal code,
  * city, and country are non-empty, shop type is SPAR or Others, and
  * lastTransactionAt is null or a parseable instant.

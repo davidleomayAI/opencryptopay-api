@@ -233,6 +233,8 @@ function replaceSupportRows(db: Database, placeId: string, supports: MapPlaceSup
  * end-to-end run.
  * Opening an old-schema file (shop_name present, description and shop_type
  * missing) and hiding incomplete rows is exercised by e2e/sqlite-backfill.ts.
+ * The e2e/sqlite-backfill.ts coverage also exercises listAll including incomplete rows and
+ * loading their supports in chunks.
  */
 export class SqliteMapPlaceStore implements MapPlaceStore {
   readonly #db: Database;

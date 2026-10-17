@@ -316,7 +316,23 @@ async function cmdDelete(argv) {
     process.stdout.write(`fail ${externalId} ${String(response.status)} ${message}\n`);
     process.exit(1);
   }
-  process.stdout.write(`ok ${externalId}\n`);
+  let result;
+  try {
+    result = await response.json();
+  } catch {
+    process.stdout.write(`fail ${externalId} ${String(response.status)} unexpected response\n`);
+    process.exit(1);
+  }
+  if (typeof result !== 'object' || result === null || typeof result.deleted !== 'boolean') {
+    process.stdout.write(`fail ${externalId} ${String(response.status)} unexpected response\n`);
+    process.exit(1);
+  }
+  if (result.deleted) {
+    process.stdout.write(`ok ${externalId}\n`);
+    return;
+  }
+  process.stdout.write(`missing ${externalId}\n`);
+  process.exit(1);
 }
 
 async function main() {

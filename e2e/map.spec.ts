@@ -923,7 +923,7 @@ test('Function: normalizePlaceTransaction — a future occurredAt beyond skew is
   expect(await res.json()).toEqual({ error: 'Place transaction time is invalid' });
 });
 
-test('Function: SqliteMapPlaceStore — opening an old schema hides incomplete rows', () => {
+test('Function: SqliteMapPlaceStore — old schema hides incomplete rows; listAll includes them with chunked supports', () => {
   const stdout = execFileSync('bun', ['e2e/sqlite-backfill.ts'], { encoding: 'utf8' });
   expect(stdout.trim()).toBe('ok');
 });

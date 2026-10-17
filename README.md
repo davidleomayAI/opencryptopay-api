@@ -51,7 +51,7 @@ node scripts/ocp-admin.mjs put places.json --base https://api.example.test --key
 node scripts/ocp-admin.mjs delete fremd shop-1 --base https://api.example.test --key desk
 ```
 
-`--key` is the key name, not a path. The signed host is the hostname of `--base`, which must equal `OCP_ADMIN_HOST`. `list` signs `GET /admin/places`. `put` reads a JSON array and signs one `PUT /admin/places` per element. `delete` signs `DELETE /admin/places` with `origin` and `externalId`. The CLI sends a fresh nonce with every request.
+`--key` is the key name, not a path. The signed host is the hostname of `--base`, which must equal `OCP_ADMIN_HOST`. `list` signs `GET /admin/places`. `put` reads a JSON array and signs one `PUT /admin/places` per element. `delete` signs `DELETE /admin/places` with `origin` and `externalId`. The CLI sends a fresh nonce with every request. `delete` prints `missing <externalId>` and exits with status 1 when no pin had that origin and external id.
 
 ## Branches
 

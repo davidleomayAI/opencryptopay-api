@@ -198,7 +198,7 @@
 
 ## Function: placeProblems
 
-- **Purpose:** List why the public map hides a stored pin. A row is complete when name, description, street, house number, postal code, city, and country are non-empty, shop type is `SPAR` or `Others`, and `lastTransactionAt` is null or `Number.isFinite(Date.parse(...))`. The messages, in that order, are `name is empty`, `description is empty`, `street is empty`, `houseNumber is empty`, `postalCode is empty`, `city is empty`, `country is empty`, `shopType must be SPAR or Others`, and `lastTransactionAt is not a valid instant`. Only the failures are included.
+- **Purpose:** List why the public map hides a stored pin. This is the completeness rule of `MemoryMapPlaceStore` and the source of `complete` and `problems` on `GET /admin/places`. `SqliteMapPlaceStore` applies the same rule in SQL (`COMPLETE_PLACE_SQL`) for its public list. A row is complete when name, description, street, house number, postal code, city, and country are non-empty, shop type is `SPAR` or `Others`, and `lastTransactionAt` is null or `Number.isFinite(Date.parse(...))`. The messages, in that order, are `name is empty`, `description is empty`, `street is empty`, `houseNumber is empty`, `postalCode is empty`, `city is empty`, `country is empty`, `shopType must be SPAR or Others`, and `lastTransactionAt is not a valid instant`. Only the failures are included.
 - **Inputs:** A stored pin, including an incomplete row.
 - **Returns / side effects:** The problem strings in check order, or `[]` when the pin is complete. No I/O. The public list treats a pin as complete when this list is empty.
-- **Used by:** The store completeness check, and `adminRoutes` on `GET /admin/places`.
+- **Used by:** `MemoryMapPlaceStore` completeness check, and `adminRoutes` on `GET /admin/places`.

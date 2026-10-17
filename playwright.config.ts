@@ -31,10 +31,12 @@ function exportPkcs8(key: ReturnType<typeof generateKeyPairSync>['privateKey']):
 
 /**
  * HTTP end-to-end tests against `bun src/index.ts`. No browser.
+ * Spec files share one server and database, so they run with one worker.
  */
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
+  workers: 1,
   forbidOnly: !!process.env['CI'],
   reporter: 'list',
   use: {
