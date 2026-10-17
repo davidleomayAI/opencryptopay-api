@@ -148,9 +148,9 @@ having re-encoded the image, because a phone photo can carry its GPS position:
     minimal `APP1` EXIF with only that orientation tag and no other IFD
     entry, so portrait photos keep showing upright;
   - walk the markers through the whole image, also between the scans of a
-    progressive JPEG. Keep every marker other than `APPn` and `COM`, among them `SOI`,
-    `SOFn`, `DHT`, `DAC`, `DQT`, `DRI`, `DNL`, `SOS` with its entropy-coded
-    data, `RSTn` and `EOI`. Every `APPn` and `COM` goes through the
+    progressive JPEG. Keep every marker other than `APPn` and `COM`, among
+    them `SOI`, `SOFn`, `DHT`, `DAC`, `DQT`, `DRI`, `DNL`, `SOS` with its
+    entropy-coded data, `RSTn` and `EOI`. Every `APPn` and `COM` goes through the
     allow-list above. Cut every byte after the main image's `EOI`; this
     removes appended previews, depth maps and motion-photo videos.
 - PNG: drop `eXIf`, `tEXt`, `zTXt`, `iTXt` and `tIME` chunks. PNG and WebP
