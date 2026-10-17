@@ -102,7 +102,9 @@ New endpoint `PUT /map/places/photos`, same bearer as the other write routes
   megabytes on every text change.
 - Allowed keys: `nostrPubkey`, `photos`; per photo `contentType`, `data`,
   `caption`. Any other key rejects the request, as in R6.
-- The route accepts a body of up to 15 MiB. Larger bodies get **413**.
+- The route accepts a body of up to 15 MiB. Larger bodies get **413**
+  before any photo is checked, so the guarantee below holds only while each
+  photo stays within the 1 MiB rule.
 - A malformed request (unknown key, more than 10 photos, a field of the
   wrong type) is rejected with **400** and stores nothing.
 - A single photo that breaks a rule below is skipped; the others are stored
@@ -110,8 +112,9 @@ New endpoint `PUT /map/places/photos`, same bearer as the other write routes
   upload rules can be looser than these.
 - Response **200**:
   `{ "photos": [ { "url", "width", "height", "caption" } ], "skipped": [ { "index", "error" } ] }`.
-  `index` is the position in the request; `skipped` is `[]` when nothing was
-  skipped.
+  `index` is the 0-based position in the request; the `error` sentence
+  numbers photos from 1, so `index` 2 reads `Photo 3 …`. `skipped` is `[]`
+  when nothing was skipped.
 - `DELETE /map/places` drops the photos with the place. A source that
   registers the place again sends its photos again.
 
@@ -123,7 +126,8 @@ uploads, so the header rules here are stricter:
 - The file type is read from the magic bytes and must equal `contentType`.
 - Width and height are read from the file header, which must parse. Each is
   between 1 and 4096. The API returns the displayed size: for a JPEG whose
-  EXIF orientation is 5 to 8, width and height are swapped.
+  EXIF orientation is 5 to 8, width and height are swapped. Orientation
+  values outside 2 to 8 count as 1.
 - `caption` is optional, 1–200 characters, no control characters.
 
 The `error` of a skipped photo is a sentence, for example
@@ -139,13 +143,16 @@ having re-encoded the image, because a phone photo can carry its GPS position:
     `APP14` (`Adobe`, needed for the colour transform);
   - drop every other `APPn` segment, which removes EXIF, XMP, MPF and maker
     data, and every `COM` segment;
-  - when the dropped EXIF held an orientation other than 1, write back a
+  - when the dropped EXIF held an orientation from 2 to 8, write back a
     minimal `APP1` EXIF with only that orientation tag and no other IFD
     entry, so portrait photos keep showing upright;
-  - cut every byte after the main image's `EOI`, found by walking the
-    segments to `SOS` and then scanning the entropy-coded data. This removes
-    appended previews, depth maps and motion-photo videos.
-- PNG: drop `eXIf`, `tEXt`, `zTXt`, `iTXt` and `tIME` chunks.
+  - walk the markers through the whole image, also between the scans of a
+    progressive JPEG: keep `SOS`, `DHT`, `DQT`, `DRI`, `DNL` and `RSTn`,
+    apply the same allow-list to every `APPn` and `COM`, and cut every byte
+    after the main image's `EOI`. This removes appended previews, depth maps
+    and motion-photo videos.
+- PNG: drop `eXIf`, `tEXt`, `zTXt`, `iTXt` and `tIME` chunks. PNG and WebP
+  keep no orientation; their width and height are the raw header values.
 - WebP: drop the `EXIF` and `XMP ` chunks, each together with its pad byte
   when the chunk size is odd, clear the EXIF (`0x08`) and XMP (`0x04`) flags
   in `VP8X`, and rewrite the RIFF size to the new file length minus 8.
@@ -199,8 +206,9 @@ when unset.
 ## Shop page on opencryptopay.io
 
 These changes are in the website repository, openCryptoPay/landingPage; paths
-in this section and the next are paths there. The website is static HTML on an Apache host. The page needs a small amount
-of server-side code so that a shared link shows the shop's name and photo.
+in this section and the next are paths there. The website is static HTML on an
+Apache host. The page needs a small amount of server-side code so that a
+shared link shows the shop's name and photo.
 
 - **Route:** a rewrite in `.htaccess` sends `^npub1[02-9ac-hj-np-z]{58}$` to
   `shop.php`. A trailing slash gets a 301 to the path without it, so each shop
@@ -270,7 +278,8 @@ of server-side code so that a shared link shows the shop's name and photo.
    creates and sends keys for SPAR.
 4. 1b, R7 enforced: once every source sends keys, a write without
    `nostrPubkey` is rejected with **400**.
-5. Website, any time after 1a: shop page, map and table links.
+5. Website, any time after 1a: shop page, map and table links. Until step 2
+   is live the page treats missing `coverPhoto` and `photos` as no photos.
 
 Steps 1a, 2 and 1b are each one pull request with handbook entries, e2e tests and
 the 100% coverage gate, as in [CONTRIBUTING.md](../../CONTRIBUTING.md).
