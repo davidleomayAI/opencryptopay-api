@@ -183,6 +183,8 @@ stored bytes are the stripped bytes.
   any shop uses any more. The same file can belong to several shops, so the
   check runs across all shops.
 - Public URL: `GET /map/photos/{sha256}.{jpg|png|webp}`.
+  - The extension must match the stored `content_type`, otherwise **404**, so
+    each file has exactly one URL.
   - `Cache-Control: public, max-age=31536000, immutable`, CORS `*`.
   - A new photo has a new hash and therefore a new URL, so a replaced photo
     never stays stale in a cache.
@@ -200,7 +202,8 @@ stored bytes are the stripped bytes.
 
 ### `GET /map/places/{npub}`
 
-New. No authentication, CORS `GET`, `Cache-Control: public, max-age=60`.
+New. No authentication, CORS `GET`. `Cache-Control: public, max-age=60` on
+200, 301 and 404; `Cache-Control: no-store` on 503.
 
 | Request                                   | Response                                        |
 | ----------------------------------------- | ----------------------------------------------- |
