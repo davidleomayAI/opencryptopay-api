@@ -118,6 +118,31 @@ describe('admin routes', () => {
     expect(await response.json()).toEqual({ error: 'Admin is not configured' });
   });
 
+  it('uses the real clock when no clock is injected', async () => {
+    const api = createApp({
+      store: new MemoryMapPlaceStore(),
+      env: {},
+      fetchImpl: async () => new Response('{}', { status: 201 }),
+      adminKeys: [desk],
+      adminHost: ADMIN_HOST,
+    });
+    const headers = signAdminRequest({
+      method: 'GET',
+      host: ADMIN_HOST,
+      pathWithQuery: '/admin/places',
+      timestamp: Math.floor(Date.now() / 1000),
+      body: new Uint8Array(),
+      privateKey: pair.privateKey,
+      keyName: 'desk',
+    });
+    const response = await api.request(`http://${REQUEST_HOST}/admin/places`, {
+      method: 'GET',
+      headers: { ...headers },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ places: [] });
+  });
+
   it('answers 503 when the admin host is missing', async () => {
     const signed = bind(build({ omitHost: true }));
     const response = await signed('GET', '/admin/places');
