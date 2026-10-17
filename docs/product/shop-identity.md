@@ -116,16 +116,21 @@ only).
 
 ## R8 Request order
 
+R8 is a rule of the write protocol, not a requirement every listed shop
+must meet, so it is not recorded in `place-requirements.md`.
+
 A source can time out a request that OpenCryptoPay still applies later. So
 that such a late request can never overwrite newer state, every write may
 carry a revision:
 
-- Field `revision` (integer, 1 or more) in `POST`, `PUT` and `DELETE` on
-  `/map/places` and in `PUT /map/places/photos`. It is optional; a source
-  that sends it must raise it for every request of the same place, places
-  and photos sharing one counter.
+- Field `revision`, an integer from 1 to 9007199254740991 (the largest
+  integer JSON keeps exactly), in `POST`, `PUT` and `DELETE` on
+  `/map/places` and in `PUT /map/places/photos`. Any other value gets
+  **400**. It is optional; a source that sends it must raise it for every
+  request of the same place, places and photos sharing one counter.
 - OpenCryptoPay keeps the highest accepted revision per `origin` +
-  `externalId` in its own table, which a place `DELETE` does not touch:
+  `externalId` in its own table, which a place `DELETE` does not touch. The
+  memory store keeps the same map.
 
   ```sql
   CREATE TABLE IF NOT EXISTS map_place_revision (
@@ -136,14 +141,23 @@ carry a revision:
   );
   ```
 
-- A write whose revision is not higher than the stored one changes nothing
-  and gets **409** `{ "error": "Stale revision" }`. An accepted write stores
-  its revision in the same transaction. The photo route finds the pair
-  through the stored key.
+- The comparison and the store happen in the same transaction as the write
+  itself. A write whose revision is not higher than the stored one changes
+  nothing and gets **409** `{ "error": "Stale revision" }`.
+- Every accepted write stores its revision, also when it changes nothing:
+  a `DELETE` that finds no place (`deleted: false`) and a `POST` that leaves
+  an existing row as it is. Otherwise a late older `PUT` could recreate a
+  place after the source had removed it.
 - A write without `revision` is not checked and stores nothing, as today.
   A source that has sent a revision once keeps sending one.
+- Order of answers on every write route and in both stores: **400** for
+  the body format (including `revision`), then on the photo route **404**
+  for an unknown key, then `Stale revision`, then the two R7 rules in their
+  stated order.
 - `revision` is added to `ALLOWED_PLACE_KEYS` and to the allowed keys of the
-  photo route and of `DELETE /map/places`.
+  photo route. `DELETE /map/places` today ignores unknown keys; from step 1a
+  it accepts exactly `origin`, `externalId` and `revision` and answers
+  **400** to any other key, like the other write routes.
 
 ## Photos
 
