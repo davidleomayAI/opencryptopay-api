@@ -24,6 +24,8 @@ const COMPLETE_PLACE_SQL = `(name IS NOT NULL AND name != ''
   AND country IS NOT NULL AND country != ''
   AND (last_transaction_at IS NULL OR julianday(last_transaction_at) IS NOT NULL))`;
 
+const SUPPORT_ID_CHUNK = 500;
+
 type MapPlaceRow = {
   id: string;
   origin: string;
@@ -140,21 +142,24 @@ function loadSupportsByPlaceId(db: Database, ids: string[]): Map<string, MapPlac
   if (ids.length === 0) {
     return supportsById;
   }
-  const placeholders = ids.map(() => '?').join(', ');
-  const rows = db
-    .query(
-      `SELECT place_id, blockchain, asset
-       FROM map_place_support
-       WHERE place_id IN (${placeholders})
-       ORDER BY blockchain, asset`,
-    )
-    .all(...ids) as Array<{ place_id: string; blockchain: string; asset: string }>;
-  for (const row of rows) {
-    const list = supportsById.get(row.place_id);
-    if (list === undefined) {
-      throw new Error('map place support for unknown id');
+  for (let start = 0; start < ids.length; start += SUPPORT_ID_CHUNK) {
+    const chunk = ids.slice(start, start + SUPPORT_ID_CHUNK);
+    const placeholders = chunk.map(() => '?').join(', ');
+    const rows = db
+      .query(
+        `SELECT place_id, blockchain, asset
+         FROM map_place_support
+         WHERE place_id IN (${placeholders})
+         ORDER BY blockchain, asset`,
+      )
+      .all(...chunk) as Array<{ place_id: string; blockchain: string; asset: string }>;
+    for (const row of rows) {
+      const list = supportsById.get(row.place_id);
+      if (list === undefined) {
+        throw new Error('map place support for unknown id');
+      }
+      list.push({ blockchain: row.blockchain, asset: row.asset });
     }
-    list.push({ blockchain: row.blockchain, asset: row.asset });
   }
   return supportsById;
 }

@@ -16,10 +16,7 @@ const ADMIN_HOST = 'api.example.test';
 const REQUEST_HOST = 'evil.test';
 
 const pair = generateKeyPairSync('ed25519');
-const raw = new Uint8Array(
-  Buffer.from(pair.publicKey.export({ format: 'der', type: 'spki' })).subarray(12),
-);
-const desk: AdminPublicKey = { name: 'desk', raw, publicKey: pair.publicKey };
+const desk: AdminPublicKey = { name: 'desk', publicKey: pair.publicKey };
 
 const pin: MapPlaceInput = {
   origin: 'dfx',
@@ -202,6 +199,34 @@ describe('admin routes', () => {
       send: jsonBytes({ ...fremd, name: 'Andere Filiale' }),
     });
     await expectUnauthorized(response);
+  });
+
+  it('answers 413 for a signed body above 64 KiB', async () => {
+    const signed = bind(build());
+    const response = await signed('PUT', '/admin/places', new Uint8Array(64 * 1024 + 1));
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({ error: 'Payload too large' });
+  });
+
+  it('answers 413 for an unsigned body above 64 KiB', async () => {
+    const response = await build().request(`http://${REQUEST_HOST}/admin/places`, {
+      method: 'PUT',
+      body: new Uint8Array(64 * 1024 + 1),
+    });
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({ error: 'Payload too large' });
+  });
+
+  it('answers 503 before limiting an oversized body when admin is unconfigured', async () => {
+    const response = await build({ omitKeys: true }).request(
+      `http://${REQUEST_HOST}/admin/places`,
+      {
+        method: 'PUT',
+        body: new Uint8Array(64 * 1024 + 1),
+      },
+    );
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'Admin is not configured' });
   });
 
   it('accepts two requests that differ only by nonce', async () => {

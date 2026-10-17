@@ -1,6 +1,7 @@
-import { createHash, createPrivateKey, randomBytes, sign } from 'node:crypto';
+import { createPrivateKey, sign } from 'node:crypto';
 import type { KeyObject } from 'node:crypto';
 import { expect, test } from '@playwright/test';
+import { canonicalString, signAdminRequest } from '../src/lib/admin/signature';
 
 const DESCRIPTION =
   'SPAR supermarket in Triesen. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
@@ -48,23 +49,16 @@ function signedHeaders(
   host = HOST,
 ): Record<string, string> {
   const timestamp = Math.floor(Date.now() / 1000);
-  const nonce = randomBytes(16).toString('base64url');
-  const hash = createHash('sha256').update(body).digest('hex');
-  const canonical = [
-    'OCP-ADMIN-v1',
-    method.toUpperCase(),
-    host,
-    pathWithQuery,
-    String(timestamp),
-    nonce,
-    hash,
-  ].join('\n');
-  const signature = sign(null, Buffer.from(canonical, 'utf8'), privateKey());
   return {
-    'OCP-Admin-Key': KEY_NAME,
-    'OCP-Admin-Timestamp': String(timestamp),
-    'OCP-Admin-Nonce': nonce,
-    'OCP-Admin-Signature': signature.toString('base64'),
+    ...signAdminRequest({
+      method,
+      host,
+      pathWithQuery,
+      timestamp,
+      body,
+      privateKey: privateKey(),
+      keyName: KEY_NAME,
+    }),
   };
 }
 
@@ -77,6 +71,42 @@ test('Function: adminRoutes — an unsigned /admin/places is 401', async ({ requ
 test('Function: signAdminRequest — a signature for another host is 401', async ({ request }) => {
   const headers = signedHeaders('GET', PATH, new Uint8Array(), 'other.example');
   const res = await request.get('/admin/places', { headers });
+  expect(res.status()).toBe(401);
+  expect(await res.json()).toEqual({ error: 'Unauthorized' });
+});
+
+test('Function: canonicalString — a signed GET with a query string is accepted', async ({
+  request,
+}) => {
+  const path = '/admin/places?x=1';
+  const timestamp = Math.floor(Date.now() / 1000);
+  const nonce = 'canonical-query-0001';
+  const body = new Uint8Array();
+  const canonical = canonicalString({
+    method: 'GET',
+    host: HOST,
+    pathWithQuery: path,
+    timestamp,
+    nonce,
+    body,
+  });
+  const headers = {
+    'OCP-Admin-Key': KEY_NAME,
+    'OCP-Admin-Timestamp': String(timestamp),
+    'OCP-Admin-Nonce': nonce,
+    'OCP-Admin-Signature': sign(null, Buffer.from(canonical, 'utf8'), privateKey()).toString(
+      'base64',
+    ),
+  };
+  const res = await request.get(path, { headers });
+  expect(res.status()).toBe(200);
+});
+
+test('Function: decodeBase64 — a signature that is not base64 is 401', async ({ request }) => {
+  const path = '/admin/places?n=bad-base64';
+  const headers = signedHeaders('GET', path, new Uint8Array());
+  headers['OCP-Admin-Signature'] = '***';
+  const res = await request.get(path, { headers });
   expect(res.status()).toBe(401);
   expect(await res.json()).toEqual({ error: 'Unauthorized' });
 });
@@ -96,7 +126,7 @@ test('Function: putPlace — PUT /admin/places creates a foreign origin', async 
   expect(await res.json()).toMatchObject({ created: true });
 });
 
-test('Function: canonicalString — the same signed request is a replay', async ({ request }) => {
+test('Function: verifyAdminRequest — the same signed request is a replay', async ({ request }) => {
   if (replay === undefined) {
     throw new Error('missing signed put');
   }

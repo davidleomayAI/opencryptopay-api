@@ -6,12 +6,11 @@ const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 const KEY_NAME = /^[A-Za-z0-9._@-]{1,64}$/u;
 
 /**
- * One device allowed to call `/admin`. `raw` is the 32-byte Ed25519 public key.
+ * One device allowed to call `/admin`. `publicKey` is its Ed25519 public key.
  * The private key never arrives here.
  */
 export type AdminPublicKey = {
   name: string;
-  raw: Uint8Array;
   publicKey: KeyObject;
 };
 
@@ -75,7 +74,6 @@ function parseKeyLine(line: string, lineNumber: number): AdminPublicKey {
   const raw = decodePublicKey(format, encoded, lineNumber);
   return {
     name,
-    raw: new Uint8Array(raw),
     publicKey: createPublicKey({
       key: Buffer.concat([ED25519_SPKI_PREFIX, raw]),
       format: 'der',
@@ -112,7 +110,7 @@ function decodePublicKey(format: string, encoded: string, lineNumber: number): B
  * @param value - One token.
  * @returns Decoded bytes, or undefined when the token is not base64.
  */
-function decodeBase64(value: string): Buffer | undefined {
+export function decodeBase64(value: string): Buffer | undefined {
   if (!/^[A-Za-z0-9+/]+={0,2}$/u.test(value)) {
     return undefined;
   }

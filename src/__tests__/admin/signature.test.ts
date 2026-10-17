@@ -17,16 +17,10 @@ const NONCE = 'nonce-0123456789abcd';
 const EMPTY = new Uint8Array();
 
 const pair = generateKeyPairSync('ed25519');
-const raw = new Uint8Array(
-  Buffer.from(pair.publicKey.export({ format: 'der', type: 'spki' })).subarray(12),
-);
-const desk: AdminPublicKey = { name: 'desk', raw, publicKey: pair.publicKey };
+const desk: AdminPublicKey = { name: 'desk', publicKey: pair.publicKey };
 
 const phonePair = generateKeyPairSync('ed25519');
-const phoneRaw = new Uint8Array(
-  Buffer.from(phonePair.publicKey.export({ format: 'der', type: 'spki' })).subarray(12),
-);
-const phone: AdminPublicKey = { name: 'phone', raw: phoneRaw, publicKey: phonePair.publicKey };
+const phone: AdminPublicKey = { name: 'phone', publicKey: phonePair.publicKey };
 
 function sign(over?: {
   method?: string;

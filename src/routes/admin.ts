@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import type { AdminPublicKey } from '@/lib/admin/keys';
 import { verifyAdminRequest, type AdminReplayCache } from '@/lib/admin/signature';
 import type { FetchLike } from '@/lib/map/btcmap';
@@ -23,6 +24,8 @@ type AdminEnv = {
   };
 };
 
+const MAX_ADMIN_BODY_BYTES = 64 * 1024;
+
 function pathWithQuery(requestUrl: string): string {
   const url = new URL(requestUrl);
   return `${url.pathname}${url.search}`;
@@ -43,6 +46,7 @@ function parseJsonBody(bytes: Uint8Array): unknown {
  * Signed admin maintenance for any origin. Mounted at `/admin`.
  * The signature uses the configured host, never the request Host header.
  * The body is read once and then parsed as JSON for PUT and DELETE.
+ * Bodies above 64 KiB answer 413 before the signature is checked.
  *
  * @param deps - Store, BTC Map environment, allowed keys, configured host, and an optional clock.
  * @returns The admin route group.
@@ -58,6 +62,18 @@ export function adminRoutes(deps: AdminRouteDeps): Hono<AdminEnv> {
     if (!configured) {
       return c.json({ error: 'Admin is not configured' }, 503);
     }
+    await next();
+  });
+
+  app.use(
+    '*',
+    bodyLimit({
+      maxSize: MAX_ADMIN_BODY_BYTES,
+      onError: (c) => c.json({ error: 'Payload too large' }, 413),
+    }),
+  );
+
+  app.use('*', async (c, next) => {
     const rawBody = new Uint8Array(await c.req.arrayBuffer());
     const accepted = verifyAdminRequest({
       keys: deps.keys,

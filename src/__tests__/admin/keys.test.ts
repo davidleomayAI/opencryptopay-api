@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { generateKeyPairSync } from 'node:crypto';
-import { parseAdminPublicKeys } from '@/lib/admin/keys';
+import { decodeBase64, parseAdminPublicKeys } from '@/lib/admin/keys';
 
 function rawKey(): Buffer {
   const { publicKey } = generateKeyPairSync('ed25519');
@@ -21,19 +21,31 @@ function b64(bytes: Buffer): string {
   return bytes.toString('base64');
 }
 
+function exportedRaw(key: ReturnType<typeof parseAdminPublicKeys>[number]): Buffer {
+  return Buffer.from(key.publicKey.export({ format: 'der', type: 'spki' })).subarray(12);
+}
+
+describe('decodeBase64', () => {
+  it('decodes padded and unpadded base64 and rejects invalid input', () => {
+    expect(decodeBase64('YQ==')?.toString()).toBe('a');
+    expect(decodeBase64('YQ')?.toString()).toBe('a');
+    expect(decodeBase64('***')).toBeUndefined();
+  });
+});
+
 describe('parseAdminPublicKeys', () => {
   it('parses an ed25519 line', () => {
     const raw = rawKey();
     const keys = parseAdminPublicKeys(`ed25519 ${b64(raw)} desk`);
     expect(keys.map((key) => key.name)).toEqual(['desk']);
-    expect(Buffer.from(keys[0]?.raw ?? []).equals(raw)).toBe(true);
+    expect(keys[0] === undefined ? false : exportedRaw(keys[0]).equals(raw)).toBe(true);
   });
 
   it('parses an ssh-ed25519 blob', () => {
     const raw = rawKey();
     const keys = parseAdminPublicKeys(`ssh-ed25519 ${b64(sshBlob(raw))} desk`);
     expect(keys.map((key) => key.name)).toEqual(['desk']);
-    expect(Buffer.from(keys[0]?.raw ?? []).equals(raw)).toBe(true);
+    expect(keys[0] === undefined ? false : exportedRaw(keys[0]).equals(raw)).toBe(true);
   });
 
   it('skips comments and blank lines', () => {
@@ -52,7 +64,7 @@ describe('parseAdminPublicKeys', () => {
     const raw = rawKey();
     const encoded = b64(raw).replace(/=+$/u, '');
     const keys = parseAdminPublicKeys(`ed25519 ${encoded} desk`);
-    expect(Buffer.from(keys[0]?.raw ?? []).equals(raw)).toBe(true);
+    expect(keys[0] === undefined ? false : exportedRaw(keys[0]).equals(raw)).toBe(true);
   });
 
   it('rejects the wrong token count', () => {

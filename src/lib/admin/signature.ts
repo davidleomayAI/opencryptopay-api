@@ -1,5 +1,5 @@
 import { createHash, randomBytes, sign, verify, type KeyObject } from 'node:crypto';
-import type { AdminPublicKey } from '@/lib/admin/keys';
+import { decodeBase64, type AdminPublicKey } from '@/lib/admin/keys';
 
 /** Requests older or newer than this many seconds are rejected. */
 const ADMIN_WINDOW_SECONDS = 60;
@@ -232,20 +232,4 @@ function pruneReplay(replay: AdminReplayCache, nowSeconds: number): void {
       replay.delete(replayKey);
     }
   }
-}
-
-function decodeBase64(value: string): Buffer | undefined {
-  if (!/^[A-Za-z0-9+/]+={0,2}$/u.test(value)) {
-    return undefined;
-  }
-  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
-  const body = value.slice(0, value.length - padding);
-  if (body.length % 4 === 1) {
-    return undefined;
-  }
-  const expectedPad = (4 - (body.length % 4)) % 4;
-  if (padding !== 0 && padding !== expectedPad) {
-    return undefined;
-  }
-  return Buffer.from(body + '='.repeat(expectedPad), 'base64');
 }

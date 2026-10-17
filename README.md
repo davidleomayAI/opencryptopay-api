@@ -36,6 +36,8 @@ A bad line or a repeated name throws before the process listens. The message is 
 
 When no key was loaded, or the host is missing or blank, admin is disabled. The process still starts. Every `/admin` request returns 503 `{ "error": "Admin is not configured" }`. Public reads and the ingest routes keep working.
 
+Admin request bodies are limited to 64 KiB. A larger body returns 413 `{ "error": "Payload too large" }` before its signature is checked. The unconfigured 503 check runs first.
+
 The signed UTF-8 string has no trailing newline. The lines, joined by `\n`, are `OCP-ADMIN-v1`, the method in upper case, `OCP_ADMIN_HOST`, the path and query exactly as sent, the unix timestamp in seconds, the nonce, and the lowercase hex SHA-256 of the raw body. An empty body is the hash of zero bytes. The headers are `OCP-Admin-Key` (the key name, not part of the string), `OCP-Admin-Timestamp`, `OCP-Admin-Nonce` (16 to 64 characters of `A-Z`, `a-z`, `0-9`, `_` and `-`; the device generates a fresh random one for every request, for example 16 random bytes as base64url), and `OCP-Admin-Signature` (standard base64). A missing or malformed nonce is 401.
 
 The timestamp must be within 60 seconds of the server clock, and 60 seconds is still accepted. The replay key is the key name plus the nonce, not the signature. A nonce already accepted for that key is a replay and returns 401 `{ "error": "Unauthorized" }` until its timestamp ages out of the 60 second window. Two requests with identical content in the same second are fine as long as their nonces differ.
