@@ -62,9 +62,10 @@ Every shop must state a NOSTR public key:
   way PR #22 handles the other fields. `GET /map/filters` keeps reading
   blockchains and assets from every row, as it does today for any
   incomplete row. Its `countries` list comes from complete rows, so a
-  country whose only shops have no key drops out of it. An existing row becomes public once it carries a key and
-  passes the completeness check of PR #22 (R2 to R5), whether the key
-  arrives with a `PUT` or, as described above, with a `POST`.
+  country whose only shops have no key drops out of it. An existing row
+  becomes public once it carries a key and passes the completeness check of
+  PR #22 (R2 to R5), whether the key arrives with a `PUT` or, as described
+  above, with a `POST`.
 
 The npub is not stored. It is `nip19.npubEncode(nostrPubkey)` wherever it is
 shown.
