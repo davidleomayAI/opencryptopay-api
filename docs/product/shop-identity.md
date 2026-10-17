@@ -193,9 +193,10 @@ having re-encoded the image, because a phone photo can carry its GPS position:
     shorter than 14 bytes is dropped. This removes embedded previews of the
     original;
   - keep `APP2` only when it starts with `ICC_PROFILE\0`;
-  - keep `APP14` only when it starts with `Adobe` (needed for the color
-    transform), cut to its fixed 12 bytes (`Adobe`, version, two flag
-    words, transform); drop any other `APP14`;
+  - keep `APP14` only when it starts with `Adobe` and its content is at
+    least 12 bytes (needed for the color transform), cut to those fixed 12
+    bytes (`Adobe`, version, two flag words, transform); drop any other
+    `APP14`, including a shorter `Adobe` one;
   - drop every other `APPn` segment, which removes EXIF, XMP, MPF and maker
     data, and every `COM` segment;
   - when the dropped EXIF held an orientation from 2 to 8, write back a
