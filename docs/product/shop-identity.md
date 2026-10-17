@@ -152,8 +152,8 @@ carry a revision:
   A source that has sent a revision once keeps sending one.
 - Order of answers on every write route and in both stores: **400** for
   the body format (including `revision`), then on the photo route **404**
-  for an unknown key, then `Stale revision`, then the two R7 rules in their
-  stated order.
+  for an unknown key or another origin, then `Stale revision`, then the two
+  R7 rules in their stated order.
 - `revision` is added to `ALLOWED_PLACE_KEYS` and to the allowed keys of the
   photo route. `DELETE /map/places` today ignores unknown keys; from step 1a
   it accepts exactly `origin`, `externalId` and `revision` and answers
@@ -168,21 +168,25 @@ New endpoint `PUT /map/places/photos`, same bearer as the other write routes
 
 ```json
 {
+  "origin": "21gifts",
   "nostrPubkey": "<64 hex>",
   "revision": 42,
   "photos": [{ "contentType": "image/jpeg", "data": "<base64>", "caption": "Front" }]
 }
 ```
 
-- The shop is addressed by its `nostrPubkey`. Photos are accepted for the
-  stored place with that key, listed or not. **404**
-  `{ "error": "Place not found" }` only when no stored place has the key.
+- The shop is addressed by its `nostrPubkey` together with the `origin`
+  that registered it. All sources share one bearer, and the npub is public,
+  so the `origin` keeps one source from changing another source's photos.
+  Photos are accepted for the stored place with that key and that origin,
+  listed or not. **404** `{ "error": "Place not found" }` when no stored
+  place has the key, or when it belongs to another origin.
 - `photos` replaces the whole photo list of that shop. An empty array removes
   every photo. Order is the order shown; the first photo is the cover.
 - At most 10 photos per shop.
 - Photos are separate from `PUT /map/places`, so a source does not resend
   megabytes on every text change.
-- Allowed keys: `nostrPubkey`, `revision` (R8), `photos`; per photo
+- Allowed keys: `origin`, `nostrPubkey`, `revision` (R8), `photos`; per photo
   `contentType`, `data`, `caption`. Any other key rejects the request, as
   `POST` and `PUT /map/places` do.
 - The route accepts a body of up to 15 MiB. Larger bodies get **413**
