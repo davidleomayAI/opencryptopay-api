@@ -114,7 +114,8 @@ New endpoint `PUT /map/places/photos`, same bearer as the other write routes
   before any photo is checked, so the guarantee below holds only while each
   photo stays within the 1 MiB rule.
 - A malformed request (unknown key, more than 10 photos, a field of the
-  wrong type) is rejected with **400** and stores nothing.
+  wrong type, a `nostrPubkey` that breaks the R7 format rule) is rejected
+  with **400** and stores nothing.
 - A single photo that breaks a rule below is skipped; the others are stored
   in their order. One bad photo never blocks the rest, because a source's own
   upload rules can be looser than these.
@@ -266,8 +267,9 @@ shared link shows the shop's name and photo.
     photo, otherwise the site OG image), `twitter:*`;
   - `<link rel="canonical" href="https://opencryptopay.io/{npub}">`;
   - JSON-LD `LocalBusiness` with name, address, geo and image.
-- **Statuses:** API 404 → HTTP 404 with a shop-not-found page. API 503 or
-  timeout → HTTP 503 with a retry message, never a blank page.
+- **Statuses:** API 404 → HTTP 404 with a shop-not-found page. Any other
+  status, a network error or a timeout → HTTP 503 with a retry message,
+  never a blank page.
 - **Content:**
   - photo gallery: grid, opens full screen, keyboard and swipe navigation;
   - name and description;
