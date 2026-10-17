@@ -1,8 +1,9 @@
 # Shop identity, photos and shop page
 
 Status: **specified, not implemented**. Nothing here changes runtime behavior
-yet. A change that builds a part of this adds its routes to the
-[handbook](../handbook/endpoints.md) and its columns and tables to
+yet. A change that builds a part of this adds its routes to
+[endpoints.md](../handbook/endpoints.md), its exported functions to
+[functions.md](../handbook/functions.md) and its columns and tables to
 [map-place.sql](../schema/map-place.sql) in that same change, and documents
 any new environment variable in the README. Step 1a adds R7 to
 [place-requirements.md](place-requirements.md) and records it as accepted,
