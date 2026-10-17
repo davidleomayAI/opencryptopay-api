@@ -4,6 +4,7 @@ import type { KeyObject } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
 import { canonicalString, signAdminRequest } from '../src/lib/admin/signature';
 
@@ -13,6 +14,7 @@ const DESCRIPTION =
 const HOST = '127.0.0.1';
 const PATH = '/admin/places';
 const KEY_NAME = 'e2e';
+const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 const fremd = {
   origin: 'fremd',
@@ -191,9 +193,9 @@ test('Function: ocp-admin CLI — list, put, and delete sign like the server', (
 
     const run = (...args: string[]): string =>
       execFileSync(
-        'bun',
+        'node',
         ['scripts/ocp-admin.mjs', ...args, '--base', 'http://127.0.0.1:3000', '--key', 'e2e'],
-        { env: { ...process.env, HOME: home }, encoding: 'utf8' },
+        { cwd: REPO_ROOT, env: { ...process.env, HOME: home }, encoding: 'utf8', timeout: 15_000 },
       );
 
     expect(run('put', placesFile)).toContain('ok cli-1');
