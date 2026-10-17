@@ -239,7 +239,7 @@ test('Function: ocp-admin CLI — keygen writes a private 0600 key and prints on
   }
 });
 
-test('Function: ocp-admin CLI — a non-Ed25519 key file is rejected', () => {
+test('Function: ocp-admin CLI — a non-Ed25519 key file and a key name starting with - are rejected', () => {
   const home = mkdtempSync(join(tmpdir(), 'ocp-admin-home-'));
   try {
     const keyDir = join(home, '.ocp-admin');
