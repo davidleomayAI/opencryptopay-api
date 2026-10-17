@@ -183,8 +183,11 @@ New endpoint `PUT /map/places/photos`, same bearer as the other write routes
 ```
 
 - The shop is addressed by its `nostrPubkey` together with the `origin`
-  that registered it. All sources share one bearer, and the npub is public,
-  so the `origin` keeps one source from changing another source's photos.
+  that registered it. All sources share one bearer, so they are fully
+  trusted by each other; the `origin` only keeps one source from changing
+  another source's photos by mistake, because the npub is public. Separate
+  credentials per origin would be needed to stop a hostile source and are
+  not part of this.
   Photos are accepted for the stored place with that key and that origin,
   listed or not. **404** `{ "error": "Place not found" }` when no stored
   place has the key, or when it belongs to another origin.
@@ -199,11 +202,14 @@ New endpoint `PUT /map/places/photos`, same bearer as the other write routes
 - The route accepts a body of up to 15 MiB. Larger bodies get **413**
   before any photo is checked, so the guarantee below holds only while each
   photo stays within the 1 MiB rule.
-- A malformed request (unknown key, more than 10 photos, a field of the
-  wrong type, a `nostrPubkey` that breaks the R7 format rule) is rejected
-  with **400** and stores nothing.
-- A single photo that breaks a rule below is skipped; the others are stored
-  in their order. One bad photo never blocks the rest, because a source's own
+- A malformed envelope is rejected with **400** and stores nothing: an
+  unknown key at the top level or in a photo, more than 10 photos,
+  `photos` that is not an array, a photo entry that is not an object, a
+  `nostrPubkey` that breaks the R7 format rule, an `origin` or `revision`
+  of the wrong form.
+- A single photo that breaks a rule below, including a missing field or a
+  field of the wrong type in `contentType`, `data` or `caption`, is skipped
+  and reported by index; the others are stored in their order. One bad photo never blocks the rest, because a source's own
   upload rules can be looser than these.
 - Response **200**:
   `{ "photos": [ { "url", "width", "height", "caption" } ], "skipped": [ { "index", "error" } ] }`.
