@@ -81,9 +81,10 @@ describe('parseAdminPublicKeys', () => {
   });
 
   it('rejects a duplicate name', () => {
-    const encoded = b64(rawKey());
-    const text = `ed25519 ${encoded} desk\ned25519 ${encoded} desk`;
-    expect(() => parseAdminPublicKeys(text)).toThrow(/line 2/);
+    const text = `ed25519 ${b64(rawKey())} desk\ned25519 ${b64(rawKey())} desk`;
+    expect(() => parseAdminPublicKeys(text)).toThrow(
+      /^OCP_ADMIN_PUBLIC_KEYS line 2: duplicate key name$/,
+    );
   });
 
   it('rejects duplicate key material under another name', () => {
