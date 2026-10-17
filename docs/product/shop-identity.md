@@ -192,13 +192,12 @@ having re-encoded the image, because a phone photo can carry its GPS position:
     bytes; a `JFXX`, any other `APP0`, or a JFIF `APP0` whose content is
     shorter than 14 bytes is dropped. This removes embedded previews of the
     original;
-  - keep `APP2` only when it starts with `ICC_PROFILE\0`;
   - keep `APP14` only when it starts with `Adobe` and its content is at
     least 12 bytes (needed for the color transform), cut to those fixed 12
     bytes (`Adobe`, version, two flag words, transform); drop any other
     `APP14`, including a shorter `Adobe` one;
-  - drop every other `APPn` segment, which removes EXIF, XMP, MPF and maker
-    data, and every `COM` segment;
+  - drop every other `APPn` segment, which removes EXIF, XMP, MPF, ICC
+    profiles and maker data, and every `COM` segment;
   - when the dropped EXIF held an orientation from 2 to 8, write back a
     minimal `APP1` EXIF with only that orientation tag and no other IFD
     entry, so portrait photos keep showing upright;
@@ -210,15 +209,17 @@ having re-encoded the image, because a phone photo can carry its GPS position:
     `EOI`; this removes appended previews, depth maps and motion-photo
     videos.
 - PNG, by allow-list: keep `IHDR`, `PLTE`, `IDAT`, `IEND`, `tRNS`, `gAMA`,
-  `cHRM`, `sRGB`, `iCCP`, `cICP`, `sBIT`, `pHYs` and `bKGD`; drop every
-  other chunk, which removes `eXIf`, text, time and C2PA chunks. Walk to
+  `cHRM`, `sRGB`, `cICP`, `sBIT`, `pHYs` and `bKGD`; drop every other
+  chunk, which removes `eXIf`, `iCCP`, text, time and C2PA chunks. Walk to
   `IEND` and cut every byte after it.
-- WebP, by allow-list: keep `VP8 `, `VP8L`, `VP8X`, `ALPH` and `ICCP`; drop
-  every other chunk, each together with its pad byte when the chunk size is
-  odd, which removes `EXIF`, `XMP ` and C2PA chunks. Walk to byte 8 plus the
-  RIFF size and cut every byte after it. Clear the EXIF (`0x08`) and XMP
-  (`0x04`) flags in `VP8X` and rewrite the RIFF size to the new file length
-  minus 8.
+- WebP, by allow-list: keep `VP8 `, `VP8L`, `VP8X` and `ALPH`; drop every
+  other chunk, each together with its pad byte when the chunk size is odd,
+  which removes `EXIF`, `XMP `, `ICCP` and C2PA chunks. Walk to byte 8 plus
+  the RIFF size and cut every byte after it. Clear the ICC (`0x20`), EXIF
+  (`0x08`) and XMP (`0x04`) flags in `VP8X` and rewrite the RIFF size to the
+  new file length minus 8. Without a color profile the browser shows the
+  photo as sRGB; this is accepted so that no profile text (device, author,
+  copyright) is stored.
 - PNG and WebP keep no orientation; their width and height are the raw
   header values.
 
@@ -354,7 +355,10 @@ shared link shows the shop's name and photo.
   is rendered. API 301 (hex path) → HTTP 301 to `/{npub}`, with the npub
   taken from the redirect target and checked against the npub pattern. API
   404 → HTTP 404 with a shop-not-found page. Any other status, a network
-  error or a timeout → HTTP 503 with a retry message, never a blank page.
+  error, a timeout or an answer that is not valid JSON → HTTP 503 with a
+  retry message, never a blank page. Like the API route, the page sends
+  `Cache-Control: public, max-age=60` on 200, 301 and 404 and
+  `Cache-Control: no-store` on 503.
 - **Content:**
   - photo gallery: grid, opens full screen, keyboard and swipe navigation;
   - name and description;
