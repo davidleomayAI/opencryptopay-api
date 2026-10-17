@@ -3,10 +3,11 @@
 Status: **specified, not implemented**. Nothing here changes runtime behaviour
 yet. A change that builds a part of this adds its routes to the
 [handbook](../handbook/endpoints.md) and its columns and tables to
-[map-place.sql](../schema/map-place.sql) in that same change. The change that
-builds R7 also adds the requirement to
-[place-requirements.md](place-requirements.md) and its current state to
-[place-requirements-gap.md](place-requirements-gap.md).
+[map-place.sql](../schema/map-place.sql) in that same change, and documents
+any new environment variable in the README. Step 1a adds R7 to
+[place-requirements.md](place-requirements.md) and records it as accepted,
+not enforced, in [place-requirements-gap.md](place-requirements-gap.md);
+step 1b updates that entry to enforced.
 
 Every shop is registered with a NOSTR public key. That key is the shop's
 identifier everywhere: in the API, in the public page
@@ -96,7 +97,7 @@ New endpoint `PUT /map/places/photos`, same bearer as the other write routes
 }
 ```
 
-- The shop is addressed by its `nostrPubkey`. Photos are accepted for every
+- The shop is addressed by its `nostrPubkey`. Photos are accepted for the
   stored place with that key, listed or not. **404**
   `{ "error": "Place not found" }` only when no stored place has the key.
 - `photos` replaces the whole photo list of that shop. An empty array removes
@@ -188,8 +189,14 @@ stored bytes are the stripped bytes.
   - `Cache-Control: public, max-age=31536000, immutable` on 200 only;
     `Cache-Control: no-store` on 404, because the same URL can answer 404
     first and 200 later. CORS `*`.
-  - Every photo `url` in a JSON answer is absolute, built from the API's own
-    public base URL: `https://<api host>/map/photos/{sha256}.{ext}`.
+  - Every photo `url` in a JSON answer is absolute:
+    `<OCP_PUBLIC_BASE_URL>/map/photos/{sha256}.{ext}`. `OCP_PUBLIC_BASE_URL`
+    is a new environment variable, required from step 2 on: an `https://`
+    origin without a trailing slash, `https://api.opencryptopay.io` in
+    production and `https://dev-api.opencryptopay.io` on dev. It is not a
+    secret and is set in the deployment's environment configuration. The
+    process refuses to start without a valid value. The request's `Host`
+    header is never used, because a client controls it.
   - A new photo has a new hash and therefore a new URL, so a replaced photo
     never stays stale in a cache.
   - The API serves the file only while a shop in the public list uses it,
