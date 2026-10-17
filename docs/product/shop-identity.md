@@ -37,15 +37,20 @@ Every shop must state a NOSTR public key:
 - It is required. A body without it is rejected with **400** and nothing is
   stored, as in R6. It is never defaulted, generated or derived by the API.
   This rejection is switched on in step 1b of the order of work below, once
-  every source sends keys; step 1a already hides shops without a key.
+  every source sends keys; step 1a already hides shops without a key and
+  stores the writes.
 - It is unique across all shops of all sources. A key that already belongs to
   another place is rejected with **409**
   `{ "error": "nostrPubkey belongs to another place" }`.
-- It is fixed once stored. A `PUT` for the same `origin` + `externalId` with a
-  different key is rejected with **409**
+- It is fixed once stored. A `POST` or `PUT` for the same `origin` +
+  `externalId` with a different key is rejected with **409**
   `{ "error": "nostrPubkey of a place cannot change" }`. To move a shop to a new
   key, the source deletes the place and registers it again; the old URL then
   stops working.
+- A `POST` for an existing `origin` + `externalId` that has no key yet stores
+  the key it carries. Without that, a source could never add a key to an
+  existing row through `POST`, which otherwise leaves an existing row as it
+  is.
 - `nostrPubkey` is added to `ALLOWED_PLACE_KEYS`.
 - A stored row without `nostrPubkey` is not complete. `COMPLETE_PLACE_SQL`
   requires it, so such a row stays out of every public response, in the same
@@ -57,13 +62,22 @@ shown.
 
 ### Storage
 
-`map_place` gains `nostr_pubkey TEXT` with a unique index. It is added by the
-existing startup `ALTER TABLE ADD COLUMN` path and stays nullable in the
-database only for old rows; the write path never stores a null.
+`map_place` gains `nostr_pubkey TEXT`, added by the existing startup
+`ALTER TABLE ADD COLUMN` path. SQLite cannot add a `UNIQUE` column, so
+uniqueness is a separate
+`CREATE UNIQUE INDEX IF NOT EXISTS map_place_nostr_pubkey ON map_place (nostr_pubkey)`,
+run after the column exists. SQLite allows several nulls under that index.
+
+The column is nullable for old rows and, until step 1b, for writes without a
+key. A write without `nostrPubkey` never clears a key that is already stored:
+`PUT` replaces every other field and keeps the key, as it keeps `id` and
+`createdAt`. From step 1b on, the write path never stores a null.
 
 `origin` + `externalId` stay the source's own key for idempotent writes. Every
 public response and every new route uses the NOSTR key instead. The internal
-UUID no longer appears in public JSON.
+UUID no longer appears in any JSON: the `id` in the answers of `POST` and
+`PUT /map/places` is the npub, or `null` for a place without a key (step 1a
+only).
 
 ## Photos
 
@@ -89,19 +103,30 @@ New endpoint `PUT /map/places/photos`, same bearer as the other write routes
 - Allowed keys: `nostrPubkey`, `photos`; per photo `contentType`, `data`,
   `caption`. Any other key rejects the request, as in R6.
 - The route accepts a body of up to 15 MiB. Larger bodies get **413**.
-- The whole list is checked first. One bad photo rejects the request with
-  **400** and stores nothing.
-- Response **200** `{ "photos": [ { "url", "width", "height", "caption" } ] }`.
+- A malformed request (unknown key, more than 10 photos, a field of the
+  wrong type) is rejected with **400** and stores nothing.
+- A single photo that breaks a rule below is skipped; the others are stored
+  in their order. One bad photo never blocks the rest, because a source's own
+  upload rules can be looser than these.
+- Response **200**:
+  `{ "photos": [ { "url", "width", "height", "caption" } ], "skipped": [ { "index", "error" } ] }`.
+  `index` is the position in the request; `skipped` is `[]` when nothing was
+  skipped.
+- `DELETE /map/places` drops the photos with the place. A source that
+  registers the place again sends its photos again.
 
-Rules per photo, the same limits 21.gifts applies to its own uploads:
+Rules per photo. 21.gifts checks only size and magic bytes on its own
+uploads, so the header rules here are stricter:
 
 - `contentType` is `image/jpeg`, `image/png` or `image/webp`.
 - `data` is strict base64. The decoded size is at most 1 048 576 bytes.
 - The file type is read from the magic bytes and must equal `contentType`.
-- Width and height are read from the file header. Each is between 1 and 4096.
+- Width and height are read from the file header, which must parse. Each is
+  between 1 and 4096. The API returns the displayed size: for a JPEG whose
+  EXIF orientation is 5 to 8, width and height are swapped.
 - `caption` is optional, 1–200 characters, no control characters.
 
-Errors are `{ "error": "<sentence>" }`, for example
+The `error` of a skipped photo is a sentence, for example
 `Photo 3 is not a JPEG, PNG or WebP image` or `Photo 2 is larger than 1 MiB`.
 
 ### Metadata removal
@@ -109,10 +134,21 @@ Errors are `{ "error": "<sentence>" }`, for example
 The API removes metadata before storing. It does not rely on the source
 having re-encoded the image, because a phone photo can carry its GPS position:
 
-- JPEG: drop `APP1` (EXIF, XMP), `APP13` and `COM` segments. Keep `APP0`,
-  `APP2` (ICC profile) and the image data.
+- JPEG, by allow-list:
+  - keep `APP0`, `APP2` only when it starts with `ICC_PROFILE\0`, and
+    `APP14` (`Adobe`, needed for the colour transform);
+  - drop every other `APPn` segment, which removes EXIF, XMP, MPF and maker
+    data, and every `COM` segment;
+  - when the dropped EXIF held an orientation other than 1, write back a
+    minimal `APP1` EXIF with only that orientation tag and no other IFD
+    entry, so portrait photos keep showing upright;
+  - cut every byte after the main image's `EOI`, found by walking the
+    segments to `SOS` and then scanning the entropy-coded data. This removes
+    appended previews, depth maps and motion-photo videos.
 - PNG: drop `eXIf`, `tEXt`, `zTXt`, `iTXt` and `tIME` chunks.
-- WebP: drop the `EXIF` and `XMP ` chunks and clear their flags in `VP8X`.
+- WebP: drop the `EXIF` and `XMP ` chunks, each together with its pad byte
+  when the chunk size is odd, clear the EXIF (`0x08`) and XMP (`0x04`) flags
+  in `VP8X`, and rewrite the RIFF size to the new file length minus 8.
 
 This is a byte-level cut, not a re-encode, so it needs no image library. The
 stored bytes are the stripped bytes.
@@ -124,9 +160,11 @@ stored bytes are the stripped bytes.
 - `map_place_photo (place_id, position, sha256, caption)` with primary key
   `(place_id, position)`, position 0–9, foreign key to `map_place` with
   `ON DELETE CASCADE`.
-- `PUT /map/places` keeps the photos. `DELETE /map/places` removes them. A
-  `map_photo` row that no shop uses any more is deleted in the same
-  transaction.
+- `PUT /map/places` keeps the photos. `DELETE /map/places` removes them.
+- After `PUT /map/places/photos` and after `DELETE /map/places`, the same
+  transaction deletes every `map_photo` row that no `map_place_photo` row of
+  any shop uses any more. The same file can belong to several shops, so the
+  check runs across all shops.
 - Public URL: `GET /map/photos/{sha256}.{jpg|png|webp}`.
   - `Cache-Control: public, max-age=31536000, immutable`, CORS `*`.
   - A new photo has a new hash and therefore a new URL, so a replaced photo
@@ -160,7 +198,8 @@ when unset.
 
 ## Shop page on opencryptopay.io
 
-The website is static HTML on an Apache host. The page needs a small amount
+These changes are in the website repository, openCryptoPay/landingPage; paths
+in this section and the next are paths there. The website is static HTML on an Apache host. The page needs a small amount
 of server-side code so that a shared link shows the shop's name and photo.
 
 - **Route:** a rewrite in `.htaccess` sends `^npub1[02-9ac-hj-np-z]{58}$` to
@@ -207,10 +246,11 @@ of server-side code so that a shared link shows the shop's name and photo.
 
 ## Sources
 
-- **21.gifts:** sends the shop's `nostrPubkey` with every place `PUT`, and
-  after each successful `PUT` sends the shop note's photos (up to 10, in note
-  order) to `PUT /map/places/photos`. It generates and maintains those
-  identities itself.
+- **21.gifts:** sends the shop's `nostrPubkey` with every place `PUT`. It
+  sends the shop note's photos (up to 10, in note order) to
+  `PUT /map/places/photos` whenever the photo set differs from the one it
+  last sent, and again after the place was deleted and registered anew. It
+  generates and maintains those identities itself.
 - **DFX.swiss (SPAR):** must create one NOSTR key pair per SPAR shop before
   its next import, keep the secret keys on its side, and send each public key
   as `nostrPubkey`. Photos arrive through the same photo endpoint. Until then
@@ -220,20 +260,19 @@ of server-side code so that a shared link shows the shop's name and photo.
 
 ## Order of work
 
-1. R7 in two deploys:
-   - 1a: `nostrPubkey` accepted, validated, unique and fixed; shops without a
-     key are not complete and leave the public list; `id` = npub;
-     `GET /map/places/{npub}` without photos. A write without the key is
-     still stored, so no source breaks while it adds keys.
-   - 1b: once every source sends keys, a write without `nostrPubkey` is
-     rejected with **400**.
+1. 1a, R7 accepted: `nostrPubkey` accepted, validated, unique and fixed;
+   shops without a key are not complete and leave the public list; `id` =
+   npub; `GET /map/places/{npub}` without photos. A write without the key is
+   still stored, so no source breaks while it adds keys.
 2. Photos: photo endpoint, photo route, metadata removal, `coverPhoto` and
    `photos`.
-3. Sources, between 1a and 1b: 21.gifts sends its keys and photos; DFX.swiss
+3. Sources, after 1a and 2: 21.gifts sends its keys and photos; DFX.swiss
    creates and sends keys for SPAR.
-4. Website: shop page, map and table links.
+4. 1b, R7 enforced: once every source sends keys, a write without
+   `nostrPubkey` is rejected with **400**.
+5. Website, any time after 1a: shop page, map and table links.
 
-Steps 1a, 1b and 2 are each one pull request with handbook entries, e2e tests and
+Steps 1a, 2 and 1b are each one pull request with handbook entries, e2e tests and
 the 100% coverage gate, as in [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ## Not part of this
