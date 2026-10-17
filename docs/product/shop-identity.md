@@ -217,9 +217,11 @@ having re-encoded the image, because a phone photo can carry its GPS position:
   which removes `EXIF`, `XMP `, `ICCP` and C2PA chunks. Walk to byte 8 plus
   the RIFF size and cut every byte after it. Clear the ICC (`0x20`), EXIF
   (`0x08`) and XMP (`0x04`) flags in `VP8X` and rewrite the RIFF size to the
-  new file length minus 8. Without a color profile the browser shows the
-  photo as sRGB; this is accepted so that no profile text (device, author,
-  copyright) is stored.
+  new file length minus 8.
+- No format keeps an embedded ICC profile (JPEG `APP2`, PNG `iCCP`, WebP
+  `ICCP`). Such a photo is shown as sRGB, or as its PNG `sRGB`, `cICP`,
+  `gAMA` and `cHRM` chunks say; this is accepted so that no profile text
+  (device, author, copyright) is stored.
 - PNG and WebP keep no orientation; their width and height are the raw
   header values.
 
