@@ -131,8 +131,9 @@ uploads, so the header rules here are stricter:
 - `data` is strict base64. The decoded size is at most 1 048 576 bytes.
 - The file type is read from the magic bytes and must equal `contentType`.
 - The markers or chunks must walk cleanly: a JPEG to its `EOI`, a PNG to
-  its `IEND`, a WebP to the end of its RIFF size, with no segment or chunk
-  length past the end of the file.
+  its `IEND`, with no segment or chunk length past the end of the file. A
+  WebP's RIFF size must not exceed the file length, and its chunks must end
+  exactly at that size.
   Otherwise the photo is skipped (`Photo N could not be read`), so metadata
   that cannot be found is never stored.
 - Width and height are read from the file header, which must parse. Each is
@@ -170,8 +171,11 @@ having re-encoded the image, because a phone photo can carry its GPS position:
   chunks. Walk to `IEND` and cut every byte after it.
 - WebP, by allow-list: keep `VP8 `, `VP8L`, `VP8X`, `ALPH`, `ICCP`, `ANIM`
   and `ANMF`; drop every other chunk, each together with its pad byte when
-  the chunk size is odd, which removes `EXIF`, `XMP ` and C2PA chunks. Walk
-  to the end of the RIFF size and cut every byte after it. Clear the EXIF
+  the chunk size is odd, which removes `EXIF`, `XMP ` and C2PA chunks. The
+  data of each `ANMF` frame is walked the same way: keep its `ALPH`, `VP8 `
+  and `VP8L` sub-chunks, drop every other sub-chunk with its pad byte, and
+  rewrite the `ANMF` size. Walk to the end of the RIFF size and cut every
+  byte after it. Clear the EXIF
   (`0x08`) and XMP (`0x04`) flags in `VP8X` and rewrite the RIFF size to the
   new file length minus 8.
 - PNG and WebP keep no orientation; their width and height are the raw
