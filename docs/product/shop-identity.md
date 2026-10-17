@@ -185,7 +185,11 @@ stored bytes are the stripped bytes.
 - Public URL: `GET /map/photos/{sha256}.{jpg|png|webp}`.
   - The extension must match the stored `content_type`, otherwise **404**, so
     each file has exactly one URL.
-  - `Cache-Control: public, max-age=31536000, immutable`, CORS `*`.
+  - `Cache-Control: public, max-age=31536000, immutable` on 200 only;
+    `Cache-Control: no-store` on 404, because the same URL can answer 404
+    first and 200 later. CORS `*`.
+  - Every photo `url` in a JSON answer is absolute, built from the API's own
+    public base URL: `https://<api host>/map/photos/{sha256}.{ext}`.
   - A new photo has a new hash and therefore a new URL, so a replaced photo
     never stays stale in a cache.
   - The API serves the file only while a shop in the public list uses it,
