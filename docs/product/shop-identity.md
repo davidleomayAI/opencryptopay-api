@@ -61,7 +61,8 @@ Every shop must state a NOSTR public key:
   stays out of `GET /map/places` and `GET /map/places/{npub}`, in the same
   way PR #22 handles the other fields. `GET /map/filters` keeps reading
   blockchains and assets from every row, as it does today for any
-  incomplete row. An existing row becomes public once it carries a key and
+  incomplete row. Its `countries` list comes from complete rows, so a
+  country whose only shops have no key drops out of it. An existing row becomes public once it carries a key and
   passes the completeness check of PR #22 (R2 to R5), whether the key
   arrives with a `PUT` or, as described above, with a `POST`.
 
@@ -295,7 +296,13 @@ shared link shows the shop's name and photo.
   - text and attributes: `htmlspecialchars` with `ENT_QUOTES`;
   - the JSON-LD block: `json_encode` with
     `JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT`;
-  - URLs: built only from the npub and the photo URLs the API returns.
+  - URLs: built from the npub, the photo URLs the API returns and the
+    numeric coordinates; shop text put into a query string (the directions
+    link) goes through `rawurlencode` first, and every URL then through
+    `htmlspecialchars` with `ENT_QUOTES` in its attribute;
+  - any other inline data for scripts (the map pin, the gallery) uses the
+    same `json_encode` flags as the JSON-LD block, or `data-*` attributes
+    escaped with `htmlspecialchars`.
 
   The fixed sample shop behind the baseline has quotes, tags and
   `</script>` in its name and description, so the baseline shows that the
