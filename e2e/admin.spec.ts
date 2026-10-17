@@ -1,12 +1,16 @@
+import { execFileSync } from 'node:child_process';
 import { createPrivateKey, sign } from 'node:crypto';
 import type { KeyObject } from 'node:crypto';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
 import { canonicalString, signAdminRequest } from '../src/lib/admin/signature';
 
 const DESCRIPTION =
   'SPAR supermarket in Triesen. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
 
-const HOST = 'api.e2e.test';
+const HOST = '127.0.0.1';
 const PATH = '/admin/places';
 const KEY_NAME = 'e2e';
 
@@ -168,6 +172,52 @@ test('Function: deletePlace — DELETE /admin/places removes the pin', async ({ 
   });
   expect(res.status()).toBe(200);
   expect(await res.json()).toEqual({ deleted: true });
+});
+
+test('Function: ocp-admin CLI — list, put, and delete sign like the server', () => {
+  const home = mkdtempSync(join(tmpdir(), 'ocp-admin-home-'));
+  try {
+    const privateKeyPem = process.env['OCP_E2E_ADMIN_PRIVATE_KEY'];
+    if (privateKeyPem === undefined || privateKeyPem === '') {
+      throw new Error('OCP_E2E_ADMIN_PRIVATE_KEY is missing');
+    }
+
+    const keyDir = join(home, '.ocp-admin');
+    mkdirSync(keyDir, { mode: 0o700 });
+    writeFileSync(join(keyDir, 'e2e.key'), privateKeyPem, { mode: 0o600 });
+
+    const placesFile = join(home, 'places.json');
+    writeFileSync(placesFile, JSON.stringify([{ ...fremd, origin: 'cli', externalId: 'cli-1' }]));
+
+    const run = (...args: string[]): string =>
+      execFileSync(
+        'bun',
+        ['scripts/ocp-admin.mjs', ...args, '--base', 'http://127.0.0.1:3000', '--key', 'e2e'],
+        { env: { ...process.env, HOME: home }, encoding: 'utf8' },
+      );
+
+    expect(run('put', placesFile)).toContain('ok cli-1');
+    expect(run('list')).toContain('cli-1');
+    expect(run('delete', 'cli', 'cli-1')).toBe('ok cli-1\n');
+
+    let secondDeleteError: unknown;
+    try {
+      run('delete', 'cli', 'cli-1');
+    } catch (error) {
+      secondDeleteError = error;
+    }
+    expect(secondDeleteError).toBeDefined();
+    expect(
+      typeof secondDeleteError === 'object' &&
+        secondDeleteError !== null &&
+        'stdout' in secondDeleteError &&
+        typeof secondDeleteError.stdout === 'string'
+        ? secondDeleteError.stdout
+        : '',
+    ).toContain('missing cli-1');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('Function: adminRoutes — a body above 64 KiB with Content-Length is 413', async ({
