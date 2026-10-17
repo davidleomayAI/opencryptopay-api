@@ -43,14 +43,22 @@ Every shop must state a NOSTR public key:
   This rejection is switched on in step 1b of the order of work below, once
   every source sends keys; step 1a already hides shops without a key and
   stores the writes.
-- It is unique across all shops of all sources. A key that already belongs to
-  another place is rejected with **409**
-  `{ "error": "nostrPubkey belongs to another place" }`.
+- It is unique across all shops of all sources, also over time. Once a key
+  has been stored for an `origin` + `externalId`, it stays reserved for that
+  pair, also after `DELETE /map/places`. A key reserved for another pair is
+  rejected with **409** `{ "error": "nostrPubkey belongs to another place" }`.
+  So an old shared `/{npub}` link can never lead to a different shop.
 - It is fixed once stored. A `POST` or `PUT` for the same `origin` +
   `externalId` with a different key is rejected with **409**
   `{ "error": "nostrPubkey of a place cannot change" }`. To move a shop to a new
-  key, the source deletes the place and registers it again; the old URL then
-  stops working.
+  key, the source deletes the place and registers it again with the new
+  key; the old key stays reserved for that pair, and its npub answers 404.
+  The same pair may also register again with its old key.
+- When a write breaks both 409 rules, the place's stored key decides: a
+  place that already has a key answers
+  `nostrPubkey of a place cannot change`; the reservation check applies only
+  to a place without a stored key. POST and PUT, and both stores, use this
+  order.
 - A `POST` for an existing `origin` + `externalId` that has no key yet stores
   the key it carries. Without that, a source could never add a key to an
   existing row through `POST`, which otherwise leaves an existing row as it
@@ -77,6 +85,21 @@ shown.
 uniqueness is a separate
 `CREATE UNIQUE INDEX IF NOT EXISTS map_place_nostr_pubkey ON map_place (nostr_pubkey)`,
 run after the column exists. SQLite allows several nulls under that index.
+
+The reservation lives in its own table, which a place `DELETE` does not
+touch and nothing ever deletes from:
+
+```sql
+CREATE TABLE IF NOT EXISTS map_pubkey_reservation (
+  nostr_pubkey TEXT PRIMARY KEY,
+  origin TEXT NOT NULL,
+  external_id TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+```
+
+The first write that stores a key for a pair inserts its row in the same
+transaction. The memory store keeps the same map.
 
 The column is nullable for old rows and, until step 1b, for writes without a
 key. A write without `nostrPubkey` never clears a key that is already stored:
@@ -162,8 +185,12 @@ The API removes metadata before storing. It does not rely on the source
 having re-encoded the image, because a phone photo can carry its GPS position:
 
 - JPEG, by allow-list:
-  - keep `APP0`, `APP2` only when it starts with `ICC_PROFILE\0`, and
-    `APP14` (`Adobe`, needed for the color transform);
+  - keep `APP0` only as a plain JFIF header: an `APP0` that starts with
+    `JFIF\0` is rewritten with a thumbnail size of 0×0 and no thumbnail
+    bytes; a `JFXX` or any other `APP0` is dropped. This removes embedded
+    previews of the original;
+  - keep `APP2` only when it starts with `ICC_PROFILE\0`, and `APP14`
+    (`Adobe`, needed for the color transform);
   - drop every other `APPn` segment, which removes EXIF, XMP, MPF and maker
     data, and every `COM` segment;
   - when the dropped EXIF held an orientation from 2 to 8, write back a
