@@ -151,8 +151,9 @@ carry a revision:
 - A write without `revision` is not checked and stores nothing, as today.
   A source that has sent a revision once keeps sending one.
 - Order of answers on `POST`, `PUT` and `DELETE /map/places` and on
-  `PUT /map/places/photos`, in both stores: **413** for an oversized photo
-  body, **400** for the body format (including `revision`), then on the
+  `PUT /map/places/photos`, in both stores: the existing **503** (ingest
+  not configured) and **401** (bearer) first, then **413** for an oversized
+  photo body, **400** for the body format (including `revision`), then on the
   photo route **404** for an unknown key or another origin, then
   `Stale revision`, then on `POST` and `PUT /map/places` the two R7 rules in
   their stated order. `POST /map/places/transactions` carries no revision
