@@ -18,7 +18,8 @@ identity. Whether that identity has a profile, and whether it is kept up to
 date, does not matter to OpenCryptoPay: the key is used as a unique id.
 
 21.gifts gives each of its shops such an identity and maintains its profile,
-see [21gifts/api `docs/shop-identity.md`](https://github.com/21gifts/api/blob/develop/docs/shop-identity.md).
+see [21gifts/api `docs/shop-identity.md`](https://github.com/21gifts/api/blob/develop/docs/shop-identity.md)
+(until that is merged: 21gifts/api#487).
 It sends that key here when it registers the shop, so a 21.gifts shop has the
 same npub on both platforms.
 
@@ -35,6 +36,8 @@ Every shop must state a NOSTR public key:
   rejected.
 - It is required. A body without it is rejected with **400** and nothing is
   stored, as in R6. It is never defaulted, generated or derived by the API.
+  This rejection is switched on in step 1b of the order of work below, once
+  every source sends keys; step 1a already hides shops without a key.
 - It is unique across all shops of all sources. A key that already belongs to
   another place is rejected with **409**
   `{ "error": "nostrPubkey belongs to another place" }`.
@@ -62,7 +65,7 @@ database only for old rows; the write path never stores a null.
 public response and every new route uses the NOSTR key instead. The internal
 UUID no longer appears in public JSON.
 
-## R8 Photos
+## Photos
 
 ### Delivery by the source
 
@@ -128,8 +131,9 @@ stored bytes are the stripped bytes.
   - `Cache-Control: public, max-age=31536000, immutable`, CORS `*`.
   - A new photo has a new hash and therefore a new URL, so a replaced photo
     never stays stale in a cache.
-  - The file is served only while a shop in the public list uses it.
-    Otherwise **404**.
+  - The API serves the file only while a shop in the public list uses it,
+    otherwise **404**. A cache that already holds the file keeps its copy
+    until it expires; removing a photo does not purge caches.
 
 ## Public API
 
@@ -160,8 +164,8 @@ The website is static HTML on an Apache host. The page needs a small amount
 of server-side code so that a shared link shows the shop's name and photo.
 
 - **Route:** a rewrite in `.htaccess` sends `^npub1[02-9ac-hj-np-z]{58}$` to
-  `shop.php`. A trailing slash gets a 301 to the path without it, because the
-  pages load assets by relative path. No existing file or folder starts with
+  `shop.php`. A trailing slash gets a 301 to the path without it, so each shop
+  has one canonical URL. No existing file or folder starts with
   `npub1`.
 - **Hex:** `^[0-9a-f]{64}$` is passed to the API; on its 301 the page answers
   with a 301 to `/{npub}`.
@@ -216,15 +220,20 @@ of server-side code so that a shared link shows the shop's name and photo.
 
 ## Order of work
 
-1. R7: `nostrPubkey` required and unique, `id` = npub, `GET /map/places/{npub}`
-   without photos. Before this deploys, every source must send keys, or its
-   shops leave the public list.
-2. R8: photo endpoint, photo route, metadata removal, `coverPhoto` and
+1. R7 in two deploys:
+   - 1a: `nostrPubkey` accepted, validated, unique and fixed; shops without a
+     key are not complete and leave the public list; `id` = npub;
+     `GET /map/places/{npub}` without photos. A write without the key is
+     still stored, so no source breaks while it adds keys.
+   - 1b: once every source sends keys, a write without `nostrPubkey` is
+     rejected with **400**.
+2. Photos: photo endpoint, photo route, metadata removal, `coverPhoto` and
    `photos`.
-3. Website: shop page, map and table links.
-4. Sources: 21.gifts key and photo push; DFX.swiss keys for SPAR.
+3. Sources, between 1a and 1b: 21.gifts sends its keys and photos; DFX.swiss
+   creates and sends keys for SPAR.
+4. Website: shop page, map and table links.
 
-Steps 1 and 2 are each one pull request with handbook entries, e2e tests and
+Steps 1a, 1b and 2 are each one pull request with handbook entries, e2e tests and
 the 100% coverage gate, as in [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ## Not part of this
