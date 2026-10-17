@@ -4,7 +4,8 @@ Status: **specified, not implemented**. Nothing here changes runtime behaviour
 yet. A change that builds a part of this adds its routes to the
 [handbook](../handbook/endpoints.md), its columns and tables to
 [map-place.sql](../schema/map-place.sql) and requirement R7 to
-[place-requirements.md](place-requirements.md) in that same change.
+[place-requirements.md](place-requirements.md) and its state to
+[place-requirements-gap.md](place-requirements-gap.md) in that same change.
 
 Every shop is registered with a NOSTR public key. That key is the shop's
 identifier everywhere: in the API, in the public page
@@ -147,10 +148,11 @@ having re-encoded the image, because a phone photo can carry its GPS position:
     minimal `APP1` EXIF with only that orientation tag and no other IFD
     entry, so portrait photos keep showing upright;
   - walk the markers through the whole image, also between the scans of a
-    progressive JPEG: keep `SOS`, `DHT`, `DQT`, `DRI`, `DNL` and `RSTn`,
-    apply the same allow-list to every `APPn` and `COM`, and cut every byte
-    after the main image's `EOI`. This removes appended previews, depth maps
-    and motion-photo videos.
+    progressive JPEG. Keep every marker other than `APPn` and `COM`: `SOI`,
+    `SOFn`, `DHT`, `DAC`, `DQT`, `DRI`, `DNL`, `SOS` with its entropy-coded
+    data, `RSTn` and `EOI`. Every `APPn` and `COM` goes through the
+    allow-list above. Cut every byte after the main image's `EOI`; this
+    removes appended previews, depth maps and motion-photo videos.
 - PNG: drop `eXIf`, `tEXt`, `zTXt`, `iTXt` and `tIME` chunks. PNG and WebP
   keep no orientation; their width and height are the raw header values.
 - WebP: drop the `EXIF` and `XMP ` chunks, each together with its pad byte
@@ -210,10 +212,10 @@ in this section and the next are paths there. The website is static HTML on an
 Apache host. The page needs a small amount of server-side code so that a
 shared link shows the shop's name and photo.
 
-- **Route:** a rewrite in `.htaccess` sends `^npub1[02-9ac-hj-np-z]{58}$` to
-  `shop.php`. A trailing slash gets a 301 to the path without it, so each shop
-  has one canonical URL. No existing file or folder starts with
-  `npub1`.
+- **Route:** a rewrite in `.htaccess` sends `^npub1[02-9ac-hj-np-z]{58}$` and
+  `^[0-9a-f]{64}$` to `shop.php`. A trailing slash gets a 301 to the path
+  without it, so each shop has one canonical URL. No existing file or folder
+  starts with `npub1` or is 64 hex characters long.
 - **Hex:** `^[0-9a-f]{64}$` is passed to the API; on its 301 the page answers
   with a 301 to `/{npub}`.
 - **Rendering:** `shop.php` calls `GET /map/places/{npub}` (production or dev
@@ -281,8 +283,8 @@ shared link shows the shop's name and photo.
 5. Website, any time after 1a: shop page, map and table links. Until step 2
    is live the page treats missing `coverPhoto` and `photos` as no photos.
 
-Steps 1a, 2 and 1b are each one pull request with handbook entries, e2e tests and
-the 100% coverage gate, as in [CONTRIBUTING.md](../../CONTRIBUTING.md).
+Steps 1a, 2 and 1b are each one pull request with handbook entries, e2e tests
+and the 100% coverage gate, as in [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ## Not part of this
 
