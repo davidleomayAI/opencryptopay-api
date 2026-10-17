@@ -207,8 +207,9 @@ New endpoint `PUT /map/places/photos`, same bearer as the other write routes
   `photos` that is not an array, a photo entry that is not an object, a
   `nostrPubkey` that breaks the R7 format rule, an `origin` or `revision`
   of the wrong form.
-- A single photo that breaks a rule below, including a missing field or a
-  field of the wrong type in `contentType`, `data` or `caption`, is skipped
+- A single photo that breaks a rule below, including a missing
+  `contentType` or `data`, or a field of the wrong type in `contentType`,
+  `data` or `caption`, is skipped
   and reported by index; the others are stored in their order. One bad
   photo never blocks the rest, because a source's own upload rules can be
   looser than these.
