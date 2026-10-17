@@ -260,6 +260,11 @@ stored bytes are the stripped bytes.
 - Public URL: `GET /map/photos/{sha256}.{jpg|png|webp}`.
   - The extension must match the stored `content_type`, otherwise **404**, so
     each file has exactly one URL.
+  - The 200 answer carries the stored `content_type` as `Content-Type` and
+    `X-Content-Type-Options: nosniff`, so a browser never reads the bytes as
+    another type. A file whose structure walks cleanly but whose image data
+    is broken is accepted by design (no decoding, see metadata removal) and
+    shows as a broken image.
   - `Cache-Control: public, max-age=31536000, immutable` on 200 only;
     `Cache-Control: no-store` on 404, because the same URL can answer 404
     first and 200 later. A store failure answers **503**
@@ -338,9 +343,12 @@ shared link shows the shop's name and photo.
     same `json_encode` flags as the JSON-LD block, or `data-*` attributes
     escaped with `htmlspecialchars`.
 
-  The fixed sample shop behind the baseline has quotes, tags and
-  `</script>` in its name and description, so the baseline shows that the
-  escaping works.
+  These rules are the requirement. The fixed sample shop behind the
+  baseline has quotes, tags and `</script>` in its name, description,
+  address and photo caption. The baseline image only shows that they render
+  as text; the change that builds the page also checks the page source of
+  that shop and confirms it has no element, attribute or script beyond the
+  template's.
 
 - **Statuses:** the API call does not follow redirects. API 200 → the page
   is rendered. API 301 (hex path) → HTTP 301 to `/{npub}`, with the npub
