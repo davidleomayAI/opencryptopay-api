@@ -169,8 +169,8 @@ New endpoint `PUT /map/places/photos`, same bearer as the other write routes
 - Photos are separate from `PUT /map/places`, so a source does not resend
   megabytes on every text change.
 - Allowed keys: `nostrPubkey`, `revision` (R8), `photos`; per photo
-  `contentType`, `data`, `caption`. Any other key rejects the request, as `POST` and
-  `PUT /map/places` do.
+  `contentType`, `data`, `caption`. Any other key rejects the request, as
+  `POST` and `PUT /map/places` do.
 - The route accepts a body of up to 15 MiB. Larger bodies get **413**
   before any photo is checked, so the guarantee below holds only while each
   photo stays within the 1 MiB rule.
@@ -439,10 +439,11 @@ shared link shows the shop's name and photo.
 
 The steps are named by label, in this order:
 
-- **Step 1a, R7 accepted and R8:** `revision` checked and stored; `nostrPubkey` accepted, validated, unique and
-  fixed; shops without a key are not complete and leave the public list;
-  `id` = npub; `GET /map/places/{npub}` without photos. A write without the
-  key is still stored, so no source breaks while it adds keys.
+- **Step 1a, R7 accepted and R8:** `revision` checked and stored;
+  `nostrPubkey` accepted, validated, unique and fixed; shops without a key
+  are not complete and leave the public list; `id` = npub;
+  `GET /map/places/{npub}` without photos. A write without the key is still
+  stored, so no source breaks while it adds keys.
 - **Step 2, photos:** photo endpoint, photo route, metadata removal,
   `coverPhoto` and `photos`.
 - **Step 3, sources,** after steps 1a and 2: 21.gifts sends its keys and
