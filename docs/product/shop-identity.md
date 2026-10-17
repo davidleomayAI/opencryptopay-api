@@ -58,8 +58,8 @@ Every shop must state a NOSTR public key:
 - A stored row without `nostrPubkey` is not complete. `COMPLETE_PLACE_SQL`
   and the memory store's `isCompletePlace` both require it, so such a row
   stays out of every public response, in the same way PR #22 handles the
-  other fields. Existing rows become visible again when their source sends
-  them with a key.
+  other fields. An existing row becomes public once its source sends a
+  complete `PUT` that includes the key.
 
 The npub is not stored. It is `nip19.npubEncode(nostrPubkey)` wherever it is
 shown.
@@ -188,7 +188,9 @@ stored bytes are the stripped bytes.
     each file has exactly one URL.
   - `Cache-Control: public, max-age=31536000, immutable` on 200 only;
     `Cache-Control: no-store` on 404, because the same URL can answer 404
-    first and 200 later. CORS `*`.
+    first and 200 later. A store failure answers **503**
+    `{ "error": "Places are unavailable" }` with `Cache-Control: no-store`.
+    CORS `*`.
   - Every photo `url` in a JSON answer is absolute:
     `<OCP_PUBLIC_BASE_URL>/map/photos/{sha256}.{ext}`. `OCP_PUBLIC_BASE_URL`
     is a new environment variable, required from step 2 on: an `https://`
