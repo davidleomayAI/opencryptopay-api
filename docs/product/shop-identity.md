@@ -99,7 +99,8 @@ CREATE TABLE IF NOT EXISTS map_pubkey_reservation (
 ```
 
 Every write that stores a key that has no reservation row yet inserts one
-(`nostr_pubkey`, `origin`, `external_id`) in the same transaction, so each
+(`nostr_pubkey`, `origin`, `external_id`, `created_at`) in the same
+transaction, so each
 key a pair ever used stays reserved. The memory store keeps the same map.
 
 The column is nullable for old rows and, until step 1b, for writes without a
@@ -191,8 +192,10 @@ having re-encoded the image, because a phone photo can carry its GPS position:
     bytes; a `JFXX`, any other `APP0`, or a JFIF `APP0` whose content is
     shorter than 14 bytes is dropped. This removes embedded previews of the
     original;
-  - keep `APP2` only when it starts with `ICC_PROFILE\0`, and `APP14`
-    (`Adobe`, needed for the color transform);
+  - keep `APP2` only when it starts with `ICC_PROFILE\0`;
+  - keep `APP14` only when it starts with `Adobe` (needed for the color
+    transform), cut to its fixed 12 bytes (`Adobe`, version, two flag
+    words, transform); drop any other `APP14`;
   - drop every other `APPn` segment, which removes EXIF, XMP, MPF and maker
     data, and every `COM` segment;
   - when the dropped EXIF held an orientation from 2 to 8, write back a
