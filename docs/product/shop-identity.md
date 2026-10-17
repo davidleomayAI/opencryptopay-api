@@ -137,8 +137,9 @@ uploads, so the header rules here are stricter:
   must end exactly at byte 8 plus the RIFF size. Otherwise the photo is
   skipped (`Photo N could not be read`), so metadata that cannot be found is
   never stored.
-- Animated images are not accepted: a PNG with `acTL` or a WebP with `ANIM`
-  or `ANMF` is skipped (`Photo N is animated`). A shop photo is a still
+- Animated images are not accepted: a PNG with `acTL`, or a WebP with
+  `ANIM` or `ANMF` or with the animation flag (`0x02`) set in `VP8X`, is
+  skipped (`Photo N is animated`). A shop photo is a still
   picture, and this keeps the metadata walk to one level.
 - Width and height are read from the file header, which must parse. Each is
   between 1 and 4096. The API returns the displayed size: for a JPEG whose
@@ -175,7 +176,7 @@ having re-encoded the image, because a phone photo can carry its GPS position:
   `IEND` and cut every byte after it.
 - WebP, by allow-list: keep `VP8 `, `VP8L`, `VP8X`, `ALPH` and `ICCP`; drop
   every other chunk, each together with its pad byte when the chunk size is
-  odd, which removes `EXIF`, `XMP ` and C2PA chunks. Walk to the end of the
+  odd, which removes `EXIF`, `XMP ` and C2PA chunks. Walk to byte 8 plus the
   RIFF size and cut every byte after it. Clear the EXIF (`0x08`) and XMP
   (`0x04`) flags in `VP8X` and rewrite the RIFF size to the new file length
   minus 8.
