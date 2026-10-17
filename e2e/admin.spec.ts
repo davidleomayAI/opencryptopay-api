@@ -197,7 +197,7 @@ test('Function: ocp-admin CLI — list, put, and delete sign like the server', (
       );
 
     expect(run('put', placesFile)).toContain('ok cli-1');
-    expect(run('list')).toContain('cli-1');
+    expect(run('list')).toContain('"origin":"cli"');
     expect(run('delete', 'cli', 'cli-1')).toBe('ok cli-1\n');
 
     let secondDeleteError: unknown;
