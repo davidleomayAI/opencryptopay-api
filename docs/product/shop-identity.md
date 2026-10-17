@@ -134,12 +134,12 @@ uploads, so the header rules here are stricter:
 - The markers or chunks must walk cleanly: a JPEG to its `EOI`, a PNG to
   its `IEND`, with no segment or chunk length past the end of the file. For a
   WebP, 8 plus the RIFF size must not exceed the file length, and its chunks
-  must end exactly at byte 8 plus the RIFF size.
+  must end exactly at byte 8 plus the RIFF size. Otherwise the photo is
+  skipped (`Photo N could not be read`), so metadata that cannot be found is
+  never stored.
 - Animated images are not accepted: a PNG with `acTL` or a WebP with `ANIM`
   or `ANMF` is skipped (`Photo N is animated`). A shop photo is a still
   picture, and this keeps the metadata walk to one level.
-  Otherwise the photo is skipped (`Photo N could not be read`), so metadata
-  that cannot be found is never stored.
 - Width and height are read from the file header, which must parse. Each is
   between 1 and 4096. The API returns the displayed size: for a JPEG whose
   EXIF orientation is 5 to 8, width and height are swapped. Orientation
