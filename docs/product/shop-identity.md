@@ -2,10 +2,11 @@
 
 Status: **specified, not implemented**. Nothing here changes runtime behaviour
 yet. A change that builds a part of this adds its routes to the
-[handbook](../handbook/endpoints.md), its columns and tables to
-[map-place.sql](../schema/map-place.sql) and requirement R7 to
-[place-requirements.md](place-requirements.md) and its state to
-[place-requirements-gap.md](place-requirements-gap.md) in that same change.
+[handbook](../handbook/endpoints.md) and its columns and tables to
+[map-place.sql](../schema/map-place.sql) in that same change. The change that
+builds R7 also adds the requirement to
+[place-requirements.md](place-requirements.md) and its current state to
+[place-requirements-gap.md](place-requirements-gap.md).
 
 Every shop is registered with a NOSTR public key. That key is the shop's
 identifier everywhere: in the API, in the public page
@@ -116,8 +117,8 @@ New endpoint `PUT /map/places/photos`, same bearer as the other write routes
 - Response **200**:
   `{ "photos": [ { "url", "width", "height", "caption" } ], "skipped": [ { "index", "error" } ] }`.
   `index` is the 0-based position in the request; the `error` sentence
-  numbers photos from 1, so `index` 2 reads `Photo 3 …`. `skipped` is `[]`
-  when nothing was skipped.
+  numbers photos from 1, so `index` 2 reads `Photo 3 …`. `caption` is `null`
+  when unset. `skipped` is `[]` when nothing was skipped.
 - `DELETE /map/places` drops the photos with the place. A source that
   registers the place again sends its photos again.
 
