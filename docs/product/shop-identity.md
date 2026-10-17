@@ -148,8 +148,12 @@ carry a revision:
   a `DELETE` that finds no place (`deleted: false`) and a `POST` that leaves
   an existing row as it is. Otherwise a late older `PUT` could recreate a
   place after the source had removed it.
-- A write without `revision` is not checked and stores nothing, as today.
-  A source that has sent a revision once keeps sending one.
+- A write without `revision` for a place that has no stored revision is
+  not checked and stores nothing, as today. Once a revision is stored for
+  an `origin` + `externalId`, a write without `revision` for it changes
+  nothing and gets the same **409** `Stale revision`, checked in the same
+  transaction. A request a source sent before it switched to revisions, and
+  that arrives late, then cannot overwrite the newer state.
 - Order of answers on `POST`, `PUT` and `DELETE /map/places` and on
   `PUT /map/places/photos`, in both stores: the existing **503** (ingest
   not configured) and **401** (bearer) first, then **413** for an oversized
@@ -389,9 +393,11 @@ shared link shows the shop's name and photo.
   starts with `npub1` or is 64 hex characters long.
 - **Hex:** `^[0-9a-f]{64}$` is passed to the API; on its 301 the page answers
   with a 301 to `/{npub}`.
-- **Rendering:** `shop.php` calls `GET /map/places/{npub}` (production or dev
-  API by host name, as `ocp-places.js` does) with a 3-second timeout and
-  writes into the HTML:
+- **Rendering:** `shop.php` calls `GET /map/places/{npub}` with a 3-second
+  timeout. The API base is one of two fixed URLs: the dev API when the host
+  name is exactly one of the two dev names `ocp-places.js` lists, the
+  production API for any other host. The URL is never built from the
+  `Host` header. The page writes into the HTML:
   - `<title>`, `description`, `og:title`, `og:description`, `og:image` (cover
     photo, otherwise the site OG image), `twitter:*`;
   - `<link rel="canonical" href="https://opencryptopay.io/{npub}">`;
