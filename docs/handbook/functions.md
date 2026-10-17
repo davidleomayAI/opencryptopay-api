@@ -139,3 +139,59 @@
 - **Inputs:** Store, optional ingest token, environment, fetch, and an optional clock. When the clock is omitted the routes use `Date.now`.
 - **Returns / side effects:** A Hono app. It does not listen and does not open a second database.
 - **Used by:** The process entrypoint and the tests.
+
+## Function: parseAdminPublicKeys
+
+- **Purpose:** Parse `OCP_ADMIN_PUBLIC_KEYS` into the devices allowed to call `/admin`. The value is split on `\n` or `\r\n`. A blank line is skipped. A line whose first non-whitespace character is `#` is a comment and is skipped. Every other line is three fields: `ed25519`, the base64 of the raw 32-byte public key, and a name, or `ssh-ed25519`, the base64 of the OpenSSH wire blob, and a name. The wire blob is a uint32 length, the text `ssh-ed25519`, a uint32 length, and the 32-byte key, and nothing after that. The name matches `^[A-Za-z0-9._@-]{1,64}$` and is unique. Base64 may be padded or unpadded.
+- **Inputs:** The environment string. Line numbers are 1-based and count every line, including blanks and comments.
+- **Returns / side effects:** The keys in file order. Empty when every line is blank or a comment. A bad line throws `OCP_ADMIN_PUBLIC_KEYS line <N>: malformed key`. A repeated name throws `OCP_ADMIN_PUBLIC_KEYS line <N>: duplicate key name`. Nothing is returned when it throws. No I/O.
+- **Used by:** The process entrypoint before it listens.
+
+## Function: canonicalString
+
+- **Purpose:** Build the UTF-8 string an admin signature covers. The fields are `OCP-ADMIN-v1`, the method in upper case, the host, the path plus the query exactly as sent, the decimal unix timestamp, the nonce, and the lowercase hex SHA-256 of the raw body. An empty body hashes as zero bytes (`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`). The fields are joined with `\n`. There is no trailing newline. The key name is not a field.
+- **Inputs:** Method, host, path with query, unix seconds, the nonce (16 to 64 characters of `[A-Za-z0-9_-]`), and the raw body bytes.
+- **Returns / side effects:** The string the device signs and the server rebuilds. Throws `Admin timestamp must be an integer` when the timestamp is not a safe integer. Throws `Admin nonce is invalid` when the nonce does not match. No I/O.
+- **Used by:** `signAdminRequest` and `verifyAdminRequest`.
+
+## Function: signAdminRequest
+
+- **Purpose:** Sign one admin request with an Ed25519 private key. The host is the name the server was configured with, not a header the client picked. The signature is standard base64 of the 64-byte signature over the UTF-8 canonical string. The key name is sent as `OCP-Admin-Key` and is not part of that string. The nonce is part of the signed string and is sent as `OCP-Admin-Nonce`. When the nonce is omitted, 16 random bytes are generated as base64url.
+- **Inputs:** Method, host, path with query, unix seconds, raw body, PKCS8 Ed25519 private key, key name, and an optional nonce.
+- **Returns / side effects:** The headers `OCP-Admin-Key`, `OCP-Admin-Timestamp` (the decimal timestamp), `OCP-Admin-Signature`, and `OCP-Admin-Nonce`. Throws `Admin timestamp must be an integer` when the timestamp is not a safe integer. Throws `Admin nonce is invalid` when a given nonce does not match. Does not record a replay. No other I/O.
+- **Used by:** A device that calls `/admin`. `scripts/ocp-admin.mjs` builds the same four headers. The server checks them with `verifyAdminRequest`.
+
+## Function: verifyAdminRequest
+
+- **Purpose:** Accept one admin request only when the nonce matches, the key name is known, the timestamp header is an integer within 60 seconds of the server clock (the difference may be 60 and must not be 61), and the signature verifies over `canonicalString` for the configured host, the method, the path plus query, the nonce, and the raw body. A missing or malformed nonce returns false before any signature work. A nonce already stored for that key is rejected. Expired entries (expiry strictly before the current unix second) are removed at the start of every call. The replay key is `<keyName>\n<nonce>`, not the signature. On success that key is stored until `timestamp + 60`. Every failure returns false and does not store the nonce. The host argument is the server config, never the request `Host` header.
+- **Inputs:** Allowed keys, the header values including the nonce, method, host, path with query, raw body, current unix seconds, and the process replay map.
+- **Returns / side effects:** True only when the request is fresh, signed by an allowed key, and not a replay. False for a missing or malformed nonce, a missing or unknown key, a timestamp that is not an integer, a timestamp outside the 60-second window, a bad or wrong-length signature, a signature that does not verify, or a reused nonce. Does not throw. Updates the replay map only after a successful check.
+- **Used by:** `adminRoutes` on every `/admin` request once admin is configured.
+
+## Function: adminRoutes
+
+- **Purpose:** Signed maintenance of pins for any origin, mounted at `/admin`. When no key is loaded or the host is blank, every request returns 503 `{ error: "Admin is not configured" }` and the body is not checked. Otherwise the raw body is read once, `verifyAdminRequest` runs against the trimmed configured host and the path plus query of the request URL, and a failure returns 401 `{ error: "Unauthorized" }`. `GET /places` lists every stored pin, including incomplete rows, newest first. Each item is the public place plus `complete` and `problems` from one `placeProblems` call. The caller id and payment methods are omitted. `PUT /places` and `DELETE /places` parse those same bytes as JSON (empty or invalid JSON is null) and call `putPlace` and `deletePlace`. The request `Host` header is not the signed host.
+- **Inputs:** Store, environment, fetch, the allowed keys, the configured host, and an optional clock in milliseconds (default `Date.now`). One replay map lives for the life of the app.
+- **Returns / side effects:** A Hono app. GET returns 200 `{ places }`. PUT and DELETE return the status and body of `putPlace` and `deletePlace`. A valid signature for an unknown path falls through as 404. No second database.
+- **Used by:** `createApp`, mounted at `/admin`.
+
+## Function: putPlace
+
+- **Purpose:** Full replace of one map pin, or insert it when the origin and external id are new. Validation, the store write, and the BTC Map call are the same as `PUT /map/places`. A new row is posted to BTC Map only when this call inserts it. An update does not call BTC Map. A rejected body leaves the stored pin unchanged. This function does not check the ingest bearer or the admin signature.
+- **Inputs:** Store, BTC Map environment, fetch, and the request JSON. Null, an array, and a non-object are invalid.
+- **Returns / side effects:** 400 `{ error }` with the validator message, 201 `{ created: true, id, btcmap }` when the row is new, or 200 `{ created: false, id, btcmap }` when the pair already existed. `btcmap` is `sent`, `failed`, or `skipped`.
+- **Used by:** `mapRoutes` on `PUT /map/places` after the ingest check, and `adminRoutes` on `PUT /admin/places` after the signature check.
+
+## Function: deletePlace
+
+- **Purpose:** Remove one map pin by origin and external id. Validation is the same as `DELETE /map/places`. A missing pair is still 200 with `{ deleted: false }`. This call does not contact BTC Map. Extra JSON fields are ignored. This function does not check the ingest bearer or the admin signature.
+- **Inputs:** Store, and the request JSON. Null, an array, and a non-object are invalid. Required fields are `origin` and `externalId`.
+- **Returns / side effects:** 400 `{ error }` with the validator message, or 200 `{ deleted: true }` or `{ deleted: false }`. A true result means a row was removed.
+- **Used by:** `mapRoutes` on `DELETE /map/places` after the ingest check, and `adminRoutes` on `DELETE /admin/places` after the signature check.
+
+## Function: placeProblems
+
+- **Purpose:** List why the public map hides a stored pin. A row is complete when name, description, street, house number, postal code, city, and country are non-empty, shop type is `SPAR` or `Others`, and `lastTransactionAt` is null or `Number.isFinite(Date.parse(...))`. The messages, in that order, are `name is empty`, `description is empty`, `street is empty`, `houseNumber is empty`, `postalCode is empty`, `city is empty`, `country is empty`, `shopType must be SPAR or Others`, and `lastTransactionAt is not a valid instant`. Only the failures are included.
+- **Inputs:** A stored pin, including an incomplete row.
+- **Returns / side effects:** The problem strings in check order, or `[]` when the pin is complete. No I/O. The public list treats a pin as complete when this list is empty.
+- **Used by:** The store completeness check, and `adminRoutes` on `GET /admin/places`.

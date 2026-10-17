@@ -607,6 +607,22 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
   }
 
   /**
+   * Every stored pin, including incomplete ones. Newest first, then id descending.
+   *
+   * @returns Stored pins. No filter and no limit.
+   */
+  listAll(): StoredMapPlace[] {
+    const rows = this.#db
+      .query(
+        `SELECT ${MAP_PLACE_COLUMNS}
+         FROM map_place
+         ORDER BY created_at DESC, id DESC`,
+      )
+      .all() as MapPlaceRow[];
+    return mapRows(this.#db, rows);
+  }
+
+  /**
    * Distinct stored filter values, sorted.
    *
    * @param blockchain - When set, only assets stored on that network.
