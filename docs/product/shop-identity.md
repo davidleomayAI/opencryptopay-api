@@ -1,6 +1,6 @@
 # Shop identity, photos and shop page
 
-Status: **specified, not implemented**. Nothing here changes runtime behaviour
+Status: **specified, not implemented**. Nothing here changes runtime behavior
 yet. A change that builds a part of this adds its routes to the
 [handbook](../handbook/endpoints.md) and its columns and tables to
 [map-place.sql](../schema/map-place.sql) in that same change, and documents
@@ -58,8 +58,9 @@ Every shop must state a NOSTR public key:
 - A stored row without `nostrPubkey` is not complete. `COMPLETE_PLACE_SQL`
   and the memory store's `isCompletePlace` both require it, so such a row
   stays out of every public response, in the same way PR #22 handles the
-  other fields. An existing row becomes public once its source sends a
-  complete `PUT` that includes the key.
+  other fields. An existing row becomes public once it carries a key and
+  meets R1 to R6, whether the key arrives with a `PUT` or, as described
+  above, with a `POST`.
 
 The npub is not stored. It is `nip19.npubEncode(nostrPubkey)` wherever it is
 shown.
@@ -149,7 +150,7 @@ having re-encoded the image, because a phone photo can carry its GPS position:
 
 - JPEG, by allow-list:
   - keep `APP0`, `APP2` only when it starts with `ICC_PROFILE\0`, and
-    `APP14` (`Adobe`, needed for the colour transform);
+    `APP14` (`Adobe`, needed for the color transform);
   - drop every other `APPn` segment, which removes EXIF, XMP, MPF and maker
     data, and every `COM` segment;
   - when the dropped EXIF held an orientation from 2 to 8, write back a
@@ -190,7 +191,7 @@ stored bytes are the stripped bytes.
     `Cache-Control: no-store` on 404, because the same URL can answer 404
     first and 200 later. A store failure answers **503**
     `{ "error": "Places are unavailable" }` with `Cache-Control: no-store`.
-    CORS `*`.
+    CORS as the other map routes (origin `*`, methods `GET` and `OPTIONS`).
   - Every photo `url` in a JSON answer is absolute:
     `<OCP_PUBLIC_BASE_URL>/map/photos/{sha256}.{ext}`. `OCP_PUBLIC_BASE_URL`
     is a new environment variable, required from step 2 on: an `https://`
@@ -215,7 +216,8 @@ stored bytes are the stripped bytes.
 
 ### `GET /map/places/{npub}`
 
-New. No authentication, CORS `GET`. `Cache-Control: public, max-age=60` on
+New. No authentication, CORS as the other map routes (origin `*`, methods
+`GET` and `OPTIONS`). `Cache-Control: public, max-age=60` on
 200, 301 and 404; `Cache-Control: no-store` on 503.
 
 | Request                                   | Response                                        |
