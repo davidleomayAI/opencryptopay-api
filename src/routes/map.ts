@@ -83,6 +83,7 @@ export function mapRoutes(deps: MapRouteDeps): Hono {
     }
     const parsedFilter = normalizeMapPlaceFilter(
       c.req.query('country'),
+      c.req.query('shopType'),
       c.req.query('shopName'),
       c.req.query('blockchain'),
       c.req.query('asset'),
@@ -100,6 +101,7 @@ export function mapRoutes(deps: MapRouteDeps): Hono {
 
   app.get('/filters', (c) => {
     const parsed = normalizeMapPlaceFilter(
+      undefined,
       undefined,
       undefined,
       c.req.query('blockchain'),

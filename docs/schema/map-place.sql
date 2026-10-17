@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS map_place (
   origin TEXT NOT NULL,
   external_id TEXT NOT NULL,
   name TEXT NOT NULL,
+  description TEXT,
   lat REAL NOT NULL,
   lon REAL NOT NULL,
   category TEXT NOT NULL,
@@ -15,7 +16,7 @@ CREATE TABLE IF NOT EXISTS map_place (
   house_number TEXT,
   postal_code TEXT,
   city TEXT,
-  shop_name TEXT,
+  shop_type TEXT,
   last_transaction_at TEXT,
   activity TEXT NOT NULL DEFAULT 'none',
   activity_until TEXT,
@@ -29,7 +30,6 @@ CREATE TABLE IF NOT EXISTS map_place_support (
   FOREIGN KEY (place_id) REFERENCES map_place(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS map_place_country ON map_place(country);
-CREATE INDEX IF NOT EXISTS map_place_shop_name ON map_place(shop_name);
 CREATE INDEX IF NOT EXISTS map_place_support_lookup
   ON map_place_support(blockchain, asset, place_id);
 CREATE TABLE IF NOT EXISTS map_place_payment_day (

@@ -15,6 +15,7 @@ export const MAP_PLACE_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS map_place (
   origin TEXT NOT NULL,
   external_id TEXT NOT NULL,
   name TEXT NOT NULL,
+  description TEXT,
   lat REAL NOT NULL,
   lon REAL NOT NULL,
   category TEXT NOT NULL,
@@ -26,7 +27,7 @@ export const MAP_PLACE_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS map_place (
   house_number TEXT,
   postal_code TEXT,
   city TEXT,
-  shop_name TEXT,
+  shop_type TEXT,
   last_transaction_at TEXT,
   activity TEXT NOT NULL DEFAULT 'none',
   activity_until TEXT,
@@ -40,7 +41,6 @@ CREATE TABLE IF NOT EXISTS map_place_support (
   FOREIGN KEY (place_id) REFERENCES map_place(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS map_place_country ON map_place(country);
-CREATE INDEX IF NOT EXISTS map_place_shop_name ON map_place(shop_name);
 CREATE INDEX IF NOT EXISTS map_place_support_lookup
   ON map_place_support(blockchain, asset, place_id);
 CREATE TABLE IF NOT EXISTS map_place_payment_day (
@@ -97,6 +97,29 @@ function copyStoredPlace(place: StoredMapPlace): StoredMapPlace {
   };
 }
 
+/**
+ * A memory-store row is complete when name, description, shop type, street,
+ * house number, postal code, city, and country are non-empty, shop type is
+ * SPAR or Others, and lastTransactionAt is null or a parseable instant.
+ */
+function isCompletePlace(row: StoredMapPlace): boolean {
+  if (
+    row.name === '' ||
+    row.description === '' ||
+    row.street === '' ||
+    row.houseNumber === '' ||
+    row.postalCode === '' ||
+    row.city === '' ||
+    row.country === ''
+  ) {
+    return false;
+  }
+  if (row.shopType !== 'SPAR' && row.shopType !== 'Others') {
+    return false;
+  }
+  return row.lastTransactionAt === null || Number.isFinite(Date.parse(row.lastTransactionAt));
+}
+
 function matchesFilter(row: StoredMapPlace, filter?: MapPlaceListFilter): boolean {
   if (filter === undefined) {
     return true;
@@ -107,10 +130,7 @@ function matchesFilter(row: StoredMapPlace, filter?: MapPlaceListFilter): boolea
   if (filter.country !== undefined && row.country !== filter.country) {
     return false;
   }
-  if (filter.shopName === 'SPAR' && row.shopName !== 'SPAR') {
-    return false;
-  }
-  if (filter.shopName === 'others' && row.shopName === 'SPAR') {
+  if (filter.shopType !== undefined && row.shopType !== filter.shopType) {
     return false;
   }
   if (filter.blockchain !== undefined || filter.asset !== undefined) {
@@ -134,18 +154,19 @@ function toStoredPlace(input: MapPlaceInput, id: string, createdAt: string): Sto
     origin: input.origin,
     externalId: input.externalId,
     name: input.name,
+    description: input.description,
     lat: input.lat,
     lon: input.lon,
     category: input.category,
     paymentMethods: input.paymentMethods,
     techProvider: input.techProvider ?? DEFAULT_TECH_PROVIDER,
-    country: input.country ?? null,
-    street: input.street ?? null,
-    houseNumber: input.houseNumber ?? null,
-    postalCode: input.postalCode ?? null,
-    city: input.city ?? null,
-    shopName: input.shopName ?? null,
-    supports: storedSupports(input.supports ?? []),
+    shopType: input.shopType,
+    street: input.street,
+    houseNumber: input.houseNumber,
+    postalCode: input.postalCode,
+    city: input.city,
+    country: input.country,
+    supports: storedSupports(input.supports),
     lastTransactionAt: null,
     activity: 'none',
     id,
@@ -234,7 +255,7 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Insert when the pair is new, otherwise update the stored pin.
+   * Insert when the pair is new, otherwise replace every field of the stored pin.
    *
    * @param input - Validated pin.
    * @returns Whether this call inserted the row.
@@ -247,32 +268,19 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
       return this.insertIfNew(input);
     }
     existing.name = input.name;
+    existing.description = input.description;
     existing.lat = input.lat;
     existing.lon = input.lon;
     existing.category = input.category;
     existing.paymentMethods = input.paymentMethods;
-    if (input.country !== undefined) {
-      existing.country = input.country;
-    }
-    if (input.street !== undefined) {
-      existing.street = input.street;
-    }
-    if (input.houseNumber !== undefined) {
-      existing.houseNumber = input.houseNumber;
-    }
-    if (input.postalCode !== undefined) {
-      existing.postalCode = input.postalCode;
-    }
-    if (input.city !== undefined) {
-      existing.city = input.city;
-    }
-    existing.shopName = input.shopName ?? null;
-    if (input.techProvider !== undefined) {
-      existing.techProvider = input.techProvider;
-    }
-    if (input.supports !== undefined) {
-      existing.supports = storedSupports(input.supports);
-    }
+    existing.techProvider = input.techProvider ?? DEFAULT_TECH_PROVIDER;
+    existing.shopType = input.shopType;
+    existing.street = input.street;
+    existing.houseNumber = input.houseNumber;
+    existing.postalCode = input.postalCode;
+    existing.city = input.city;
+    existing.country = input.country;
+    existing.supports = storedSupports(input.supports);
     return { created: false, place: copyStoredPlace(existing) };
   }
 
@@ -390,14 +398,14 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Newest pins first, then id descending.
+   * Newest complete pins first, then id descending.
    *
    * @param limit - Maximum rows.
    * @param filter - Optional AND predicates, applied before sort and limit.
    * @returns A copy of the stored pins.
    */
   list(limit: number, filter?: MapPlaceListFilter): StoredMapPlace[] {
-    const rows = this.#rows.filter((row) => matchesFilter(row, filter));
+    const rows = this.#rows.filter((row) => isCompletePlace(row) && matchesFilter(row, filter));
     return [...rows]
       .sort((a, b) => {
         const byTime = b.createdAt.localeCompare(a.createdAt);
@@ -414,7 +422,7 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
    * Distinct stored filter values, sorted.
    *
    * @param blockchain - When set, only assets stored on that network.
-   * @returns Countries, blockchains, and assets. Shop names are not read.
+   * @returns Countries of complete rows, plus blockchains and assets from every row.
    */
   filters(blockchain?: string | undefined): {
     countries: string[];
@@ -425,7 +433,7 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
     const blockchainSet = new Set<string>();
     const assetSet = new Set<string>();
     for (const row of this.#rows) {
-      if (row.country !== null) {
+      if (isCompletePlace(row)) {
         countrySet.add(row.country);
       }
       for (const item of row.supports) {

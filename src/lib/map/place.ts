@@ -5,6 +5,11 @@
 
 import { isCatalogAsset, isCatalogBlockchain } from '@/lib/map/filter-catalog';
 
+/** Allowed shop type values. */
+export const SHOP_TYPES = ['SPAR', 'Others'] as const;
+
+export type ShopType = (typeof SHOP_TYPES)[number];
+
 export type MapPlaceSupport = {
   blockchain: string;
   asset: string;
@@ -14,43 +19,27 @@ export type MapPlaceInput = {
   origin: string;
   externalId: string;
   name: string;
+  description: string;
   lat: number;
   lon: number;
   category: string;
   paymentMethods: string | null;
   techProvider?: string;
-  country?: string;
-  street?: string;
-  houseNumber?: string;
-  postalCode?: string;
-  city?: string;
-  shopName?: string;
-  supports?: MapPlaceSupport[];
+  shopType: ShopType;
+  street: string;
+  houseNumber: string;
+  postalCode: string;
+  city: string;
+  country: string;
+  supports: MapPlaceSupport[];
 };
 
 export type PlaceActivity = 'daily' | 'within7Days' | 'within30Days' | 'olderThan30Days' | 'none';
 
-export type StoredMapPlace = Omit<
-  MapPlaceInput,
-  | 'techProvider'
-  | 'country'
-  | 'street'
-  | 'houseNumber'
-  | 'postalCode'
-  | 'city'
-  | 'shopName'
-  | 'supports'
-> & {
+export type StoredMapPlace = Omit<MapPlaceInput, 'techProvider'> & {
   id: string;
   createdAt: string;
   techProvider: string;
-  country: string | null;
-  street: string | null;
-  houseNumber: string | null;
-  postalCode: string | null;
-  city: string | null;
-  shopName: string | null;
-  supports: MapPlaceSupport[];
   lastTransactionAt: string | null;
   activity: PlaceActivity;
 };
@@ -60,16 +49,19 @@ export type PublicMapPlace = {
   id: string;
   origin: string;
   name: string;
+  description: string;
   lat: number;
   lon: number;
   category: string;
   techProvider: string;
-  country: string | null;
-  street: string | null;
-  houseNumber: string | null;
-  postalCode: string | null;
-  city: string | null;
-  shopName: string | null;
+  shopType: ShopType;
+  /** Deprecated, one release: 'SPAR' when shopType is 'SPAR', otherwise null. */
+  shopName: 'SPAR' | null;
+  street: string;
+  houseNumber: string;
+  postalCode: string;
+  city: string;
+  country: string;
   supports: MapPlaceSupport[];
   activity: PlaceActivity;
 };
@@ -77,7 +69,7 @@ export type PublicMapPlace = {
 /** Query fields that restrict GET /map/places, all optional. */
 export type MapPlaceQueryFilter = {
   country?: string;
-  shopName?: 'SPAR' | 'others';
+  shopType?: ShopType;
   blockchain?: string;
   asset?: string;
 };
@@ -86,6 +78,7 @@ const COORD_ERROR = 'Place must be a latitude and longitude';
 const ORIGIN_ERROR = 'Place origin is invalid';
 const EXTERNAL_ID_ERROR = 'Place external id is required';
 const NAME_ERROR = 'Place name is required';
+const NAME_ADDRESS_ERROR = 'Place name must not contain the address';
 const CATEGORY_ERROR = 'Place category is required';
 const TECH_PROVIDER_ERROR = 'Place tech provider is invalid';
 const COUNTRY_ERROR = 'Place country is invalid';
@@ -94,13 +87,38 @@ const HOUSE_NUMBER_ERROR = 'Place house number is invalid';
 const POSTAL_CODE_ERROR = 'Place postal code is invalid';
 const CITY_ERROR = 'Place city is invalid';
 const SHOP_NAME_ERROR = 'Place shop name is invalid';
+const SHOP_TYPE_ERROR = 'Place shop type is invalid';
+const DESCRIPTION_ERROR = 'Place description is invalid';
 const SUPPORT_ERROR = 'Place support is invalid';
 const TRANSACTION_TIME_ERROR = 'Place transaction time is invalid';
+
+const ALLOWED_PLACE_KEYS: ReadonlySet<string> = new Set([
+  'origin',
+  'externalId',
+  'name',
+  'description',
+  'lat',
+  'lon',
+  'category',
+  'paymentMethods',
+  'techProvider',
+  'shopType',
+  'street',
+  'houseNumber',
+  'postalCode',
+  'city',
+  'country',
+  'supports',
+]);
 
 const PAYMENT_METHODS = /^(onchain|lightning|nfc)(,(onchain|lightning|nfc))*$/;
 const TECH_PROVIDER = /^[A-Za-z0-9][A-Za-z0-9.-]{0,39}$/;
 const ASSET_TICKER = /^[A-Z][A-Z0-9]{1,31}$/;
 const ASSET_PREFIXED = /^[a-z][A-Z][A-Z0-9]{1,30}$/;
+const HOUSE_NUMBER = /^[0-9][0-9A-Za-z/ .&–-]{0,31}$/;
+const POSTAL_CH_LI = /^[0-9]{4}$/;
+const POSTAL_OTHER = /^[A-Za-z0-9][A-Za-z0-9 -]{1,15}$/;
+const CITY_LETTER = /\p{L}/u;
 
 const ISO_COUNTRIES: ReadonlySet<string> = new Set([
   'AD',
@@ -400,6 +418,33 @@ function hasNoControls(value: string): boolean {
   return true;
 }
 
+function hasNoControlsExceptNewline(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code === 10) {
+      continue;
+    }
+    if (code < 32 || code === 127) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function containsStandaloneToken(name: string, token: string): boolean {
+  const escaped = escapeRegex(token);
+  const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'iu');
+  return pattern.test(name);
+}
+
+function nameContainsAddress(name: string, street: string, postalCode: string): boolean {
+  return containsStandaloneToken(name, street) || containsStandaloneToken(name, postalCode);
+}
+
 function compareSupport(a: MapPlaceSupport, b: MapPlaceSupport): number {
   if (a.blockchain < b.blockchain) {
     return -1;
@@ -491,45 +536,130 @@ function normalizeCountry(
   return { ok: true, value: country };
 }
 
-function normalizeOptionalAddressPart(
-  raw: unknown,
-  maxLength: number,
-  error: string,
-): { ok: true; value?: string } | { ok: false; error: string } {
-  if (raw === undefined || raw === null) {
-    return { ok: true };
-  }
+function normalizeStreet(raw: unknown): { ok: true; value: string } | { ok: false; error: string } {
   if (typeof raw !== 'string') {
-    return { ok: false, error };
+    return { ok: false, error: STREET_ERROR };
   }
-  const trimmed = raw.trim();
-  if (trimmed.length < 1 || trimmed.length > maxLength || !hasNoControls(trimmed)) {
-    return { ok: false, error };
+  const street = raw.trim();
+  if (street.length < 1 || street.length > 120 || !hasNoControls(street)) {
+    return { ok: false, error: STREET_ERROR };
   }
-  return { ok: true, value: trimmed };
+  return { ok: true, value: street };
 }
 
-function normalizeShopName(
+function normalizeHouseNumber(
   raw: unknown,
 ): { ok: true; value: string } | { ok: false; error: string } {
   if (typeof raw !== 'string') {
-    return { ok: false, error: SHOP_NAME_ERROR };
+    return { ok: false, error: HOUSE_NUMBER_ERROR };
   }
-  const shopName = raw.trim();
-  if (shopName.length < 1 || shopName.length > 40 || !hasNoControls(shopName)) {
-    return { ok: false, error: SHOP_NAME_ERROR };
+  if (!hasNoControls(raw)) {
+    return { ok: false, error: HOUSE_NUMBER_ERROR };
   }
-  return { ok: true, value: shopName };
+  const houseNumber = raw.trim();
+  if (!HOUSE_NUMBER.test(houseNumber)) {
+    return { ok: false, error: HOUSE_NUMBER_ERROR };
+  }
+  return { ok: true, value: houseNumber };
 }
 
-function normalizeQueryShopName(
-  raw: string,
-): { ok: true; value: 'SPAR' | 'others' } | { ok: false; error: string } {
-  const shopName = raw.trim();
-  if (shopName !== 'SPAR' && shopName !== 'others') {
-    return { ok: false, error: SHOP_NAME_ERROR };
+function normalizePostalCode(
+  raw: unknown,
+  country: string,
+): { ok: true; value: string } | { ok: false; error: string } {
+  if (typeof raw !== 'string') {
+    return { ok: false, error: POSTAL_CODE_ERROR };
   }
-  return { ok: true, value: shopName };
+  if (!hasNoControls(raw)) {
+    return { ok: false, error: POSTAL_CODE_ERROR };
+  }
+  const postalCode = raw.trim();
+  const pattern = country === 'CH' || country === 'LI' ? POSTAL_CH_LI : POSTAL_OTHER;
+  if (!pattern.test(postalCode)) {
+    return { ok: false, error: POSTAL_CODE_ERROR };
+  }
+  return { ok: true, value: postalCode };
+}
+
+function normalizeCity(raw: unknown): { ok: true; value: string } | { ok: false; error: string } {
+  if (typeof raw !== 'string') {
+    return { ok: false, error: CITY_ERROR };
+  }
+  const city = raw.trim();
+  if (city.length < 1 || city.length > 80 || !hasNoControls(city) || !CITY_LETTER.test(city)) {
+    return { ok: false, error: CITY_ERROR };
+  }
+  return { ok: true, value: city };
+}
+
+function normalizeName(
+  raw: unknown,
+  street: string,
+  postalCode: string,
+): { ok: true; value: string } | { ok: false; error: string } {
+  if (typeof raw !== 'string') {
+    return { ok: false, error: NAME_ERROR };
+  }
+  const name = raw.trim();
+  if (name.length < 1 || name.length > 80 || !hasNoControls(name)) {
+    return { ok: false, error: NAME_ERROR };
+  }
+  if (nameContainsAddress(name, street, postalCode)) {
+    return { ok: false, error: NAME_ADDRESS_ERROR };
+  }
+  return { ok: true, value: name };
+}
+
+function normalizeDescription(
+  raw: unknown,
+  name: string,
+): { ok: true; value: string } | { ok: false; error: string } {
+  if (typeof raw !== 'string') {
+    return { ok: false, error: DESCRIPTION_ERROR };
+  }
+  const description = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  if (
+    description.length < 20 ||
+    description.length > 1000 ||
+    !hasNoControlsExceptNewline(description) ||
+    description.toLowerCase() === name.toLowerCase() ||
+    description.length <= name.length
+  ) {
+    return { ok: false, error: DESCRIPTION_ERROR };
+  }
+  return { ok: true, value: description };
+}
+
+function normalizeShopType(
+  raw: unknown,
+): { ok: true; value: ShopType } | { ok: false; error: string } {
+  if (typeof raw !== 'string') {
+    return { ok: false, error: SHOP_TYPE_ERROR };
+  }
+  const shopType = raw.trim();
+  if (shopType !== 'SPAR' && shopType !== 'Others') {
+    return { ok: false, error: SHOP_TYPE_ERROR };
+  }
+  return { ok: true, value: shopType };
+}
+
+function normalizeQueryShopType(
+  raw: string,
+): { ok: true; value: ShopType } | { ok: false; error: string } {
+  return normalizeShopType(raw);
+}
+
+function normalizeQueryShopNameAlias(
+  raw: string,
+): { ok: true; value: ShopType } | { ok: false; error: string } {
+  const shopName = raw.trim();
+  if (shopName === 'SPAR') {
+    return { ok: true, value: 'SPAR' };
+  }
+  if (shopName === 'others') {
+    return { ok: true, value: 'Others' };
+  }
+  return { ok: false, error: SHOP_NAME_ERROR };
 }
 
 function normalizeBlockchain(
@@ -617,6 +747,12 @@ export function normalizeMapPlace(
     return { ok: false, error: COORD_ERROR };
   }
   const rec = input as Record<string, unknown>;
+  for (const key of Object.keys(rec)) {
+    if (!ALLOWED_PLACE_KEYS.has(key)) {
+      return { ok: false, error: `Place field is not allowed: ${key.slice(0, 40)}` };
+    }
+  }
+
   const lat = rec['lat'];
   const lon = rec['lon'];
   if (
@@ -642,15 +778,6 @@ export function normalizeMapPlace(
     return externalId;
   }
 
-  const rawName = rec['name'];
-  if (typeof rawName !== 'string') {
-    return { ok: false, error: NAME_ERROR };
-  }
-  const name = rawName.trim();
-  if (name.length < 1 || name.length > 80 || !hasNoControls(name)) {
-    return { ok: false, error: NAME_ERROR };
-  }
-
   const rawCategory = rec['category'];
   if (typeof rawCategory !== 'string') {
     return { ok: false, error: CATEGORY_ERROR };
@@ -674,85 +801,74 @@ export function normalizeMapPlace(
     return techProvider;
   }
 
-  const rawCountry = rec['country'];
-  let country: string | undefined;
-  if (rawCountry !== undefined && rawCountry !== null) {
-    const parsedCountry = normalizeCountry(rawCountry);
-    if (!parsedCountry.ok) {
-      return parsedCountry;
-    }
-    country = parsedCountry.value;
-  }
-
-  const street = normalizeOptionalAddressPart(rec['street'], 120, STREET_ERROR);
-  if (!street.ok) {
-    return street;
-  }
-  const houseNumber = normalizeOptionalAddressPart(rec['houseNumber'], 32, HOUSE_NUMBER_ERROR);
-  if (!houseNumber.ok) {
-    return houseNumber;
-  }
-  const postalCode = normalizeOptionalAddressPart(rec['postalCode'], 16, POSTAL_CODE_ERROR);
-  if (!postalCode.ok) {
-    return postalCode;
-  }
-  const city = normalizeOptionalAddressPart(rec['city'], 80, CITY_ERROR);
-  if (!city.ok) {
-    return city;
-  }
-
-  const rawShopName = rec['shopName'];
-  let shopName: string | undefined;
-  if (rawShopName !== undefined && rawShopName !== null) {
-    const parsedShopName = normalizeShopName(rawShopName);
-    if (!parsedShopName.ok) {
-      return parsedShopName;
-    }
-    shopName = parsedShopName.value;
-  }
-
-  const rawSupports = rec['supports'];
-  let supports: MapPlaceSupport[] | undefined;
-  if (rawSupports !== undefined) {
-    const parsedSupports = normalizeSupports(rawSupports);
+  let supports: MapPlaceSupport[] = [];
+  if (rec['supports'] !== undefined) {
+    const parsedSupports = normalizeSupports(rec['supports']);
     if (!parsedSupports.ok) {
       return parsedSupports;
     }
     supports = parsedSupports.value;
   }
 
+  const country = normalizeCountry(rec['country']);
+  if (!country.ok) {
+    return country;
+  }
+
+  const street = normalizeStreet(rec['street']);
+  if (!street.ok) {
+    return street;
+  }
+
+  const houseNumber = normalizeHouseNumber(rec['houseNumber']);
+  if (!houseNumber.ok) {
+    return houseNumber;
+  }
+
+  const postalCode = normalizePostalCode(rec['postalCode'], country.value);
+  if (!postalCode.ok) {
+    return postalCode;
+  }
+
+  const city = normalizeCity(rec['city']);
+  if (!city.ok) {
+    return city;
+  }
+
+  const name = normalizeName(rec['name'], street.value, postalCode.value);
+  if (!name.ok) {
+    return name;
+  }
+
+  const description = normalizeDescription(rec['description'], name.value);
+  if (!description.ok) {
+    return description;
+  }
+
+  const shopType = normalizeShopType(rec['shopType']);
+  if (!shopType.ok) {
+    return shopType;
+  }
+
   const value: MapPlaceInput = {
     origin: origin.value,
     externalId: externalId.value,
-    name,
+    name: name.value,
+    description: description.value,
     lat: roundCoord(lat),
     lon: roundCoord(lon),
     category,
     paymentMethods,
+    shopType: shopType.value,
+    street: street.value,
+    houseNumber: houseNumber.value,
+    postalCode: postalCode.value,
+    city: city.value,
+    country: country.value,
+    supports,
   };
   if (techProvider.value !== undefined) {
     value.techProvider = techProvider.value;
-  }
-  if (country !== undefined) {
-    value.country = country;
-  }
-  if (street.value !== undefined) {
-    value.street = street.value;
-  }
-  if (houseNumber.value !== undefined) {
-    value.houseNumber = houseNumber.value;
-  }
-  if (postalCode.value !== undefined) {
-    value.postalCode = postalCode.value;
-  }
-  if (city.value !== undefined) {
-    value.city = city.value;
-  }
-  if (shopName !== undefined) {
-    value.shopName = shopName;
-  }
-  if (supports !== undefined) {
-    value.supports = supports;
   }
   return { ok: true, value };
 }
@@ -910,14 +1026,16 @@ export function normalizePlaceTransaction(
  * Validate optional public map query fields.
  *
  * @param country - Optional ISO country query.
- * @param shopName - Optional SPAR or others query.
+ * @param shopType - Optional SPAR or Others query.
+ * @param legacyShopName - Deprecated SPAR or others query alias.
  * @param blockchain - Optional payment network query.
  * @param asset - Optional asset name query.
  * @returns The present filter fields, or a fixed error message.
  */
 export function normalizeMapPlaceFilter(
   country?: string | undefined,
-  shopName?: string | undefined,
+  shopType?: string | undefined,
+  legacyShopName?: string | undefined,
   blockchain?: string | undefined,
   asset?: string | undefined,
 ): { ok: true; value: MapPlaceQueryFilter } | { ok: false; error: string } {
@@ -929,12 +1047,26 @@ export function normalizeMapPlaceFilter(
     }
     value.country = parsed.value;
   }
-  if (shopName !== undefined) {
-    const parsed = normalizeQueryShopName(shopName);
+  let mappedType: ShopType | undefined;
+  if (shopType !== undefined) {
+    const parsed = normalizeQueryShopType(shopType);
     if (!parsed.ok) {
       return parsed;
     }
-    value.shopName = parsed.value;
+    mappedType = parsed.value;
+  }
+  if (legacyShopName !== undefined) {
+    const parsed = normalizeQueryShopNameAlias(legacyShopName);
+    if (!parsed.ok) {
+      return parsed;
+    }
+    if (mappedType !== undefined && mappedType !== parsed.value) {
+      return { ok: false, error: SHOP_TYPE_ERROR };
+    }
+    mappedType = parsed.value;
+  }
+  if (mappedType !== undefined) {
+    value.shopType = mappedType;
   }
   if (blockchain !== undefined) {
     const parsed = normalizeQueryBlockchain(blockchain);
@@ -964,16 +1096,18 @@ export function toPublicMapPlace(place: StoredMapPlace): PublicMapPlace {
     id: place.id,
     origin: place.origin,
     name: place.name,
+    description: place.description,
     lat: place.lat,
     lon: place.lon,
     category: place.category,
     techProvider: place.techProvider,
-    country: place.country,
+    shopType: place.shopType,
+    shopName: place.shopType === 'SPAR' ? 'SPAR' : null,
     street: place.street,
     houseNumber: place.houseNumber,
     postalCode: place.postalCode,
     city: place.city,
-    shopName: place.shopName,
+    country: place.country,
     supports: place.supports.map((item) => ({
       blockchain: item.blockchain,
       asset: item.asset,

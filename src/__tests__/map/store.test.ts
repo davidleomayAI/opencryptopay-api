@@ -2,16 +2,30 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { MAP_PLACE_SCHEMA_SQL, MemoryMapPlaceStore } from '@/lib/map/store';
-import type { MapPlaceInput } from '@/lib/map/place';
+import type { MapPlaceInput, ShopType } from '@/lib/map/place';
+
+const DESCRIPTION =
+  'SPAR supermarket in Triesen. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
+
+const OTHER_DESCRIPTION =
+  'Neighbourhood grocery in Zürich. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
 
 const input: MapPlaceInput = {
   origin: 'dfx',
   externalId: 'store-1',
-  name: 'SPAR',
+  name: 'SPAR Triesen',
+  description: DESCRIPTION,
   lat: 47.37,
   lon: 8.54,
   category: 'groceries',
   paymentMethods: 'lightning',
+  shopType: 'SPAR',
+  street: 'Maschlinastrasse',
+  houseNumber: '4',
+  postalCode: '9495',
+  city: 'Triesen',
+  country: 'LI',
+  supports: [],
 };
 
 describe('MAP_PLACE_SCHEMA_SQL', () => {
@@ -34,18 +48,19 @@ describe('MemoryMapPlaceStore', () => {
     const first = store.insertIfNew(input);
     expect(first.created).toBe(true);
     expect(first.place.techProvider).toBe('DFX.swiss');
-    expect(first.place.country).toBeNull();
-    expect(first.place.street).toBeNull();
-    expect(first.place.houseNumber).toBeNull();
-    expect(first.place.postalCode).toBeNull();
-    expect(first.place.city).toBeNull();
-    expect(first.place.shopName).toBeNull();
+    expect(first.place.description).toBe(DESCRIPTION);
+    expect(first.place.shopType).toBe('SPAR');
+    expect(first.place.country).toBe('LI');
+    expect(first.place.street).toBe('Maschlinastrasse');
+    expect(first.place.houseNumber).toBe('4');
+    expect(first.place.postalCode).toBe('9495');
+    expect(first.place.city).toBe('Triesen');
     expect(first.place.supports).toEqual([]);
     expect(first.place.activity).toBe('none');
     expect(first.place.lastTransactionAt).toBeNull();
     const second = store.insertIfNew({ ...input, name: 'Other', lat: 1 });
     expect(second.created).toBe(false);
-    expect(second.place.name).toBe('SPAR');
+    expect(second.place.name).toBe('SPAR Triesen');
     expect(second.place.id).toBe(first.place.id);
     const later = store.insertIfNew({ ...input, externalId: 'store-2' });
     const listed = store.list(10);
@@ -97,51 +112,57 @@ describe('MemoryMapPlaceStore', () => {
     store.insertIfNew({ ...input, techProvider: '21.gifts' });
     const again = store.insertIfNew({ ...input, name: 'Other', techProvider: 'Other.lab' });
     expect(again.created).toBe(false);
-    expect(again.place.name).toBe('SPAR');
+    expect(again.place.name).toBe('SPAR Triesen');
     expect(again.place.techProvider).toBe('21.gifts');
   });
 
-  it('upserts a new pair and updates fields on an existing pair', () => {
+  it('upserts a new pair and replaces every field on an existing pair', () => {
     const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
     const created = store.upsert(input);
     expect(created.created).toBe(true);
     expect(created.place.techProvider).toBe('DFX.swiss');
     const updated = store.upsert({
       ...input,
-      name: 'Other',
+      name: 'Other Shop',
+      description: OTHER_DESCRIPTION,
       lat: 1,
       lon: 2,
       category: 'cafe',
       paymentMethods: 'onchain',
-      country: 'DE',
-      shopName: 'Migros',
+      shopType: 'Others',
+      street: 'Bahnhofstrasse',
+      houseNumber: '12',
+      postalCode: '8001',
+      city: 'Zürich',
+      country: 'CH',
     });
     expect(updated.created).toBe(false);
     expect(updated.place.id).toBe(created.place.id);
     expect(updated.place.createdAt).toBe(created.place.createdAt);
-    expect(updated.place.name).toBe('Other');
+    expect(updated.place.name).toBe('Other Shop');
+    expect(updated.place.description).toBe(OTHER_DESCRIPTION);
     expect(updated.place.lat).toBe(1);
     expect(updated.place.lon).toBe(2);
     expect(updated.place.category).toBe('cafe');
     expect(updated.place.paymentMethods).toBe('onchain');
     expect(updated.place.techProvider).toBe('DFX.swiss');
-    expect(updated.place.country).toBe('DE');
-    expect(updated.place.street).toBeNull();
-    expect(updated.place.houseNumber).toBeNull();
-    expect(updated.place.postalCode).toBeNull();
-    expect(updated.place.city).toBeNull();
-    expect(updated.place.shopName).toBe('Migros');
+    expect(updated.place.shopType).toBe('Others');
+    expect(updated.place.country).toBe('CH');
+    expect(updated.place.street).toBe('Bahnhofstrasse');
+    expect(updated.place.houseNumber).toBe('12');
+    expect(updated.place.postalCode).toBe('8001');
+    expect(updated.place.city).toBe('Zürich');
   });
 
-  it('keeps techProvider on upsert when omitted and changes it when sent', () => {
+  it('resets techProvider to DFX.swiss on upsert when omitted', () => {
     const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
     store.upsert({ ...input, techProvider: '21.gifts' });
-    const kept = store.upsert({ ...input, name: 'Kept' });
-    expect(kept.place.name).toBe('Kept');
-    expect(kept.place.techProvider).toBe('21.gifts');
-    const changed = store.upsert({ ...input, name: 'Changed', techProvider: 'DFX.swiss' });
+    const reset = store.upsert({ ...input, name: 'Reset Label' });
+    expect(reset.place.name).toBe('Reset Label');
+    expect(reset.place.techProvider).toBe('DFX.swiss');
+    const changed = store.upsert({ ...input, name: 'Changed', techProvider: '21.gifts' });
     expect(changed.place.name).toBe('Changed');
-    expect(changed.place.techProvider).toBe('DFX.swiss');
+    expect(changed.place.techProvider).toBe('21.gifts');
   });
 
   it('applies the limit after filtering by origin', () => {
@@ -158,8 +179,8 @@ describe('MemoryMapPlaceStore', () => {
   it('returns the older CH pin when a newer pin has another country', () => {
     let tick = 0;
     const store = new MemoryMapPlaceStore(() => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++)));
-    store.insertIfNew({ ...input, externalId: 'ch-old', country: 'CH' });
-    store.insertIfNew({ ...input, externalId: 'de-new', country: 'DE' });
+    store.insertIfNew({ ...input, externalId: 'ch-old', country: 'CH', postalCode: '8001' });
+    store.insertIfNew({ ...input, externalId: 'de-new', country: 'DE', postalCode: '10115' });
     expect(store.list(1).map((row) => row.externalId)).toEqual(['de-new']);
     const listed = store.list(1, { country: 'CH' });
     expect(listed).toHaveLength(1);
@@ -167,17 +188,16 @@ describe('MemoryMapPlaceStore', () => {
     expect(listed[0]?.country).toBe('CH');
   });
 
-  it('lists SPAR shop names and treats a missing brand as others', () => {
+  it('lists SPAR shop types and Others separately', () => {
     let tick = 0;
     const store = new MemoryMapPlaceStore(() => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++)));
-    store.insertIfNew({ ...input, externalId: 'spar-brand', shopName: 'SPAR' });
-    store.insertIfNew({ ...input, externalId: 'migros', shopName: 'Migros' });
-    store.insertIfNew({ ...input, externalId: 'none' });
-    const spar = store.list(10, { shopName: 'SPAR' });
+    store.insertIfNew({ ...input, externalId: 'spar-brand', shopType: 'SPAR' });
+    store.insertIfNew({ ...input, externalId: 'other-brand', shopType: 'Others' });
+    const spar = store.list(10, { shopType: 'SPAR' });
     expect(spar.map((row) => row.externalId)).toEqual(['spar-brand']);
-    const others = store.list(10, { shopName: 'others' });
-    expect(others.map((row) => row.externalId)).toEqual(['none', 'migros']);
-    expect(others.every((row) => row.shopName !== 'SPAR')).toBe(true);
+    const others = store.list(10, { shopType: 'Others' });
+    expect(others.map((row) => row.externalId)).toEqual(['other-brand']);
+    expect(others.every((row) => row.shopType === 'Others')).toBe(true);
   });
 
   it('uses the payment-link catalog when a pin has no support rows', () => {
@@ -204,11 +224,8 @@ describe('MemoryMapPlaceStore', () => {
       externalId: 'stated',
       supports: [{ blockchain: 'Polygon', asset: 'ZCHF' }],
     });
-    const ids = (filter: {
-      blockchain?: string;
-      asset?: string;
-      shopName?: 'SPAR' | 'others';
-    }): string[] => store.list(10, filter).map((row) => row.externalId);
+    const ids = (filter: { blockchain?: string; asset?: string; shopType?: ShopType }): string[] =>
+      store.list(10, filter).map((row) => row.externalId);
 
     expect(ids({ blockchain: 'Ethereum' }).sort()).toEqual(['dfx-open']);
     expect(ids({ blockchain: 'Lightning', asset: 'BTC' }).sort()).toEqual([
@@ -223,14 +240,14 @@ describe('MemoryMapPlaceStore', () => {
     expect(ids({ asset: 'ckBTC' }).sort()).toEqual(['dfx-open']);
     expect(ids({ blockchain: 'Bitcoin' }).sort()).toEqual(['dfx-open']);
     expect(ids({ blockchain: 'Polygon', asset: 'ZCHF' }).sort()).toEqual(['dfx-open', 'stated']);
-    expect(ids({ shopName: 'SPAR' })).toEqual([]);
-    expect(ids({ shopName: 'others' }).sort()).toEqual([
+    expect(ids({ shopType: 'SPAR' }).sort()).toEqual([
       'dfx-open',
       'gifts-open',
       'label-only',
       'origin-only',
       'stated',
     ]);
+    expect(ids({ shopType: 'Others' })).toEqual([]);
   });
 
   it('requires blockchain and asset to match the same support row', () => {
@@ -281,7 +298,22 @@ describe('MemoryMapPlaceStore', () => {
     ]);
   });
 
-  it('does not replace country, address parts, shop name, or supports on a repeated insert', () => {
+  it('keeps same-chain supports that arrive in ascending asset order', () => {
+    const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
+    const created = store.insertIfNew({
+      ...input,
+      supports: [
+        { blockchain: 'Ethereum', asset: 'ETH' },
+        { blockchain: 'Ethereum', asset: 'ZCHF' },
+      ],
+    });
+    expect(created.place.supports).toEqual([
+      { blockchain: 'Ethereum', asset: 'ETH' },
+      { blockchain: 'Ethereum', asset: 'ZCHF' },
+    ]);
+  });
+
+  it('does not replace fields on a repeated insert', () => {
     const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
     store.insertIfNew({
       ...input,
@@ -290,7 +322,7 @@ describe('MemoryMapPlaceStore', () => {
       houseNumber: '12',
       postalCode: '8001',
       city: 'Zürich',
-      shopName: 'SPAR',
+      shopType: 'SPAR',
       supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
     });
     const again = store.insertIfNew({
@@ -301,89 +333,63 @@ describe('MemoryMapPlaceStore', () => {
       houseNumber: '99',
       postalCode: '10115',
       city: 'Berlin',
-      shopName: 'Migros',
+      shopType: 'Others',
       supports: [{ blockchain: 'Bitcoin', asset: 'BTC' }],
     });
     expect(again.created).toBe(false);
-    expect(again.place.name).toBe('SPAR');
+    expect(again.place.name).toBe('SPAR Triesen');
     expect(again.place.country).toBe('CH');
     expect(again.place.street).toBe('Bahnhofstrasse');
     expect(again.place.houseNumber).toBe('12');
     expect(again.place.postalCode).toBe('8001');
     expect(again.place.city).toBe('Zürich');
-    expect(again.place.shopName).toBe('SPAR');
+    expect(again.place.shopType).toBe('SPAR');
     expect(again.place.supports).toEqual([{ blockchain: 'Ethereum', asset: 'ZCHF' }]);
   });
 
-  it('keeps an omitted country and address parts on upsert, clears an omitted shop name, and leaves supports', () => {
+  it('replaces supports with an empty list on upsert when sent empty', () => {
     const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
     store.upsert({
       ...input,
       country: 'CH',
-      street: 'Bahnhofstrasse',
-      houseNumber: '12',
       postalCode: '8001',
-      city: 'Zürich',
-      shopName: 'SPAR',
-      supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
-    });
-    const omitted = store.upsert({ ...input, name: 'Other' });
-    expect(omitted.place.name).toBe('Other');
-    expect(omitted.place.country).toBe('CH');
-    expect(omitted.place.street).toBe('Bahnhofstrasse');
-    expect(omitted.place.houseNumber).toBe('12');
-    expect(omitted.place.postalCode).toBe('8001');
-    expect(omitted.place.city).toBe('Zürich');
-    expect(omitted.place.shopName).toBeNull();
-    expect(omitted.place.supports).toEqual([{ blockchain: 'Ethereum', asset: 'ZCHF' }]);
-  });
-
-  it('replaces a sent address part on upsert and leaves omitted parts', () => {
-    const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
-    store.upsert({
-      ...input,
-      street: 'Bahnhofstrasse',
-      houseNumber: '12',
-      postalCode: '8001',
-      city: 'Zürich',
-    });
-    const replaced = store.upsert({
-      ...input,
-      street: 'Limmatquai',
-      city: 'Winterthur',
-    });
-    expect(replaced.place.street).toBe('Limmatquai');
-    expect(replaced.place.houseNumber).toBe('12');
-    expect(replaced.place.postalCode).toBe('8001');
-    expect(replaced.place.city).toBe('Winterthur');
-    const numbered = store.upsert({
-      ...input,
-      houseNumber: '4',
-      postalCode: '8400',
-    });
-    expect(numbered.place.street).toBe('Limmatquai');
-    expect(numbered.place.houseNumber).toBe('4');
-    expect(numbered.place.postalCode).toBe('8400');
-    expect(numbered.place.city).toBe('Winterthur');
-  });
-
-  it('clears supports on upsert when the body sends an empty list', () => {
-    const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
-    store.upsert({
-      ...input,
-      country: 'CH',
-      shopName: 'SPAR',
+      shopType: 'SPAR',
       supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
     });
     const emptied = store.upsert({
       ...input,
+      name: 'Other Shop',
+      description: OTHER_DESCRIPTION,
       country: 'DE',
-      shopName: 'Migros',
+      postalCode: '10115',
+      shopType: 'Others',
       supports: [],
     });
     expect(emptied.place.country).toBe('DE');
-    expect(emptied.place.shopName).toBe('Migros');
+    expect(emptied.place.shopType).toBe('Others');
     expect(emptied.place.supports).toEqual([]);
+  });
+
+  it('hides incomplete rows from list and countries', () => {
+    const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
+    store.insertIfNew({ ...input, externalId: 'complete', country: 'LI' });
+    const blanks: Array<Partial<MapPlaceInput> & { externalId: string }> = [
+      { externalId: 'empty-name', name: '', country: 'CH' },
+      { externalId: 'empty-description', description: '', country: 'DE' },
+      { externalId: 'empty-street', street: '', country: 'AT' },
+      { externalId: 'empty-house', houseNumber: '', country: 'FR' },
+      { externalId: 'empty-postal', postalCode: '', country: 'IT' },
+      { externalId: 'empty-city', city: '', country: 'ES' },
+      { externalId: 'empty-country', country: '' },
+      { externalId: 'bad-type', shopType: 'Migros' as ShopType, country: 'NL' },
+    ];
+    for (const row of blanks) {
+      store.insertIfNew({ ...input, ...row });
+    }
+    expect(store.list(20).map((row) => row.externalId)).toEqual(['complete']);
+    expect(store.filters().countries).toEqual(['LI']);
+    expect(store.list(20, { country: 'CH' })).toHaveLength(0);
+    expect(store.list(20, { shopType: 'SPAR' }).map((row) => row.externalId)).toEqual(['complete']);
   });
 
   it('returns distinct sorted filter values and restricts assets by blockchain', () => {
@@ -392,7 +398,8 @@ describe('MemoryMapPlaceStore', () => {
     store.insertIfNew({
       ...input,
       country: 'CH',
-      shopName: 'SPAR',
+      postalCode: '8001',
+      shopType: 'SPAR',
       supports: [
         { blockchain: 'Ethereum', asset: 'ZCHF' },
         { blockchain: 'Polygon', asset: 'USDT' },
@@ -402,21 +409,23 @@ describe('MemoryMapPlaceStore', () => {
       ...input,
       externalId: 'store-2',
       country: 'DE',
+      postalCode: '10115',
       supports: [{ blockchain: 'Bitcoin', asset: 'BTC' }],
     });
     store.insertIfNew({ ...input, externalId: 'none' });
+    store.insertIfNew({ ...input, externalId: 'hidden', name: '', country: 'FR' });
     expect(store.filters()).toEqual({
-      countries: ['CH', 'DE'],
+      countries: ['CH', 'DE', 'LI'],
       blockchains: ['Bitcoin', 'Ethereum', 'Polygon'],
       assets: ['BTC', 'USDT', 'ZCHF'],
     });
     expect(store.filters('Ethereum')).toEqual({
-      countries: ['CH', 'DE'],
+      countries: ['CH', 'DE', 'LI'],
       blockchains: ['Bitcoin', 'Ethereum', 'Polygon'],
       assets: ['ZCHF'],
     });
     expect(store.filters('Sepolia')).toEqual({
-      countries: ['CH', 'DE'],
+      countries: ['CH', 'DE', 'LI'],
       blockchains: ['Bitcoin', 'Ethereum', 'Polygon'],
       assets: [],
     });
@@ -430,7 +439,8 @@ describe('MemoryMapPlaceStore', () => {
       origin: 'spar',
       externalId: 'match',
       country: 'CH',
-      shopName: 'SPAR',
+      postalCode: '8001',
+      shopType: 'SPAR',
       supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
     });
     store.insertIfNew({
@@ -438,13 +448,14 @@ describe('MemoryMapPlaceStore', () => {
       origin: 'spar',
       externalId: 'miss',
       country: 'DE',
-      shopName: 'SPAR',
+      postalCode: '10115',
+      shopType: 'SPAR',
       supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
     });
     const listed = store.list(1, {
       origin: 'spar',
       country: 'CH',
-      shopName: 'SPAR',
+      shopType: 'SPAR',
       blockchain: 'Ethereum',
       asset: 'ZCHF',
     });
@@ -458,6 +469,7 @@ describe('MemoryMapPlaceStore', () => {
     store.insertIfNew({
       ...input,
       country: 'CH',
+      postalCode: '8001',
       supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
     });
     expect(store.deleteByKey('dfx', 'store-1')).toBe(true);

@@ -3,7 +3,29 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { placeActivity } from '../src/lib/map/place';
+import type { MapPlaceInput } from '../src/lib/map/place';
 import { SqliteMapPlaceStore } from '../src/lib/map/sqlite';
+
+const DESCRIPTION =
+  'SPAR supermarket in Triesen. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
+
+const COMPLETE: MapPlaceInput = {
+  origin: 'dfx',
+  externalId: 'dfx-null',
+  name: 'SPAR Triesen',
+  description: DESCRIPTION,
+  lat: 47.37,
+  lon: 8.54,
+  category: 'groceries',
+  paymentMethods: null,
+  shopType: 'SPAR',
+  street: 'Maschlinastrasse',
+  houseNumber: '4',
+  postalCode: '9495',
+  city: 'Triesen',
+  country: 'LI',
+  supports: [],
+};
 
 const OLD_MAP_PLACE_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS map_place (
   id TEXT PRIMARY KEY,
@@ -69,11 +91,46 @@ function paymentDaysFor(filename: string, placeId: string): string[] {
   }
 }
 
+function columnNames(filename: string): string[] {
+  const db = new Database(filename);
+  try {
+    const rows = db.query('PRAGMA table_info(map_place)').all() as Array<{ name: string }>;
+    return rows.map((row) => row.name);
+  } finally {
+    db.close();
+  }
+}
+
+function placeCount(filename: string): number {
+  const db = new Database(filename);
+  try {
+    const row = db.query('SELECT COUNT(*) AS n FROM map_place').get() as { n: number };
+    return row.n;
+  } finally {
+    db.close();
+  }
+}
+
+function activityByExternalId(
+  filename: string,
+  externalId: string,
+): { activity: string; last_transaction_at: string | null } | undefined {
+  const db = new Database(filename);
+  try {
+    const row = db
+      .query('SELECT activity, last_transaction_at FROM map_place WHERE external_id = ?')
+      .get(externalId) as { activity: string; last_transaction_at: string | null } | null;
+    return row === null ? undefined : row;
+  } finally {
+    db.close();
+  }
+}
+
 const dir = mkdtempSync(join(tmpdir(), 'sqlite-backfill-'));
 const filename = join(dir, 'map.sqlite');
 let seed: Database | undefined;
 let store: SqliteMapPlaceStore | undefined;
-let countryOk = false;
+let schemaOk = false;
 try {
   seed = new Database(filename);
   const statements = OLD_MAP_PLACE_SCHEMA_SQL.split(';')
@@ -99,7 +156,7 @@ try {
     '2026-01-01T00:00:00.000Z',
     'DFX.swiss',
     null,
-    null,
+    'SPAR',
   );
   insert.run(
     'dfx-null-row',
@@ -112,240 +169,81 @@ try {
     null,
     '2026-01-02T00:00:00.000Z',
     'DFX.swiss',
-    null,
-    null,
-  );
-  insert.run(
-    'spar-migros-row',
-    'spar',
-    'spar-migros',
-    'Pin',
-    47.37,
-    8.54,
-    'groceries',
-    null,
-    '2026-01-03T00:00:00.000Z',
-    'DFX.swiss',
-    null,
-    'Migros',
-  );
-  insert.run(
-    'spar-ch-1713-row',
-    'spar',
-    'spar-ch-1713',
-    'SPAR 1713',
-    47.37,
-    8.54,
-    'groceries',
-    null,
-    '2026-01-04T00:00:00.000Z',
-    'DFX.swiss',
-    null,
-    null,
-  );
-  insert.run(
-    'spar-li-9495-row',
-    'spar',
-    'spar-li-9495',
-    'SPAR 9495 Triesen',
-    47.37,
-    8.54,
-    'groceries',
-    null,
-    '2026-01-05T00:00:00.000Z',
-    'DFX.swiss',
-    null,
-    null,
-  );
-  insert.run(
-    'spar-de-keep-row',
-    'spar',
-    'spar-de-keep',
-    'SPAR 8001',
-    47.37,
-    8.54,
-    'groceries',
-    null,
-    '2026-01-06T00:00:00.000Z',
-    'DFX.swiss',
-    'DE',
-    null,
-  );
-  insert.run(
-    'gifts-ph-happyland-row',
-    '21gifts',
-    'gifts-ph-happyland',
-    'Happyland Court Barangay 105 Tondo, Manila',
-    47.37,
-    8.54,
-    'groceries',
-    null,
-    '2026-01-07T00:00:00.000Z',
-    '21.gifts',
-    null,
-    null,
-  );
-  insert.run(
-    'gifts-ph-rose-row',
-    '21gifts',
-    'gifts-ph-rose',
-    'Rose st.Happyland Barangay 105 Tondo,Manila',
-    47.37,
-    8.54,
-    'groceries',
-    null,
-    '2026-01-08T00:00:00.000Z',
-    '21.gifts',
-    null,
-    null,
-  );
-  insert.run(
-    'gifts-ke-machakos-row',
-    '21gifts',
-    'gifts-ke-machakos',
-    'Machakos Bitcoin Academy',
-    47.37,
-    8.54,
-    'groceries',
-    null,
-    '2026-01-09T00:00:00.000Z',
-    '21.gifts',
-    null,
-    null,
-  );
-  insert.run(
-    'gifts-ke-makueni-row',
-    '21gifts',
-    'gifts-ke-makueni',
-    'bitcoinmakueni',
-    47.37,
-    8.54,
-    'groceries',
-    null,
-    '2026-01-10T00:00:00.000Z',
-    '21.gifts',
-    null,
-    null,
-  );
-  insert.run(
-    'gifts-other-row',
-    '21gifts',
-    'gifts-other',
-    'Other shop',
-    47.37,
-    8.54,
-    'groceries',
-    null,
-    '2026-01-11T00:00:00.000Z',
-    '21.gifts',
-    null,
-    null,
-  );
-  insert.run(
-    'single-word-row',
-    'dfx',
-    'single-word',
-    'Cafe',
-    47.37,
-    8.54,
-    'groceries',
-    null,
-    '2026-01-12T00:00:00.000Z',
-    'DFX.swiss',
-    null,
+    'CH',
     null,
   );
   seed.close();
   seed = undefined;
   store = new SqliteMapPlaceStore(filename);
+  const columns = columnNames(filename);
   const listed = store.list(20);
-  const sparNull = listed.find((row) => row.externalId === 'spar-null');
-  const dfxNull = listed.find((row) => row.externalId === 'dfx-null');
-  const sparMigros = listed.find((row) => row.externalId === 'spar-migros');
-  const sparCh1713 = listed.find((row) => row.externalId === 'spar-ch-1713');
-  const sparLi9495 = listed.find((row) => row.externalId === 'spar-li-9495');
-  const sparDeKeep = listed.find((row) => row.externalId === 'spar-de-keep');
-  const giftsPhHappyland = listed.find((row) => row.externalId === 'gifts-ph-happyland');
-  const giftsPhRose = listed.find((row) => row.externalId === 'gifts-ph-rose');
-  const giftsKeMachakos = listed.find((row) => row.externalId === 'gifts-ke-machakos');
-  const giftsKeMakueni = listed.find((row) => row.externalId === 'gifts-ke-makueni');
-  const giftsOther = listed.find((row) => row.externalId === 'gifts-other');
-  const singleWord = listed.find((row) => row.externalId === 'single-word');
-  const addressEmpty = (row: {
-    street: string | null;
-    houseNumber: string | null;
-    postalCode: string | null;
-    city: string | null;
-  }): boolean =>
-    row.street === null && row.houseNumber === null && row.postalCode === null && row.city === null;
+  const countries = store.filters().countries;
+  const kept = placeCount(filename);
   if (
-    sparNull !== undefined &&
-    dfxNull !== undefined &&
-    sparMigros !== undefined &&
-    sparCh1713 !== undefined &&
-    sparLi9495 !== undefined &&
-    sparDeKeep !== undefined &&
-    giftsPhHappyland !== undefined &&
-    giftsPhRose !== undefined &&
-    giftsKeMachakos !== undefined &&
-    giftsKeMakueni !== undefined &&
-    giftsOther !== undefined &&
-    singleWord !== undefined &&
-    sparNull.shopName === 'SPAR' &&
-    sparNull.country === null &&
-    dfxNull.shopName === null &&
-    dfxNull.country === null &&
-    sparMigros.shopName === 'Migros' &&
-    sparMigros.country === null &&
-    sparCh1713.country === 'CH' &&
-    sparCh1713.shopName === 'SPAR' &&
-    sparLi9495.country === 'LI' &&
-    sparDeKeep.country === 'DE' &&
-    giftsPhHappyland.country === 'PH' &&
-    giftsPhRose.country === 'PH' &&
-    giftsKeMachakos.country === 'KE' &&
-    giftsKeMakueni.country === 'KE' &&
-    giftsKeMakueni.name === 'bitcoinmakueni' &&
-    giftsOther.country === null &&
-    singleWord.name === 'Cafe' &&
-    addressEmpty(singleWord) &&
-    listed.every(addressEmpty)
+    columns.includes('description') &&
+    columns.includes('shop_type') &&
+    columns.includes('shop_name') &&
+    kept === 2 &&
+    listed.length === 0 &&
+    countries.length === 0
   ) {
-    countryOk = true;
+    const published = store.upsert(COMPLETE);
+    const afterPut = store.list(20);
+    const afterCountries = store.filters().countries;
+    store.upsert({
+      ...COMPLETE,
+      origin: 'dfx',
+      externalId: 'bad-time',
+      country: 'AT',
+      postalCode: '1010',
+      city: 'Wien',
+      street: 'Kaerntner Strasse',
+      houseNumber: '1',
+      name: 'Hidden Clock Shop',
+    });
+    store.close();
+    store = undefined;
+    const patch = new Database(filename);
+    patch
+      .query("UPDATE map_place SET last_transaction_at = 'not-a-date' WHERE external_id = ?")
+      .run('bad-time');
+    patch.close();
+    store = new SqliteMapPlaceStore(filename);
+    const afterBad = store.list(20);
+    const afterBadCountries = store.filters().countries;
+    if (
+      published.created === false &&
+      afterPut.length === 1 &&
+      afterPut[0]?.externalId === 'dfx-null' &&
+      afterPut[0]?.country === 'LI' &&
+      afterPut[0]?.shopType === 'SPAR' &&
+      afterPut[0]?.description === DESCRIPTION &&
+      afterCountries.includes('LI') &&
+      !afterCountries.includes('CH') &&
+      afterBad.every((row) => row.externalId !== 'bad-time') &&
+      afterBadCountries.includes('LI') &&
+      !afterBadCountries.includes('AT')
+    ) {
+      schemaOk = true;
+    } else {
+      process.stdout.write(
+        `${JSON.stringify({
+          published: published.created,
+          afterPut: afterPut.map((row) => row.externalId),
+          afterCountries,
+          afterBad: afterBad.map((row) => row.externalId),
+          afterBadCountries,
+        })}\n`,
+      );
+      process.exitCode = 1;
+    }
   } else {
     process.stdout.write(
       `${JSON.stringify({
-        'spar-null':
-          sparNull === undefined
-            ? null
-            : { shopName: sparNull.shopName, country: sparNull.country },
-        'dfx-null':
-          dfxNull === undefined ? null : { shopName: dfxNull.shopName, country: dfxNull.country },
-        'spar-migros':
-          sparMigros === undefined
-            ? null
-            : { shopName: sparMigros.shopName, country: sparMigros.country },
-        'spar-ch-1713':
-          sparCh1713 === undefined
-            ? null
-            : { shopName: sparCh1713.shopName, country: sparCh1713.country },
-        'spar-li-9495': sparLi9495 === undefined ? null : sparLi9495.country,
-        'spar-de-keep': sparDeKeep === undefined ? null : sparDeKeep.country,
-        'gifts-ph-happyland': giftsPhHappyland === undefined ? null : giftsPhHappyland.country,
-        'gifts-ph-rose': giftsPhRose === undefined ? null : giftsPhRose.country,
-        'gifts-ke-machakos': giftsKeMachakos === undefined ? null : giftsKeMachakos.country,
-        'gifts-ke-makueni': giftsKeMakueni === undefined ? null : giftsKeMakueni.country,
-        'gifts-other': giftsOther === undefined ? null : giftsOther.country,
-        'single-word':
-          singleWord === undefined
-            ? null
-            : {
-                name: singleWord.name,
-                street: singleWord.street,
-                houseNumber: singleWord.houseNumber,
-                postalCode: singleWord.postalCode,
-                city: singleWord.city,
-              },
+        columns,
+        kept,
+        listed: listed.map((row) => row.externalId),
+        countries,
       })}\n`,
     );
     process.exitCode = 1;
@@ -368,7 +266,7 @@ try {
   }
 }
 
-if (countryOk) {
+if (schemaOk) {
   const activityDir = mkdtempSync(join(tmpdir(), 'sqlite-activity-backfill-'));
   const activityFile = join(activityDir, 'map.sqlite');
   let activitySeed: Database | undefined;
@@ -433,15 +331,14 @@ if (countryOk) {
     activitySeed.close();
     activitySeed = undefined;
     activityStore = new SqliteMapPlaceStore(activityFile);
-    const listed = activityStore.list(10);
-    const noneRow = listed.find((row) => row.externalId === 'act-null');
-    const oldRow = listed.find((row) => row.externalId === 'act-old');
-    const recentRow = listed.find((row) => row.externalId === 'act-recent');
     activityStore.close();
     activityStore = undefined;
-    const noneDays = noneRow === undefined ? null : paymentDaysFor(activityFile, noneRow.id);
-    const oldDays = oldRow === undefined ? null : paymentDaysFor(activityFile, oldRow.id);
-    const recentDays = recentRow === undefined ? null : paymentDaysFor(activityFile, recentRow.id);
+    const noneRow = activityByExternalId(activityFile, 'act-null');
+    const oldRow = activityByExternalId(activityFile, 'act-old');
+    const recentRow = activityByExternalId(activityFile, 'act-recent');
+    const noneDays = paymentDaysFor(activityFile, 'act-null-row');
+    const oldDays = paymentDaysFor(activityFile, 'act-old-row');
+    const recentDays = paymentDaysFor(activityFile, 'act-recent-row');
     activityStore = new SqliteMapPlaceStore(activityFile);
     const recentDay = new Date(recentMs).toISOString().slice(0, 10);
     const today = new Date(nowMs).toISOString().slice(0, 10);
@@ -454,30 +351,28 @@ if (countryOk) {
       }
       extraDays.push(day);
     }
-    let dailyPlace = recentRow;
-    let lastAfterExtra = recentRow?.lastTransactionAt;
-    if (recentRow !== undefined) {
-      for (const day of extraDays) {
-        dailyPlace = activityStore.recordTransaction(
-          'dfx',
-          'act-recent',
-          `${day}T12:00:00.000Z`,
-          nowMs,
-        );
-      }
-      lastAfterExtra = dailyPlace?.lastTransactionAt;
+    let dailyPlace = activityStore.recordTransaction('dfx', 'act-recent', 'not-a-date', nowMs);
+    let lastAfterExtra = dailyPlace?.lastTransactionAt;
+    for (const day of extraDays) {
+      dailyPlace = activityStore.recordTransaction(
+        'dfx',
+        'act-recent',
+        `${day}T12:00:00.000Z`,
+        nowMs,
+      );
     }
+    lastAfterExtra = dailyPlace?.lastTransactionAt;
     const countedDays = [recentDay, ...extraDays];
     const classified = placeActivity(recentIso, countedDays, nowMs);
     const untilMs = classified.until === null ? Number.NaN : Date.parse(classified.until);
     if (dailyPlace !== undefined && Number.isFinite(untilMs)) {
       activityStore.refreshActivity(untilMs - 1);
     }
-    const beforePivot = activityStore.list(10).find((row) => row.externalId === 'act-recent');
+    const beforePivot = activityStore.recordTransaction('dfx', 'act-recent', 'not-a-date', nowMs);
     if (dailyPlace !== undefined && Number.isFinite(untilMs)) {
       activityStore.refreshActivity(untilMs);
     }
-    const afterPivot = activityStore.list(10).find((row) => row.externalId === 'act-recent');
+    const afterPivot = activityStore.recordTransaction('dfx', 'act-recent', 'not-a-date', nowMs);
     activityStore.close();
     activityStore = undefined;
     const staleDays = new Database(activityFile);
@@ -500,11 +395,8 @@ if (countryOk) {
       noneRow.activity === 'none' &&
       oldRow.activity === 'olderThan30Days' &&
       recentRow.activity === 'within7Days' &&
-      noneDays !== null &&
       noneDays.length === 0 &&
-      oldDays !== null &&
       oldDays.length === 0 &&
-      recentDays !== null &&
       recentDays.length === 1 &&
       extraDays.length === 4 &&
       classified.activity === 'daily' &&
@@ -521,10 +413,12 @@ if (countryOk) {
     } else {
       process.stdout.write(
         `${JSON.stringify({
-          none: noneRow === undefined ? null : { activity: noneRow.activity, days: noneDays },
-          old: oldRow === undefined ? null : { activity: oldRow.activity, days: oldDays },
-          recent:
-            recentRow === undefined ? null : { activity: recentRow.activity, days: recentDays },
+          none: noneRow,
+          old: oldRow,
+          recent: recentRow,
+          noneDays,
+          oldDays,
+          recentDays,
           extraDays,
           daily: dailyPlace === undefined ? null : dailyPlace.activity,
           lastAfterExtra,

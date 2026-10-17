@@ -10,14 +10,24 @@ import {
 } from '@/lib/map/place';
 import type { StoredMapPlace } from '@/lib/map/place';
 
+const DESCRIPTION =
+  'SPAR supermarket in Triesen. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
+
 const valid = {
   origin: 'dfx',
   externalId: 'store-1',
-  name: 'SPAR',
+  name: 'SPAR Triesen',
+  description: DESCRIPTION,
   lat: 47.37,
   lon: 8.54,
   category: 'groceries',
   paymentMethods: 'lightning',
+  shopType: 'SPAR',
+  street: 'Maschlinastrasse',
+  houseNumber: '4',
+  postalCode: '9495',
+  city: 'Triesen',
+  country: 'LI',
 };
 
 describe('normalizePlaceOrigin', () => {
@@ -86,6 +96,31 @@ describe('normalizeMapPlace', () => {
     });
   });
 
+  it('rejects the first unknown key in Object.keys order', () => {
+    expect(normalizeMapPlace({ shopName: 'SPAR', extra: 1, ...valid })).toEqual({
+      ok: false,
+      error: 'Place field is not allowed: shopName',
+    });
+    expect(normalizeMapPlace({ ...valid, extra: 1 })).toEqual({
+      ok: false,
+      error: 'Place field is not allowed: extra',
+    });
+    expect(
+      normalizeMapPlace({
+        ...valid,
+        address: { street: 'Bahnhofstrasse' },
+      }),
+    ).toEqual({
+      ok: false,
+      error: 'Place field is not allowed: address',
+    });
+    const longKey = 'k'.repeat(60);
+    expect(normalizeMapPlace({ ...valid, [longKey]: 1 })).toEqual({
+      ok: false,
+      error: `Place field is not allowed: ${'k'.repeat(40)}`,
+    });
+  });
+
   it('rejects coordinates that are not finite numbers in range', () => {
     expect(normalizeMapPlace({ ...valid, lat: '47' }).ok).toBe(false);
     expect(normalizeMapPlace({ ...valid, lon: Number.NaN }).ok).toBe(false);
@@ -108,6 +143,7 @@ describe('normalizeMapPlace', () => {
         lat: 47.123457,
         lon: 0,
         paymentMethods: null,
+        supports: [],
       },
     });
   });
@@ -130,10 +166,53 @@ describe('normalizeMapPlace', () => {
     expect(normalizeMapPlace({ ...valid, externalId: 'bad\nid' }).ok).toBe(false);
     expect(normalizeMapPlace({ ...valid, name: 1 }).ok).toBe(false);
     expect(normalizeMapPlace({ ...valid, name: ' ' }).ok).toBe(false);
+    expect(normalizeMapPlace({ ...valid, name: 'n'.repeat(81) }).ok).toBe(false);
     expect(normalizeMapPlace({ ...valid, name: 'bad\u007fname' }).ok).toBe(false);
     expect(normalizeMapPlace({ ...valid, category: 1 }).ok).toBe(false);
     expect(normalizeMapPlace({ ...valid, category: 'Cafe' }).ok).toBe(false);
     expect(normalizeMapPlace({ ...valid, category: '' }).ok).toBe(false);
+  });
+
+  it('rejects a name that contains the street or a standalone postal code', () => {
+    expect(normalizeMapPlace({ ...valid, name: 'SPAR Maschlinastrasse' })).toEqual({
+      ok: false,
+      error: 'Place name must not contain the address',
+    });
+    expect(normalizeMapPlace({ ...valid, name: 'near maschlinastrasse' })).toEqual({
+      ok: false,
+      error: 'Place name must not contain the address',
+    });
+    expect(normalizeMapPlace({ ...valid, name: 'SPAR 9495' })).toEqual({
+      ok: false,
+      error: 'Place name must not contain the address',
+    });
+    expect(normalizeMapPlace({ ...valid, name: 'Shop (9495)' })).toEqual({
+      ok: false,
+      error: 'Place name must not contain the address',
+    });
+    expect(normalizeMapPlace({ ...valid, name: 'SPAR Dorf 3', street: 'Dorf' })).toEqual({
+      ok: false,
+      error: 'Place name must not contain the address',
+    });
+  });
+
+  it('accepts a name that only shares a street prefix or a longer postal code', () => {
+    const village = normalizeMapPlace({
+      ...valid,
+      name: 'SPAR Dorfladen',
+      street: 'Dorf',
+    });
+    expect(village.ok && village.value.name).toBe('SPAR Dorfladen');
+    const longerPostal = normalizeMapPlace({ ...valid, name: 'SPAR 94950' });
+    expect(longerPostal.ok && longerPostal.value.name).toBe('SPAR 94950');
+    const gluedPostal = normalizeMapPlace({ ...valid, name: 'Shop9495' });
+    expect(gluedPostal.ok && gluedPostal.value.name).toBe('Shop9495');
+    const dottedStreet = normalizeMapPlace({
+      ...valid,
+      name: 'SPAR St. Gallen',
+      street: 'St. Gallerstrasse',
+    });
+    expect(dottedStreet.ok && dottedStreet.value.name).toBe('SPAR St. Gallen');
   });
 
   it('omits an absent, null, or trim-empty tech provider', () => {
@@ -151,7 +230,7 @@ describe('normalizeMapPlace', () => {
     const trimmed = normalizeMapPlace({ ...valid, techProvider: ' DFX.swiss ' });
     expect(trimmed).toEqual({
       ok: true,
-      value: { ...valid, techProvider: 'DFX.swiss' },
+      value: { ...valid, techProvider: 'DFX.swiss', supports: [] },
     });
     const gifts = normalizeMapPlace({ ...valid, techProvider: '21.gifts' });
     expect(gifts.ok && gifts.value.techProvider).toBe('21.gifts');
@@ -182,16 +261,21 @@ describe('normalizeMapPlace', () => {
     });
   });
 
-  it('omits an absent or null country and stores a trimmed lowercase code as uppercase', () => {
-    const absent = normalizeMapPlace(valid);
-    expect(absent.ok && !('country' in absent.value)).toBe(true);
-    const nulled = normalizeMapPlace({ ...valid, country: null });
-    expect(nulled.ok && !('country' in nulled.value)).toBe(true);
-    const trimmed = normalizeMapPlace({ ...valid, country: ' ch ' });
-    expect(trimmed).toEqual({ ok: true, value: { ...valid, country: 'CH' } });
-    for (const country of ['CH', 'LI', 'DE', 'AT', 'FR', 'IT', 'PH']) {
-      const result = normalizeMapPlace({ ...valid, country });
-      expect(result).toEqual({ ok: true, value: { ...valid, country } });
+  it('requires a country and stores a trimmed lowercase code as uppercase', () => {
+    expect(normalizeMapPlace({ ...valid, country: undefined })).toEqual({
+      ok: false,
+      error: 'Place country is invalid',
+    });
+    expect(normalizeMapPlace({ ...valid, country: null })).toEqual({
+      ok: false,
+      error: 'Place country is invalid',
+    });
+    const trimmed = normalizeMapPlace({ ...valid, country: ' ch ', postalCode: '8001' });
+    expect(trimmed.ok && trimmed.value.country).toBe('CH');
+    for (const country of ['LI', 'DE', 'AT', 'FR', 'IT', 'PH']) {
+      const postalCode = country === 'LI' ? '9495' : '10115';
+      const result = normalizeMapPlace({ ...valid, country, postalCode });
+      expect(result.ok && result.value.country).toBe(country);
     }
   });
 
@@ -222,113 +306,65 @@ describe('normalizeMapPlace', () => {
     });
   });
 
-  it('omits an absent or null shop name and trims a present brand', () => {
-    const absent = normalizeMapPlace(valid);
-    expect(absent.ok && !('shopName' in absent.value)).toBe(true);
-    const nulled = normalizeMapPlace({ ...valid, shopName: null });
-    expect(nulled.ok && !('shopName' in nulled.value)).toBe(true);
-    const trimmed = normalizeMapPlace({ ...valid, shopName: ' SPAR ' });
-    expect(trimmed).toEqual({ ok: true, value: { ...valid, shopName: 'SPAR' } });
-    const other = normalizeMapPlace({ ...valid, shopName: 'Migros' });
-    expect(other.ok && other.value.shopName).toBe('Migros');
-    const max = normalizeMapPlace({ ...valid, shopName: 'x'.repeat(40) });
-    expect(max.ok && max.value.shopName).toBe('x'.repeat(40));
-  });
-
-  it('rejects an empty, too long, control, or non-string shop name', () => {
-    expect(normalizeMapPlace({ ...valid, shopName: '' })).toEqual({
+  it('requires shopType SPAR or Others and rejects the old shop name values', () => {
+    const others = normalizeMapPlace({ ...valid, shopType: 'Others' });
+    expect(others.ok && others.value.shopType).toBe('Others');
+    const trimmedSpar = normalizeMapPlace({ ...valid, shopType: ' SPAR ' });
+    expect(trimmedSpar.ok && trimmedSpar.value.shopType).toBe('SPAR');
+    expect(normalizeMapPlace({ ...valid, shopType: 'others' })).toEqual({
       ok: false,
-      error: 'Place shop name is invalid',
+      error: 'Place shop type is invalid',
     });
-    expect(normalizeMapPlace({ ...valid, shopName: ' ' })).toEqual({
+    expect(normalizeMapPlace({ ...valid, shopType: 'Migros' })).toEqual({
       ok: false,
-      error: 'Place shop name is invalid',
+      error: 'Place shop type is invalid',
     });
-    expect(normalizeMapPlace({ ...valid, shopName: 'x'.repeat(41) })).toEqual({
+    expect(normalizeMapPlace({ ...valid, shopType: '' })).toEqual({
       ok: false,
-      error: 'Place shop name is invalid',
+      error: 'Place shop type is invalid',
     });
-    expect(normalizeMapPlace({ ...valid, shopName: 'bad\nname' })).toEqual({
+    expect(normalizeMapPlace({ ...valid, shopType: 1 })).toEqual({
       ok: false,
-      error: 'Place shop name is invalid',
-    });
-    expect(normalizeMapPlace({ ...valid, shopName: 1 })).toEqual({
-      ok: false,
-      error: 'Place shop name is invalid',
+      error: 'Place shop type is invalid',
     });
   });
 
-  it('omits absent or null address parts and ignores a nested address object', () => {
-    const absent = normalizeMapPlace(valid);
-    expect(
-      absent.ok &&
-        !('street' in absent.value) &&
-        !('houseNumber' in absent.value) &&
-        !('postalCode' in absent.value) &&
-        !('city' in absent.value),
-    ).toBe(true);
-    const nulled = normalizeMapPlace({
-      ...valid,
-      street: null,
-      houseNumber: null,
-      postalCode: null,
-      city: null,
-    });
-    expect(
-      nulled.ok &&
-        !('street' in nulled.value) &&
-        !('houseNumber' in nulled.value) &&
-        !('postalCode' in nulled.value) &&
-        !('city' in nulled.value),
-    ).toBe(true);
-    const nested = normalizeMapPlace({
-      ...valid,
-      address: { street: 'Bahnhofstrasse', houseNumber: '1', postalCode: '8001', city: 'Zurich' },
-    });
-    expect(nested).toEqual({ ok: true, value: { ...valid } });
-    expect(nested.ok && !('street' in nested.value) && !('city' in nested.value)).toBe(true);
-  });
-
-  it('stores trimmed address parts, including letters, punctuation, and unicode', () => {
+  it('stores trimmed address parts and a house-number suffix', () => {
     const result = normalizeMapPlace({
       ...valid,
+      country: 'DE',
       street: ' Bahnhofstraße  ',
       houseNumber: ' 12a-B ',
-      postalCode: ' CH-8001 ',
+      postalCode: ' 10115 ',
       city: ' Zürich ',
     });
     expect(result).toEqual({
       ok: true,
       value: {
         ...valid,
+        country: 'DE',
         street: 'Bahnhofstraße',
         houseNumber: '12a-B',
-        postalCode: 'CH-8001',
+        postalCode: '10115',
         city: 'Zürich',
+        supports: [],
       },
     });
-    const max = normalizeMapPlace({
-      ...valid,
-      street: 's'.repeat(120),
-      houseNumber: 'h'.repeat(32),
-      postalCode: 'p'.repeat(16),
-      city: 'c'.repeat(80),
-    });
-    expect(max).toEqual({
-      ok: true,
-      value: {
-        ...valid,
-        street: 's'.repeat(120),
-        houseNumber: 'h'.repeat(32),
-        postalCode: 'p'.repeat(16),
-        city: 'c'.repeat(80),
-      },
-    });
-    const digits = normalizeMapPlace({ ...valid, postalCode: '8001' });
-    expect(digits).toEqual({ ok: true, value: { ...valid, postalCode: '8001' } });
+    const maxStreet = normalizeMapPlace({ ...valid, street: 's'.repeat(120) });
+    expect(maxStreet.ok && maxStreet.value.street).toBe('s'.repeat(120));
+    const maxCity = normalizeMapPlace({ ...valid, city: `${'c'.repeat(79)}a` });
+    expect(maxCity.ok && maxCity.value.city).toBe(`${'c'.repeat(79)}a`);
+    const house = normalizeMapPlace({ ...valid, houseNumber: '1A' });
+    expect(house.ok && house.value.houseNumber).toBe('1A');
+    const slash = normalizeMapPlace({ ...valid, houseNumber: '12/1' });
+    expect(slash.ok && slash.value.houseNumber).toBe('12/1');
+    const range = normalizeMapPlace({ ...valid, houseNumber: '1–3' });
+    expect(range.ok && range.value.houseNumber).toBe('1–3');
+    const ampersand = normalizeMapPlace({ ...valid, houseNumber: '6&8' });
+    expect(ampersand.ok && ampersand.value.houseNumber).toBe('6&8');
   });
 
-  it('rejects a non-string, blank, too long, or control address part', () => {
+  it('rejects a non-string, blank, too long, or control street', () => {
     expect(normalizeMapPlace({ ...valid, street: 1 })).toEqual({
       ok: false,
       error: 'Place street is invalid',
@@ -357,6 +393,9 @@ describe('normalizeMapPlace', () => {
       ok: false,
       error: 'Place street is invalid',
     });
+  });
+
+  it('rejects an invalid house number', () => {
     expect(normalizeMapPlace({ ...valid, houseNumber: 1 })).toEqual({
       ok: false,
       error: 'Place house number is invalid',
@@ -369,14 +408,25 @@ describe('normalizeMapPlace', () => {
       ok: false,
       error: 'Place house number is invalid',
     });
-    expect(normalizeMapPlace({ ...valid, houseNumber: 'h'.repeat(33) })).toEqual({
+    expect(normalizeMapPlace({ ...valid, houseNumber: 'A1' })).toEqual({
       ok: false,
       error: 'Place house number is invalid',
     });
-    expect(normalizeMapPlace({ ...valid, houseNumber: 'bad\nno' })).toEqual({
+    expect(normalizeMapPlace({ ...valid, houseNumber: '4,'.repeat(20) })).toEqual({
       ok: false,
       error: 'Place house number is invalid',
     });
+    expect(normalizeMapPlace({ ...valid, houseNumber: '4'.repeat(33) })).toEqual({
+      ok: false,
+      error: 'Place house number is invalid',
+    });
+    expect(normalizeMapPlace({ ...valid, houseNumber: '4\n' })).toEqual({
+      ok: false,
+      error: 'Place house number is invalid',
+    });
+  });
+
+  it('rejects an invalid postal code, including CH and LI that are not four digits', () => {
     expect(normalizeMapPlace({ ...valid, postalCode: 1 })).toEqual({
       ok: false,
       error: 'Place postal code is invalid',
@@ -389,14 +439,39 @@ describe('normalizeMapPlace', () => {
       ok: false,
       error: 'Place postal code is invalid',
     });
-    expect(normalizeMapPlace({ ...valid, postalCode: 'p'.repeat(17) })).toEqual({
+    expect(normalizeMapPlace({ ...valid, postalCode: '949' })).toEqual({
       ok: false,
       error: 'Place postal code is invalid',
     });
-    expect(normalizeMapPlace({ ...valid, postalCode: 'bad\nzip' })).toEqual({
+    expect(normalizeMapPlace({ ...valid, postalCode: 'CH-8001' })).toEqual({
       ok: false,
       error: 'Place postal code is invalid',
     });
+    expect(normalizeMapPlace({ ...valid, country: 'CH', postalCode: '800' })).toEqual({
+      ok: false,
+      error: 'Place postal code is invalid',
+    });
+    expect(normalizeMapPlace({ ...valid, country: 'CH', postalCode: '80011' })).toEqual({
+      ok: false,
+      error: 'Place postal code is invalid',
+    });
+    expect(normalizeMapPlace({ ...valid, country: 'LI', postalCode: '94951' })).toEqual({
+      ok: false,
+      error: 'Place postal code is invalid',
+    });
+    expect(normalizeMapPlace({ ...valid, postalCode: '8001\n' })).toEqual({
+      ok: false,
+      error: 'Place postal code is invalid',
+    });
+    expect(normalizeMapPlace({ ...valid, country: 'DE', postalCode: 'A' })).toEqual({
+      ok: false,
+      error: 'Place postal code is invalid',
+    });
+    const other = normalizeMapPlace({ ...valid, country: 'DE', postalCode: 'SW1A 1AA' });
+    expect(other.ok && other.value.postalCode).toBe('SW1A 1AA');
+  });
+
+  it('rejects an invalid city, including a value with no letter', () => {
     expect(normalizeMapPlace({ ...valid, city: 1 })).toEqual({
       ok: false,
       error: 'Place city is invalid',
@@ -417,11 +492,122 @@ describe('normalizeMapPlace', () => {
       ok: false,
       error: 'Place city is invalid',
     });
+    expect(normalizeMapPlace({ ...valid, city: '9495' })).toEqual({
+      ok: false,
+      error: 'Place city is invalid',
+    });
   });
 
-  it('omits supports when absent and stores an empty list when sent', () => {
+  it('requires a longer description and allows a newline', () => {
+    expect(normalizeMapPlace({ ...valid, description: 1 })).toEqual({
+      ok: false,
+      error: 'Place description is invalid',
+    });
+    expect(normalizeMapPlace({ ...valid, description: 'short' })).toEqual({
+      ok: false,
+      error: 'Place description is invalid',
+    });
+    expect(normalizeMapPlace({ ...valid, description: valid.name })).toEqual({
+      ok: false,
+      error: 'Place description is invalid',
+    });
+    expect(normalizeMapPlace({ ...valid, description: valid.name.toLowerCase() })).toEqual({
+      ok: false,
+      error: 'Place description is invalid',
+    });
+    const longName = 'SPAR Triesen supermarket';
+    expect(
+      normalizeMapPlace({ ...valid, name: longName, description: longName.toLowerCase() }),
+    ).toEqual({
+      ok: false,
+      error: 'Place description is invalid',
+    });
+    expect(normalizeMapPlace({ ...valid, name: longName, description: 'x'.repeat(20) })).toEqual({
+      ok: false,
+      error: 'Place description is invalid',
+    });
+    expect(
+      normalizeMapPlace({
+        ...valid,
+        description: `${valid.name} extra`,
+      }),
+    ).toEqual({
+      ok: false,
+      error: 'Place description is invalid',
+    });
+    expect(
+      normalizeMapPlace({
+        ...valid,
+        description: `${DESCRIPTION}\tmore text about the shop.`,
+      }),
+    ).toEqual({
+      ok: false,
+      error: 'Place description is invalid',
+    });
+    const withNewline = normalizeMapPlace({
+      ...valid,
+      description: `${DESCRIPTION}\nSecond line about the checkout.`,
+    });
+    expect(withNewline.ok && withNewline.value.description).toContain('\n');
+    const withCrlf = normalizeMapPlace({
+      ...valid,
+      description: `${DESCRIPTION}\r\nSecond line about the checkout.`,
+    });
+    expect(withCrlf.ok && withCrlf.value.description).toBe(
+      `${DESCRIPTION}\nSecond line about the checkout.`,
+    );
+    const withCr = normalizeMapPlace({
+      ...valid,
+      description: `${DESCRIPTION}\rSecond line about the checkout.`,
+    });
+    expect(withCr.ok && withCr.value.description).toBe(
+      `${DESCRIPTION}\nSecond line about the checkout.`,
+    );
+    const shortName = 'SPAR';
+    const twenty = normalizeMapPlace({
+      ...valid,
+      name: shortName,
+      description: 'd'.repeat(20),
+    });
+    expect(twenty.ok && twenty.value.description).toBe('d'.repeat(20));
+    const thousand = normalizeMapPlace({
+      ...valid,
+      name: shortName,
+      description: 'd'.repeat(1000),
+    });
+    expect(thousand.ok && thousand.value.description).toBe('d'.repeat(1000));
+    expect(
+      normalizeMapPlace({
+        ...valid,
+        description: 'x'.repeat(1001),
+      }),
+    ).toEqual({
+      ok: false,
+      error: 'Place description is invalid',
+    });
+  });
+
+  it('rejects an omitted, null, or undefined required place field', () => {
+    const cases = [
+      ['description', 'Place description is invalid'],
+      ['shopType', 'Place shop type is invalid'],
+      ['street', 'Place street is invalid'],
+      ['houseNumber', 'Place house number is invalid'],
+      ['postalCode', 'Place postal code is invalid'],
+      ['city', 'Place city is invalid'],
+    ] as const;
+    for (const [field, error] of cases) {
+      const omitted: Record<string, unknown> = { ...valid };
+      delete omitted[field];
+      expect(normalizeMapPlace(omitted)).toEqual({ ok: false, error });
+      expect(normalizeMapPlace({ ...valid, [field]: null })).toEqual({ ok: false, error });
+      expect(normalizeMapPlace({ ...valid, [field]: undefined })).toEqual({ ok: false, error });
+    }
+  });
+
+  it('stores an empty supports list when omitted', () => {
     const absent = normalizeMapPlace(valid);
-    expect(absent.ok && !('supports' in absent.value)).toBe(true);
+    expect(absent).toEqual({ ok: true, value: { ...valid, supports: [] } });
     const empty = normalizeMapPlace({ ...valid, supports: [] });
     expect(empty).toEqual({ ok: true, value: { ...valid, supports: [] } });
   });
@@ -579,31 +765,60 @@ describe('normalizeMapPlaceFilter', () => {
     expect(normalizeMapPlaceFilter()).toEqual({ ok: true, value: {} });
   });
 
-  it('uppercases a trimmed country and accepts SPAR or others as shopName', () => {
-    expect(normalizeMapPlaceFilter(' ch ', ' SPAR ', ' Ethereum ', ' dEURO ')).toEqual({
+  it('uppercases a trimmed country and accepts SPAR or Others as shopType', () => {
+    expect(normalizeMapPlaceFilter(' ch ', 'SPAR', undefined, ' Ethereum ', ' dEURO ')).toEqual({
       ok: true,
       value: {
         country: 'CH',
-        shopName: 'SPAR',
+        shopType: 'SPAR',
         blockchain: 'Ethereum',
         asset: 'dEURO',
       },
     });
-    expect(normalizeMapPlaceFilter(undefined, ' others ')).toEqual({
+    expect(normalizeMapPlaceFilter(undefined, ' Others ')).toEqual({
       ok: true,
-      value: { shopName: 'others' },
+      value: { shopType: 'Others' },
     });
-    expect(normalizeMapPlaceFilter(undefined, undefined, ' BinancePay ', ' ckBTC ')).toEqual({
+    expect(
+      normalizeMapPlaceFilter(undefined, undefined, undefined, ' BinancePay ', ' ckBTC '),
+    ).toEqual({
       ok: true,
       value: { blockchain: 'BinancePay', asset: 'ckBTC' },
     });
-    expect(normalizeMapPlaceFilter(undefined, undefined, undefined, 'ZCHF')).toEqual({
+    expect(normalizeMapPlaceFilter(undefined, undefined, undefined, undefined, 'ZCHF')).toEqual({
       ok: true,
       value: { asset: 'ZCHF' },
     });
   });
 
-  it('rejects a bad country, shop name, blockchain, or asset query', () => {
+  it('maps the deprecated shopName alias and rejects a conflict', () => {
+    expect(normalizeMapPlaceFilter(undefined, undefined, ' SPAR ')).toEqual({
+      ok: true,
+      value: { shopType: 'SPAR' },
+    });
+    expect(normalizeMapPlaceFilter(undefined, undefined, ' others ')).toEqual({
+      ok: true,
+      value: { shopType: 'Others' },
+    });
+    expect(normalizeMapPlaceFilter(undefined, 'SPAR', 'SPAR')).toEqual({
+      ok: true,
+      value: { shopType: 'SPAR' },
+    });
+    expect(normalizeMapPlaceFilter(undefined, 'Others', 'others')).toEqual({
+      ok: true,
+      value: { shopType: 'Others' },
+    });
+    expect(normalizeMapPlaceFilter(undefined, 'SPAR', 'others')).toEqual({
+      ok: false,
+      error: 'Place shop type is invalid',
+    });
+    expect(normalizeMapPlaceFilter(undefined, 'Others', 'SPAR')).toEqual({
+      ok: false,
+      error: 'Place shop type is invalid',
+    });
+  });
+
+  it('rejects a bad country, shop type, shop name, blockchain, or asset query', () => {
     expect(normalizeMapPlaceFilter('ZZ')).toEqual({
       ok: false,
       error: 'Place country is invalid',
@@ -612,27 +827,35 @@ describe('normalizeMapPlaceFilter', () => {
       ok: false,
       error: 'Place country is invalid',
     });
-    expect(normalizeMapPlaceFilter(undefined, 'Migros')).toEqual({
+    expect(normalizeMapPlaceFilter(undefined, 'others')).toEqual({
+      ok: false,
+      error: 'Place shop type is invalid',
+    });
+    expect(normalizeMapPlaceFilter(undefined, undefined, 'Migros')).toEqual({
       ok: false,
       error: 'Place shop name is invalid',
     });
-    expect(normalizeMapPlaceFilter(undefined, undefined, 'Frick')).toEqual({
+    expect(normalizeMapPlaceFilter(undefined, undefined, undefined, 'Frick')).toEqual({
       ok: false,
       error: 'Place support is invalid',
     });
-    expect(normalizeMapPlaceFilter(undefined, undefined, 'ethereum')).toEqual({
+    expect(normalizeMapPlaceFilter(undefined, undefined, undefined, 'ethereum')).toEqual({
       ok: false,
       error: 'Place support is invalid',
     });
-    expect(normalizeMapPlaceFilter(undefined, undefined, undefined, 'Ethereum/ZCHF')).toEqual({
+    expect(
+      normalizeMapPlaceFilter(undefined, undefined, undefined, undefined, 'Ethereum/ZCHF'),
+    ).toEqual({
       ok: false,
       error: 'Place support is invalid',
     });
-    expect(normalizeMapPlaceFilter(undefined, undefined, 'KucoinPay', 'USDC.e')).toEqual({
-      ok: false,
-      error: 'Place support is invalid',
-    });
-    expect(normalizeMapPlaceFilter(undefined, undefined, undefined, 'USDbC')).toEqual({
+    expect(normalizeMapPlaceFilter(undefined, undefined, undefined, 'KucoinPay', 'USDC.e')).toEqual(
+      {
+        ok: false,
+        error: 'Place support is invalid',
+      },
+    );
+    expect(normalizeMapPlaceFilter(undefined, undefined, undefined, undefined, 'USDbC')).toEqual({
       ok: false,
       error: 'Place support is invalid',
     });
@@ -896,73 +1119,91 @@ describe('normalizePlaceTransaction', () => {
 });
 
 describe('toPublicMapPlace', () => {
-  it('omits the caller id and payment methods', () => {
+  it('omits the caller id and payment methods and derives shopName from shopType', () => {
     const stored: StoredMapPlace = {
-      ...valid,
+      origin: 'dfx',
+      externalId: 'store-1',
+      name: 'SPAR Triesen',
+      description: DESCRIPTION,
+      lat: 47.37,
+      lon: 8.54,
+      category: 'groceries',
+      paymentMethods: 'lightning',
       techProvider: 'DFX.swiss',
-      id: 'id-1',
-      createdAt: '2026-09-26T00:00:00.000Z',
-      country: null,
-      street: null,
-      houseNumber: null,
-      postalCode: null,
-      city: null,
-      shopName: null,
+      shopType: 'Others',
+      street: 'Maschlinastrasse',
+      houseNumber: '4',
+      postalCode: '9495',
+      city: 'Triesen',
+      country: 'LI',
       supports: [],
       lastTransactionAt: null,
       activity: 'none',
+      id: 'id-1',
+      createdAt: '2026-09-26T00:00:00.000Z',
     };
     expect(toPublicMapPlace(stored)).toEqual({
       id: 'id-1',
       origin: 'dfx',
-      name: 'SPAR',
+      name: 'SPAR Triesen',
+      description: DESCRIPTION,
       lat: 47.37,
       lon: 8.54,
       category: 'groceries',
       techProvider: 'DFX.swiss',
-      country: null,
-      street: null,
-      houseNumber: null,
-      postalCode: null,
-      city: null,
+      shopType: 'Others',
       shopName: null,
+      country: 'LI',
+      street: 'Maschlinastrasse',
+      houseNumber: '4',
+      postalCode: '9495',
+      city: 'Triesen',
       supports: [],
       activity: 'none',
     });
   });
 
-  it('returns country, address parts, shop name, and a copy of supports', () => {
+  it('returns SPAR shopName when shopType is SPAR and copies supports', () => {
     const supports = [{ blockchain: 'Ethereum', asset: 'ZCHF' }];
     const stored: StoredMapPlace = {
-      ...valid,
+      origin: 'dfx',
+      externalId: 'store-1',
+      name: 'SPAR Triesen',
+      description: DESCRIPTION,
+      lat: 47.37,
+      lon: 8.54,
+      category: 'groceries',
+      paymentMethods: 'lightning',
       techProvider: 'DFX.swiss',
-      id: 'id-1',
-      createdAt: '2026-09-26T00:00:00.000Z',
-      country: 'CH',
-      street: 'Bahnhofstrasse',
-      houseNumber: '12',
-      postalCode: '8001',
-      city: 'Zürich',
-      shopName: 'SPAR',
+      shopType: 'SPAR',
+      street: 'Maschlinastrasse',
+      houseNumber: '4',
+      postalCode: '9495',
+      city: 'Triesen',
+      country: 'LI',
       supports,
       lastTransactionAt: null,
       activity: 'daily',
+      id: 'id-1',
+      createdAt: '2026-09-26T00:00:00.000Z',
     };
     const publicPlace = toPublicMapPlace(stored);
     expect(publicPlace).toEqual({
       id: 'id-1',
       origin: 'dfx',
-      name: 'SPAR',
+      name: 'SPAR Triesen',
+      description: DESCRIPTION,
       lat: 47.37,
       lon: 8.54,
       category: 'groceries',
       techProvider: 'DFX.swiss',
-      country: 'CH',
-      street: 'Bahnhofstrasse',
-      houseNumber: '12',
-      postalCode: '8001',
-      city: 'Zürich',
+      shopType: 'SPAR',
       shopName: 'SPAR',
+      country: 'LI',
+      street: 'Maschlinastrasse',
+      houseNumber: '4',
+      postalCode: '9495',
+      city: 'Triesen',
       supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
       activity: 'daily',
     });

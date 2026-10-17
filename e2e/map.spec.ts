@@ -1,15 +1,33 @@
 import { execFileSync } from 'node:child_process';
 import { expect, test } from '@playwright/test';
 
-const body = {
-  origin: 'dfx',
-  externalId: 'e2e-store',
-  name: 'SPAR',
-  lat: 47.37,
-  lon: 8.54,
-  category: 'groceries',
-  paymentMethods: 'lightning',
-};
+const DESCRIPTION =
+  'SPAR supermarket in Triesen. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
+
+const OTHER_DESCRIPTION =
+  'Neighbourhood grocery in Zürich. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
+
+function completePlace(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    origin: 'dfx',
+    externalId: 'e2e-store',
+    name: 'SPAR Triesen',
+    description: DESCRIPTION,
+    lat: 47.37,
+    lon: 8.54,
+    category: 'groceries',
+    paymentMethods: 'lightning',
+    shopType: 'SPAR',
+    street: 'Maschlinastrasse',
+    houseNumber: '4',
+    postalCode: '9495',
+    city: 'Triesen',
+    country: 'LI',
+    ...overrides,
+  };
+}
+
+const body = completePlace();
 
 test('Function: welcomeRoutes — GET / is a welcome page', async ({ request }) => {
   const res = await request.get('/');
@@ -39,22 +57,16 @@ test('Function: mapRoutes — GET /map/places is public', async ({ request }) =>
 test('Function: normalizePlaceOrigin — GET /map/places?origin=spar filters the list', async ({
   request,
 }) => {
-  const sparPin = {
+  const sparPin = completePlace({
     origin: 'spar',
     externalId: 'e2e-origin-spar',
     name: 'Origin SPAR Pin',
-    lat: 47.37,
-    lon: 8.54,
-    category: 'groceries',
-  };
-  const otherPin = {
+  });
+  const otherPin = completePlace({
     origin: 'dfx',
     externalId: 'e2e-origin-other',
     name: 'Origin Other Pin',
-    lat: 47.37,
-    lon: 8.54,
-    category: 'groceries',
-  };
+  });
   expect(
     (
       await request.post('/map/places', {
@@ -105,7 +117,7 @@ test('Function: normalizeMapPlace — POST /map/places creates one pin', async (
 test('Function: toPublicMapPlace — the list hides the caller id', async ({ request }) => {
   const created = await request.post('/map/places', {
     headers: { Authorization: 'Bearer e2e-ingest' },
-    data: { ...body, externalId: 'e2e-public' },
+    data: completePlace({ externalId: 'e2e-public' }),
   });
   expect(created.ok()).toBe(true);
   const res = await request.get('/map/places');
@@ -114,29 +126,24 @@ test('Function: toPublicMapPlace — the list hides the caller id', async ({ req
   expect(
     json.places.every(
       (row) =>
-        Object.prototype.hasOwnProperty.call(row, 'street') &&
-        Object.prototype.hasOwnProperty.call(row, 'houseNumber') &&
-        Object.prototype.hasOwnProperty.call(row, 'postalCode') &&
-        Object.prototype.hasOwnProperty.call(row, 'city'),
+        typeof row['description'] === 'string' &&
+        (row['shopType'] === 'SPAR' || row['shopType'] === 'Others') &&
+        (row['shopName'] === 'SPAR' || row['shopName'] === null) &&
+        typeof row['street'] === 'string' &&
+        typeof row['houseNumber'] === 'string' &&
+        typeof row['postalCode'] === 'string' &&
+        typeof row['city'] === 'string' &&
+        typeof row['country'] === 'string',
     ),
   ).toBe(true);
   const createdPin = json.places.find((row) => row['id'] !== undefined);
   expect(createdPin).toBeDefined();
-  expect(
-    json.places.some(
-      (row) =>
-        row['street'] === null &&
-        row['houseNumber'] === null &&
-        row['postalCode'] === null &&
-        row['city'] === null,
-    ),
-  ).toBe(true);
 });
 
 test('Function: SqliteMapPlaceStore — the created pin is listed', async ({ request }) => {
   const created = await request.post('/map/places', {
     headers: { Authorization: 'Bearer e2e-ingest' },
-    data: { ...body, externalId: 'e2e-listed', name: 'Listed SPAR' },
+    data: completePlace({ externalId: 'e2e-listed', name: 'Listed SPAR' }),
   });
   expect(created.ok()).toBe(true);
   const res = await request.get('/map/places');
@@ -164,28 +171,31 @@ test('Function: pushMapPlace — default boot does not require a map token', asy
 });
 
 test('Function: normalizeMapPlaceFilter — filters one row', async ({ request }) => {
-  const sparPin = {
+  const sparPin = completePlace({
     origin: 'dfx',
     externalId: 'e2e-filter-spar-ch',
     name: 'Filter SPAR CH',
-    lat: 47.37,
-    lon: 8.54,
-    category: 'groceries',
     country: 'CH',
-    shopName: 'SPAR',
+    postalCode: '8001',
+    city: 'Zürich',
+    street: 'Bahnhofstrasse',
+    houseNumber: '12',
+    shopType: 'SPAR',
     supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
-  };
-  const otherPin = {
+  });
+  const otherPin = completePlace({
     origin: 'dfx',
     externalId: 'e2e-filter-other',
     name: 'Filter Other Pin',
-    lat: 47.37,
-    lon: 8.54,
-    category: 'groceries',
+    description: OTHER_DESCRIPTION,
     country: 'DE',
-    shopName: 'Migros',
+    postalCode: '10115',
+    city: 'Berlin',
+    street: 'Other Street',
+    houseNumber: '9',
+    shopType: 'Others',
     supports: [{ blockchain: 'Bitcoin', asset: 'BTC' }],
-  };
+  });
   expect(
     (
       await request.post('/map/places', {
@@ -204,21 +214,28 @@ test('Function: normalizeMapPlaceFilter — filters one row', async ({ request }
   ).toBe(201);
 
   const filtered = await request.get(
-    '/map/places?shopName=SPAR&country=CH&blockchain=Ethereum&asset=ZCHF',
+    '/map/places?shopType=SPAR&country=CH&blockchain=Ethereum&asset=ZCHF',
   );
   expect(filtered.status()).toBe(200);
   const listed = (await filtered.json()) as { places: Array<{ name: string }> };
   expect(listed.places.some((row) => row.name === 'Filter SPAR CH')).toBe(true);
   expect(listed.places.some((row) => row.name === 'Filter Other Pin')).toBe(false);
 
+  const alias = await request.get('/map/places?shopName=others');
+  expect(alias.status()).toBe(200);
+  const aliasJson = (await alias.json()) as { places: Array<{ name: string }> };
+  expect(aliasJson.places.some((row) => row.name === 'Filter Other Pin')).toBe(true);
+
   const filters = await request.get('/map/filters');
   expect(filters.status()).toBe(200);
   const filterJson = (await filters.json()) as {
+    shopTypes: string[];
     shopNames: string[];
     countries: string[];
     blockchains: string[];
     assets: string[];
   };
+  expect(filterJson.shopTypes).toEqual(['SPAR', 'Others']);
   expect(filterJson.shopNames).toEqual(['SPAR', 'others']);
   expect(filterJson.countries).toContain('CH');
   expect(filterJson.blockchains).toContain('Ethereum');
@@ -226,18 +243,14 @@ test('Function: normalizeMapPlaceFilter — filters one row', async ({ request }
 });
 
 test('Function: SqliteMapPlaceStore — a pair is one support row', async ({ request }) => {
-  const pin = {
-    origin: 'dfx',
+  const pin = completePlace({
     externalId: 'e2e-split-pair',
     name: 'Split Pair Pin',
-    lat: 47.37,
-    lon: 8.54,
-    category: 'groceries',
     supports: [
       { blockchain: 'Polygon', asset: 'ZCHF' },
       { blockchain: 'Ethereum', asset: 'ETH' },
     ],
-  };
+  });
   expect(
     (
       await request.post('/map/places', {
@@ -262,14 +275,11 @@ test('Function: SqliteMapPlaceStore — a pair is one support row', async ({ req
 test('Function: normalizeMapPlaceKey — PUT updates a pin and DELETE removes it', async ({
   request,
 }) => {
-  const pin = {
-    origin: 'dfx',
+  const pin = completePlace({
     externalId: 'e2e-provider',
     name: 'Omitted Label Cafe',
-    lat: 47.37,
-    lon: 8.54,
     category: 'cafe',
-  };
+  });
   const created = await request.post('/map/places', {
     headers: { Authorization: 'Bearer e2e-ingest' },
     data: pin,
@@ -290,18 +300,18 @@ test('Function: normalizeMapPlaceKey — PUT updates a pin and DELETE removes it
   });
   expect(renamed.status()).toBe(200);
 
-  const keepProvider = await request.put('/map/places', {
+  const resetProvider = await request.put('/map/places', {
     headers: { Authorization: 'Bearer e2e-ingest' },
     data: { ...pin, name: 'Updated Label Cafe' },
   });
-  expect(keepProvider.status()).toBe(200);
+  expect(resetProvider.status()).toBe(200);
 
   const afterPut = (await (await request.get('/map/places')).json()) as {
     places: Array<{ name: string; techProvider: string }>;
   };
   expect(
     afterPut.places.some(
-      (row) => row.name === 'Updated Label Cafe' && row.techProvider === '21.gifts',
+      (row) => row.name === 'Updated Label Cafe' && row.techProvider === 'DFX.swiss',
     ),
   ).toBe(true);
 
@@ -325,24 +335,21 @@ test('Function: normalizeMapPlaceKey — PUT updates a pin and DELETE removes it
   expect(await again.json()).toEqual({ deleted: false });
 });
 
-test('Function: SqliteMapPlaceStore — an upsert that omits country keeps it', async ({
+test('Function: SqliteMapPlaceStore — PUT replaces every field of an existing pin', async ({
   request,
 }) => {
-  const pin = {
-    origin: 'dfx',
+  const pin = completePlace({
     externalId: 'e2e-keep-country',
     name: 'Keep Country Pin',
-    lat: 47.37,
-    lon: 8.54,
     category: 'cafe',
     country: 'CH',
     street: 'Bahnhofstrasse',
     houseNumber: '12',
     postalCode: '8001',
     city: 'Zürich',
-    shopName: 'SPAR',
+    shopType: 'SPAR',
     supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
-  };
+  });
   expect(
     (
       await request.post('/map/places', {
@@ -355,11 +362,12 @@ test('Function: SqliteMapPlaceStore — an upsert that omits country keeps it', 
   const createdList = (await (await request.get('/map/places')).json()) as {
     places: Array<{
       name: string;
-      country: string | null;
-      street: string | null;
-      houseNumber: string | null;
-      postalCode: string | null;
-      city: string | null;
+      country: string;
+      street: string;
+      houseNumber: string;
+      postalCode: string;
+      city: string;
+      shopType: string;
       shopName: string | null;
       supports: Array<{ blockchain: string; asset: string }>;
     }>;
@@ -370,62 +378,59 @@ test('Function: SqliteMapPlaceStore — an upsert that omits country keeps it', 
   expect(created?.houseNumber).toBe('12');
   expect(created?.postalCode).toBe('8001');
   expect(created?.city).toBe('Zürich');
+  expect(created?.shopType).toBe('SPAR');
   expect(created?.shopName).toBe('SPAR');
-
-  const renamed = await request.put('/map/places', {
-    headers: { Authorization: 'Bearer e2e-ingest' },
-    data: {
-      origin: 'dfx',
-      externalId: 'e2e-keep-country',
-      name: 'Keep Country Renamed',
-      lat: 47.37,
-      lon: 8.54,
-      category: 'cafe',
-    },
-  });
-  expect(renamed.status()).toBe(200);
-
-  const omittedList = (await (await request.get('/map/places')).json()) as {
-    places: Array<{
-      name: string;
-      country: string | null;
-      street: string | null;
-      houseNumber: string | null;
-      postalCode: string | null;
-      city: string | null;
-      shopName: string | null;
-      supports: Array<{ blockchain: string; asset: string }>;
-    }>;
-  };
-  const omitted = omittedList.places.find((row) => row.name === 'Keep Country Renamed');
-  expect(omitted?.country).toBe('CH');
-  expect(omitted?.street).toBe('Bahnhofstrasse');
-  expect(omitted?.houseNumber).toBe('12');
-  expect(omitted?.postalCode).toBe('8001');
-  expect(omitted?.city).toBe('Zürich');
-  expect(omitted?.shopName).toBeNull();
-  expect(omitted?.supports).toEqual([{ blockchain: 'Ethereum', asset: 'ZCHF' }]);
 
   const replaced = await request.put('/map/places', {
     headers: { Authorization: 'Bearer e2e-ingest' },
-    data: {
-      origin: 'dfx',
+    data: completePlace({
       externalId: 'e2e-keep-country',
       name: 'Keep Country Renamed',
-      lat: 47.37,
-      lon: 8.54,
+      description: OTHER_DESCRIPTION,
       category: 'cafe',
       country: 'DE',
-    },
+      street: 'Other Street',
+      houseNumber: '99',
+      postalCode: '10115',
+      city: 'Berlin',
+      shopType: 'Others',
+      supports: [],
+    }),
   });
   expect(replaced.status()).toBe(200);
 
   const replacedList = (await (await request.get('/map/places')).json()) as {
-    places: Array<{ name: string; country: string | null; shopName: string | null }>;
+    places: Array<{
+      name: string;
+      country: string;
+      street: string;
+      shopType: string;
+      shopName: string | null;
+      supports: Array<{ blockchain: string; asset: string }>;
+      techProvider: string;
+    }>;
   };
   const updated = replacedList.places.find((row) => row.name === 'Keep Country Renamed');
   expect(updated?.country).toBe('DE');
+  expect(updated?.street).toBe('Other Street');
+  expect(updated?.shopType).toBe('Others');
   expect(updated?.shopName).toBeNull();
+  expect(updated?.supports).toEqual([]);
+  expect(updated?.techProvider).toBe('DFX.swiss');
+
+  const omitted = await request.put('/map/places', {
+    headers: { Authorization: 'Bearer e2e-ingest' },
+    data: {
+      origin: 'dfx',
+      externalId: 'e2e-keep-country',
+      name: 'Keep Country Renamed',
+      lat: 47.37,
+      lon: 8.54,
+      category: 'cafe',
+    },
+  });
+  expect(omitted.status()).toBe(400);
+  expect(await omitted.json()).toEqual({ error: 'Place country is invalid' });
 
   const deleted = await request.delete('/map/places', {
     headers: { Authorization: 'Bearer e2e-ingest' },
@@ -435,19 +440,19 @@ test('Function: SqliteMapPlaceStore — an upsert that omits country keeps it', 
   expect(await deleted.json()).toEqual({ deleted: true });
 });
 
-test('Function: SqliteMapPlaceStore — omitted address parts stay stored', async ({ request }) => {
-  const pin = {
-    origin: 'dfx',
+test('Function: SqliteMapPlaceStore — a rejected PUT leaves the stored pin unchanged', async ({
+  request,
+}) => {
+  const pin = completePlace({
     externalId: 'e2e-keep-address',
     name: 'Keep Address Pin',
-    lat: 47.37,
-    lon: 8.54,
     category: 'cafe',
     street: 'Bahnhofstrasse',
     houseNumber: '12',
     postalCode: '8001',
     city: 'Zürich',
-  };
+    country: 'CH',
+  });
   expect(
     (
       await request.post('/map/places', {
@@ -461,10 +466,10 @@ test('Function: SqliteMapPlaceStore — omitted address parts stay stored', asyn
     headers: { Authorization: 'Bearer e2e-ingest' },
     data: {
       ...pin,
-      street: 'Other Street',
-      houseNumber: '99',
-      postalCode: '10115',
-      city: 'Berlin',
+      street: 'Spitalgasse',
+      houseNumber: '7',
+      postalCode: '3011',
+      city: 'Bern',
     },
   });
   expect(again.status()).toBe(200);
@@ -472,10 +477,10 @@ test('Function: SqliteMapPlaceStore — omitted address parts stay stored', asyn
   const afterInsert = (await (await request.get('/map/places')).json()) as {
     places: Array<{
       name: string;
-      street: string | null;
-      houseNumber: string | null;
-      postalCode: string | null;
-      city: string | null;
+      street: string;
+      houseNumber: string;
+      postalCode: string;
+      city: string;
     }>;
   };
   const stored = afterInsert.places.find((row) => row.name === 'Keep Address Pin');
@@ -494,10 +499,10 @@ test('Function: SqliteMapPlaceStore — omitted address parts stay stored', asyn
   const afterBad = (await (await request.get('/map/places')).json()) as {
     places: Array<{
       name: string;
-      street: string | null;
-      houseNumber: string | null;
-      postalCode: string | null;
-      city: string | null;
+      street: string;
+      houseNumber: string;
+      postalCode: string;
+      city: string;
     }>;
   };
   const unchanged = afterBad.places.find((row) => row.name === 'Keep Address Pin');
@@ -508,24 +513,31 @@ test('Function: SqliteMapPlaceStore — omitted address parts stay stored', asyn
 
   const replaced = await request.put('/map/places', {
     headers: { Authorization: 'Bearer e2e-ingest' },
-    data: { ...pin, name: 'Keep Address Pin', street: 'Limmatquai' },
+    data: {
+      ...pin,
+      name: 'Keep Address Pin',
+      street: 'Limmatquai',
+      houseNumber: '4',
+      postalCode: '8400',
+      city: 'Winterthur',
+    },
   });
   expect(replaced.status()).toBe(200);
 
   const afterReplace = (await (await request.get('/map/places')).json()) as {
     places: Array<{
       name: string;
-      street: string | null;
-      houseNumber: string | null;
-      postalCode: string | null;
-      city: string | null;
+      street: string;
+      houseNumber: string;
+      postalCode: string;
+      city: string;
     }>;
   };
   const updated = afterReplace.places.find((row) => row.name === 'Keep Address Pin');
   expect(updated?.street).toBe('Limmatquai');
-  expect(updated?.houseNumber).toBe('12');
-  expect(updated?.postalCode).toBe('8001');
-  expect(updated?.city).toBe('Zürich');
+  expect(updated?.houseNumber).toBe('4');
+  expect(updated?.postalCode).toBe('8400');
+  expect(updated?.city).toBe('Winterthur');
 
   const deleted = await request.delete('/map/places', {
     headers: { Authorization: 'Bearer e2e-ingest' },
@@ -538,24 +550,22 @@ test('Function: SqliteMapPlaceStore — omitted address parts stay stored', asyn
 test('Function: SqliteMapPlaceStore — limit is applied after the country filter', async ({
   request,
 }) => {
-  const older = {
-    origin: 'dfx',
+  const older = completePlace({
     externalId: 'e2e-limit-ch',
     name: 'Limit Older CH',
-    lat: 47.37,
-    lon: 8.54,
-    category: 'groceries',
     country: 'CH',
-  };
-  const newer = {
-    origin: 'dfx',
+    postalCode: '8001',
+    city: 'Zürich',
+    street: 'Bahnhofstrasse',
+  });
+  const newer = completePlace({
     externalId: 'e2e-limit-de',
     name: 'Limit Newer DE',
-    lat: 47.37,
-    lon: 8.54,
-    category: 'groceries',
     country: 'DE',
-  };
+    postalCode: '10115',
+    city: 'Berlin',
+    street: 'Other Street',
+  });
   expect(
     (
       await request.post('/map/places', {
@@ -590,15 +600,11 @@ test('Function: SqliteMapPlaceStore — limit is applied after the country filte
 test('Function: SqliteMapPlaceStore — delete removes the pin and its support from filters', async ({
   request,
 }) => {
-  const pin = {
-    origin: 'dfx',
+  const pin = completePlace({
     externalId: 'e2e-support-delete',
     name: 'Support Delete Pin',
-    lat: 47.37,
-    lon: 8.54,
-    category: 'groceries',
     supports: [{ blockchain: 'Plasma', asset: 'ONDO' }],
-  };
+  });
   expect(
     (
       await request.post('/map/places', {
@@ -607,15 +613,13 @@ test('Function: SqliteMapPlaceStore — delete removes the pin and its support f
       })
     ).status(),
   ).toBe(201);
-  const keep = {
-    origin: 'dfx',
+  const keep = completePlace({
     externalId: 'e2e-support-keep',
     name: 'Support Keep Pin',
     lat: 46.95,
     lon: 7.44,
-    category: 'groceries',
     supports: [{ blockchain: 'Ethereum', asset: 'dEURO' }],
-  };
+  });
   expect(
     (
       await request.post('/map/places', {
@@ -673,15 +677,11 @@ test('Function: SqliteMapPlaceStore — delete removes the pin and its support f
 test('Function: unstatedPaymentSql — a pin without supports uses the payment-link catalog', async ({
   request,
 }) => {
-  const dfx = {
-    origin: 'dfx',
+  const dfx = completePlace({
     externalId: 'e2e-catalog-dfx',
     name: 'Catalog DFX Pin',
-    lat: 47.37,
-    lon: 8.54,
-    category: 'groceries',
-  };
-  const gifts = {
+  });
+  const gifts = completePlace({
     origin: '21gifts',
     externalId: 'e2e-catalog-gifts',
     name: 'Catalog Gifts Pin',
@@ -689,7 +689,13 @@ test('Function: unstatedPaymentSql — a pin without supports uses the payment-l
     lon: 120.96,
     category: 'shopping',
     techProvider: '21.gifts',
-  };
+    shopType: 'Others',
+    street: 'Santa Bakhita',
+    houseNumber: '1',
+    postalCode: '1011',
+    city: 'Manila',
+    country: 'PH',
+  });
   expect(
     (
       await request.post('/map/places', {
@@ -728,9 +734,10 @@ test('Function: unstatedPaymentSql — a pin without supports uses the payment-l
   expect(await names('asset=dEURO')).toContain('Catalog DFX Pin');
   expect(await names('asset=LINK')).not.toContain('Catalog DFX Pin');
   expect(await names('blockchain=Plasma')).not.toContain('Catalog DFX Pin');
-  expect(await names('shopName=others')).toContain('Catalog DFX Pin');
   expect(await names('shopName=others')).toContain('Catalog Gifts Pin');
-  expect(await names('shopName=SPAR')).not.toContain('Catalog DFX Pin');
+  expect(await names('shopType=SPAR')).toContain('Catalog DFX Pin');
+  expect(await names('shopType=SPAR')).not.toContain('Catalog Gifts Pin');
+  expect(await names('shopName=SPAR')).not.toContain('Catalog Gifts Pin');
 });
 
 test('Function: matchesUnstatedPayment — 21.gifts stays on Lightning and BTC', async ({
@@ -752,6 +759,8 @@ test('Function: publicFilterResponse — filters include the payment-link catalo
   const filters = await request.get('/map/filters');
   expect(filters.status()).toBe(200);
   const json = (await filters.json()) as {
+    shopTypes: string[];
+    shopNames: string[];
     blockchains: string[];
     assets: string[];
     techProviders: Array<{
@@ -761,6 +770,8 @@ test('Function: publicFilterResponse — filters include the payment-link catalo
       pairs: Array<{ blockchain: string; asset: string }>;
     }>;
   };
+  expect(json.shopTypes).toEqual(['SPAR', 'Others']);
+  expect(json.shopNames).toEqual(['SPAR', 'others']);
   expect(json.blockchains).toContain('Lightning');
   expect(json.blockchains).toContain('BinancePay');
   expect(json.blockchains).not.toContain('Sepolia');
@@ -805,14 +816,10 @@ test('Function: isCatalogAsset — catalog asset names are filter queries', asyn
 });
 
 test('Function: placeActivity — a recorded transaction is within7Days', async ({ request }) => {
-  const pin = {
-    origin: 'dfx',
+  const pin = completePlace({
     externalId: 'e2e-activity-recent',
     name: 'Activity Recent Pin',
-    lat: 47.37,
-    lon: 8.54,
-    category: 'groceries',
-  };
+  });
   expect(
     (
       await request.post('/map/places', {
@@ -842,14 +849,10 @@ test('Function: placeActivity — a recorded transaction is within7Days', async 
 });
 
 test('Function: placeActivity — five UTC days in the window are daily', async ({ request }) => {
-  const pin = {
-    origin: 'dfx',
+  const pin = completePlace({
     externalId: 'e2e-activity-daily',
     name: 'Activity Daily Pin',
-    lat: 47.37,
-    lon: 8.54,
-    category: 'groceries',
-  };
+  });
   expect(
     (
       await request.post('/map/places', {
@@ -880,14 +883,10 @@ test('Function: placeActivity — five UTC days in the window are daily', async 
 test('Function: placeActivity — an instant older than 30 days is olderThan30Days', async ({
   request,
 }) => {
-  const pin = {
-    origin: 'dfx',
+  const pin = completePlace({
     externalId: 'e2e-activity-old',
     name: 'Activity Old Pin',
-    lat: 47.37,
-    lon: 8.54,
-    category: 'groceries',
-  };
+  });
   expect(
     (
       await request.post('/map/places', {
@@ -924,7 +923,7 @@ test('Function: normalizePlaceTransaction — a future occurredAt beyond skew is
   expect(await res.json()).toEqual({ error: 'Place transaction time is invalid' });
 });
 
-test('Function: SqliteMapPlaceStore — opening backfills only a null SPAR shop name', () => {
+test('Function: SqliteMapPlaceStore — opening an old schema hides incomplete rows', () => {
   const stdout = execFileSync('bun', ['e2e/sqlite-backfill.ts'], { encoding: 'utf8' });
   expect(stdout.trim()).toBe('ok');
 });
