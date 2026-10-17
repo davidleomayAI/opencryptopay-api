@@ -30,7 +30,7 @@ ed25519 <base64 of the raw 32-byte public key> desk
 ssh-ed25519 <base64 of the OpenSSH wire blob> phone
 ```
 
-A bad line or a repeated name throws before the process listens. The message is `OCP_ADMIN_PUBLIC_KEYS line <N>: malformed key` or `OCP_ADMIN_PUBLIC_KEYS line <N>: duplicate key name`, and `<N>` is the 1-based line number. An unset value, a blank value, or only blanks and comments does not throw.
+A bad line, a repeated name, or the same key material under a second name throws before the process listens. The message is `OCP_ADMIN_PUBLIC_KEYS line <N>: malformed key`, `OCP_ADMIN_PUBLIC_KEYS line <N>: duplicate key name`, or `OCP_ADMIN_PUBLIC_KEYS line <N>: duplicate key`, and `<N>` is the 1-based line number. Duplicate material is rejected because the replay key is the key name plus the nonce. An unset value, a blank value, or only blanks and comments does not throw.
 
 `OCP_ADMIN_HOST` is trimmed and lowercased. It is a hostname, with no scheme and no port. The signature is checked against this configured value. The request `Host` header is not used.
 
@@ -51,7 +51,7 @@ node scripts/ocp-admin.mjs put places.json --base https://api.example.test --key
 node scripts/ocp-admin.mjs delete fremd shop-1 --base https://api.example.test --key desk
 ```
 
-`--key` is the key name, not a path. The signed host is the hostname of `--base`, which must equal `OCP_ADMIN_HOST`. `list` signs `GET /admin/places`. `put` reads a JSON array and signs one `PUT /admin/places` per element. `delete` signs `DELETE /admin/places` with `origin` and `externalId`. The CLI sends a fresh nonce with every request. `delete` prints `missing <externalId>` and exits with status 1 when no pin had that origin and external id.
+`--key` is the key name, not a path. A CLI key name must not start with `-`. The signed host is the hostname of `--base`, which must equal `OCP_ADMIN_HOST`. `list` signs `GET /admin/places`. `put` reads a JSON array and signs one `PUT /admin/places` per element. `delete` signs `DELETE /admin/places` with `origin` and `externalId`. The CLI sends a fresh nonce with every request. `delete` prints `missing <externalId>` and exits with status 1 when no pin had that origin and external id.
 
 ## Branches
 

@@ -144,7 +144,7 @@
 
 - **Purpose:** Parse `OCP_ADMIN_PUBLIC_KEYS` into the devices allowed to call `/admin`. The value is split on `\n` or `\r\n`. A blank line is skipped. A line whose first non-whitespace character is `#` is a comment and is skipped. Every other line is three fields: `ed25519`, the base64 of the raw 32-byte public key, and a name, or `ssh-ed25519`, the base64 of the OpenSSH wire blob, and a name. The wire blob is a uint32 length, the text `ssh-ed25519`, a uint32 length, and the 32-byte key, and nothing after that. The name matches `^[A-Za-z0-9._@-]{1,64}$` and is unique. Base64 may be padded or unpadded.
 - **Inputs:** The environment string. Line numbers are 1-based and count every line, including blanks and comments.
-- **Returns / side effects:** The keys in file order. Empty when every line is blank or a comment. A bad line throws `OCP_ADMIN_PUBLIC_KEYS line <N>: malformed key`. A repeated name throws `OCP_ADMIN_PUBLIC_KEYS line <N>: duplicate key name`. Nothing is returned when it throws. No I/O.
+- **Returns / side effects:** The keys in file order. Empty when every line is blank or a comment. A bad line throws `OCP_ADMIN_PUBLIC_KEYS line <N>: malformed key`. A repeated name throws `OCP_ADMIN_PUBLIC_KEYS line <N>: duplicate key name`. The same key material under a second name throws `OCP_ADMIN_PUBLIC_KEYS line <N>: duplicate key`, because the replay key is the key name plus the nonce. Nothing is returned when it throws. No I/O.
 - **Used by:** The process entrypoint before it listens.
 
 ## Function: decodeBase64

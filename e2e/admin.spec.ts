@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { createPrivateKey, sign } from 'node:crypto';
+import { createPrivateKey, createPublicKey, generateKeyPairSync, sign } from 'node:crypto';
 import type { KeyObject } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -174,6 +174,141 @@ test('Function: deletePlace — DELETE /admin/places removes the pin', async ({ 
   });
   expect(res.status()).toBe(200);
   expect(await res.json()).toEqual({ deleted: true });
+});
+
+test('Function: ocp-admin CLI — keygen writes a private 0600 key and prints only the public line', () => {
+  const home = mkdtempSync(join(tmpdir(), 'ocp-admin-home-'));
+  try {
+    const stdout = execFileSync('node', ['scripts/ocp-admin.mjs', 'keygen', 'laptop'], {
+      cwd: REPO_ROOT,
+      env: { ...process.env, HOME: home },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    const publicLine = /^ed25519 ([A-Za-z0-9+/]{43}=) laptop\n$/u.exec(stdout);
+    expect(stdout).toMatch(/^ed25519 [A-Za-z0-9+/]{43}= laptop\n$/u);
+    expect(stdout).not.toContain('PRIVATE KEY');
+
+    const dir = join(home, '.ocp-admin');
+    const file = join(dir, 'laptop.key');
+    expect(statSync(dir).mode & 0o777).toBe(0o700);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+
+    const before = readFileSync(file);
+    const generatedPrivateKey = createPrivateKey({
+      key: before,
+      format: 'pem',
+      type: 'pkcs8',
+    });
+    expect(generatedPrivateKey.asymmetricKeyType).toBe('ed25519');
+    const publicDer = Buffer.from(
+      createPublicKey(generatedPrivateKey).export({ format: 'der', type: 'spki' }),
+    );
+    expect(publicDer.subarray(12).toString('base64')).toBe(publicLine?.[1]);
+
+    let secondKeygenError: unknown;
+    try {
+      execFileSync('node', ['scripts/ocp-admin.mjs', 'keygen', 'laptop'], {
+        cwd: REPO_ROOT,
+        env: { ...process.env, HOME: home },
+        encoding: 'utf8',
+        timeout: 15_000,
+      });
+    } catch (error) {
+      secondKeygenError = error;
+    }
+    expect(secondKeygenError).toBeDefined();
+    expect(
+      typeof secondKeygenError === 'object' &&
+        secondKeygenError !== null &&
+        'status' in secondKeygenError
+        ? secondKeygenError.status
+        : undefined,
+    ).toBe(1);
+    expect(
+      typeof secondKeygenError === 'object' &&
+        secondKeygenError !== null &&
+        'stderr' in secondKeygenError &&
+        typeof secondKeygenError.stderr === 'string'
+        ? secondKeygenError.stderr
+        : '',
+    ).toContain('refusing to overwrite');
+    expect(readFileSync(file).equals(before)).toBe(true);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('Function: ocp-admin CLI — a non-Ed25519 key file is rejected', () => {
+  const home = mkdtempSync(join(tmpdir(), 'ocp-admin-home-'));
+  try {
+    const keyDir = join(home, '.ocp-admin');
+    mkdirSync(keyDir, { mode: 0o700 });
+    const { privateKey: ecPrivateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    writeFileSync(join(keyDir, 'ec.key'), ecPrivateKey.export({ format: 'pem', type: 'pkcs8' }), {
+      mode: 0o600,
+    });
+
+    let wrongTypeError: unknown;
+    try {
+      execFileSync(
+        'node',
+        ['scripts/ocp-admin.mjs', 'list', '--base', 'http://127.0.0.1:3000', '--key', 'ec'],
+        {
+          cwd: REPO_ROOT,
+          env: { ...process.env, HOME: home },
+          encoding: 'utf8',
+          timeout: 15_000,
+        },
+      );
+    } catch (error) {
+      wrongTypeError = error;
+    }
+    expect(wrongTypeError).toBeDefined();
+    expect(
+      typeof wrongTypeError === 'object' && wrongTypeError !== null && 'status' in wrongTypeError
+        ? wrongTypeError.status
+        : undefined,
+    ).toBe(1);
+    expect(
+      typeof wrongTypeError === 'object' &&
+        wrongTypeError !== null &&
+        'stderr' in wrongTypeError &&
+        typeof wrongTypeError.stderr === 'string'
+        ? wrongTypeError.stderr
+        : '',
+    ).toContain('not a PKCS8 Ed25519 key');
+
+    let invalidNameError: unknown;
+    try {
+      execFileSync('node', ['scripts/ocp-admin.mjs', 'keygen', '-bad'], {
+        cwd: REPO_ROOT,
+        env: { ...process.env, HOME: home },
+        encoding: 'utf8',
+        timeout: 15_000,
+      });
+    } catch (error) {
+      invalidNameError = error;
+    }
+    expect(invalidNameError).toBeDefined();
+    expect(
+      typeof invalidNameError === 'object' &&
+        invalidNameError !== null &&
+        'status' in invalidNameError
+        ? invalidNameError.status
+        : undefined,
+    ).toBe(2);
+    expect(
+      typeof invalidNameError === 'object' &&
+        invalidNameError !== null &&
+        'stderr' in invalidNameError &&
+        typeof invalidNameError.stderr === 'string'
+        ? invalidNameError.stderr
+        : '',
+    ).toContain('Usage:');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('Function: ocp-admin CLI — list, put, and delete sign like the server', () => {

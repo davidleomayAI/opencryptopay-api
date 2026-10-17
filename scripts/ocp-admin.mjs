@@ -9,7 +9,7 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-const KEY_NAME = /^[A-Za-z0-9._@-]{1,64}$/u;
+const KEY_NAME = /^[A-Za-z0-9._@][A-Za-z0-9._@-]{0,63}$/u;
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 const ADMIN_PATH = '/admin/places';
 
@@ -20,7 +20,7 @@ function usage() {
   ocp-admin.mjs put <file.json> --base <https://host> --key <name>
   ocp-admin.mjs delete <origin> <externalId> --base <https://host> --key <name>
 
-<name> matches ^[A-Za-z0-9._@-]{1,64}$. The key file is ~/.ocp-admin/<name>.key.
+<name> matches ^[A-Za-z0-9._@][A-Za-z0-9._@-]{0,63}$. The key file is ~/.ocp-admin/<name>.key.
 Exit 2 when the arguments are wrong.
 `);
 }
@@ -74,12 +74,18 @@ function loadPrivateKey(name) {
     process.stderr.write('admin key file is missing\n');
     process.exit(1);
   }
+  let key;
   try {
-    return createPrivateKey({ key: pem, format: 'pem', type: 'pkcs8' });
+    key = createPrivateKey({ key: pem, format: 'pem', type: 'pkcs8' });
   } catch {
     process.stderr.write('admin key file is not a PKCS8 Ed25519 key\n');
     process.exit(1);
   }
+  if (key.asymmetricKeyType !== 'ed25519') {
+    process.stderr.write('admin key file is not a PKCS8 Ed25519 key\n');
+    process.exit(1);
+  }
+  return key;
 }
 
 function endpoint(base, key) {

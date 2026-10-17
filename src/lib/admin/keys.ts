@@ -25,15 +25,18 @@ export type AdminPublicKey = {
  * and nothing after that. `<name>` matches `^[A-Za-z0-9._@-]{1,64}$` and is
  * unique. Base64 may be padded or unpadded.
  *
- * A bad line or a repeated name throws before a key list is returned.
+ * A bad line, a repeated name, or repeated key material throws before a key
+ * list is returned.
  *
  * @param raw - Environment value, split on `\n` or `\r\n`. Line numbers count every line.
  * @returns Allowed keys in file order. Empty when every line is blank or a comment.
- * @throws The message names the 1-based line. `malformed key` or `duplicate key name`.
+ * @throws The message names the 1-based line. `malformed key`, `duplicate key name`, or
+ * `duplicate key`.
  */
 export function parseAdminPublicKeys(raw: string): AdminPublicKey[] {
   const keys: AdminPublicKey[] = [];
   const names = new Set<string>();
+  const material = new Set<string>();
   let lineNumber = 0;
   for (const line of raw.split(/\r?\n/u)) {
     lineNumber += 1;
@@ -45,7 +48,14 @@ export function parseAdminPublicKeys(raw: string): AdminPublicKey[] {
     if (names.has(parsed.name)) {
       throw new Error(`OCP_ADMIN_PUBLIC_KEYS line ${String(lineNumber)}: duplicate key name`);
     }
+    const keyMaterial = Buffer.from(
+      parsed.publicKey.export({ format: 'der', type: 'spki' }),
+    ).toString('hex');
+    if (material.has(keyMaterial)) {
+      throw new Error(`OCP_ADMIN_PUBLIC_KEYS line ${String(lineNumber)}: duplicate key`);
+    }
     names.add(parsed.name);
+    material.add(keyMaterial);
     keys.push(parsed);
   }
   return keys;

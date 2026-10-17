@@ -86,6 +86,22 @@ describe('parseAdminPublicKeys', () => {
     expect(() => parseAdminPublicKeys(text)).toThrow(/line 2/);
   });
 
+  it('rejects duplicate key material under another name', () => {
+    const encoded = b64(rawKey());
+    const text = `ed25519 ${encoded} desk\ned25519 ${encoded} laptop`;
+    expect(() => parseAdminPublicKeys(text)).toThrow(
+      /^OCP_ADMIN_PUBLIC_KEYS line 2: duplicate key$/,
+    );
+  });
+
+  it('rejects duplicate key material in another format', () => {
+    const raw = rawKey();
+    const text = `ed25519 ${b64(raw)} desk\nssh-ed25519 ${b64(sshBlob(raw))} laptop`;
+    expect(() => parseAdminPublicKeys(text)).toThrow(
+      /^OCP_ADMIN_PUBLIC_KEYS line 2: duplicate key$/,
+    );
+  });
+
   it('rejects a key that is not 32 bytes', () => {
     const short = rawKey().subarray(0, 31);
     expect(() => parseAdminPublicKeys(`ed25519 ${b64(short)} desk`)).toThrow(/line 1/);
