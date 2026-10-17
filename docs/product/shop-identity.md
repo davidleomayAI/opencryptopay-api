@@ -108,7 +108,8 @@ New endpoint `PUT /map/places/photos`, same bearer as the other write routes
 - Photos are separate from `PUT /map/places`, so a source does not resend
   megabytes on every text change.
 - Allowed keys: `nostrPubkey`, `photos`; per photo `contentType`, `data`,
-  `caption`. Any other key rejects the request, as in R6.
+  `caption`. Any other key rejects the request, as `POST` and
+  `PUT /map/places` do.
 - The route accepts a body of up to 15 MiB. Larger bodies get **413**
   before any photo is checked, so the guarantee below holds only while each
   photo stays within the 1 MiB rule.
