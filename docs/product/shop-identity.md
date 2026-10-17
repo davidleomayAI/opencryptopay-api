@@ -59,8 +59,8 @@ Every shop must state a NOSTR public key:
   and the memory store's `isCompletePlace` both require it, so such a row
   stays out of every public response, in the same way PR #22 handles the
   other fields. An existing row becomes public once it carries a key and
-  meets R1 to R6, whether the key arrives with a `PUT` or, as described
-  above, with a `POST`.
+  passes the completeness check of PR #22 (R2 to R5), whether the key
+  arrives with a `PUT` or, as described above, with a `POST`.
 
 The npub is not stored. It is `nip19.npubEncode(nostrPubkey)` wherever it is
 shown.
@@ -130,8 +130,9 @@ uploads, so the header rules here are stricter:
 - `contentType` is `image/jpeg`, `image/png` or `image/webp`.
 - `data` is strict base64. The decoded size is at most 1 048 576 bytes.
 - The file type is read from the magic bytes and must equal `contentType`.
-- The markers or chunks must walk cleanly: a JPEG to its `EOI`, a PNG or
-  WebP to the end of the file, with no segment or chunk length past the end.
+- The markers or chunks must walk cleanly: a JPEG to its `EOI`, a PNG to
+  its `IEND`, a WebP to the end of its RIFF size, with no segment or chunk
+  length past the end of the file.
   Otherwise the photo is skipped (`Photo N could not be read`), so metadata
   that cannot be found is never stored.
 - Width and height are read from the file header, which must parse. Each is
@@ -163,11 +164,18 @@ having re-encoded the image, because a phone photo can carry its GPS position:
     through the allow-list above. Cut every byte after the main image's
     `EOI`; this removes appended previews, depth maps and motion-photo
     videos.
-- PNG: drop `eXIf`, `tEXt`, `zTXt`, `iTXt` and `tIME` chunks. PNG and WebP
-  keep no orientation; their width and height are the raw header values.
-- WebP: drop the `EXIF` and `XMP ` chunks, each together with its pad byte
-  when the chunk size is odd, clear the EXIF (`0x08`) and XMP (`0x04`) flags
-  in `VP8X`, and rewrite the RIFF size to the new file length minus 8.
+- PNG, by allow-list: keep `IHDR`, `PLTE`, `IDAT`, `IEND`, `tRNS`, `gAMA`,
+  `cHRM`, `sRGB`, `iCCP`, `cICP`, `sBIT`, `pHYs`, `bKGD`, `acTL`, `fcTL` and
+  `fdAT`; drop every other chunk, which removes `eXIf`, text, time and C2PA
+  chunks. Walk to `IEND` and cut every byte after it.
+- WebP, by allow-list: keep `VP8 `, `VP8L`, `VP8X`, `ALPH`, `ICCP`, `ANIM`
+  and `ANMF`; drop every other chunk, each together with its pad byte when
+  the chunk size is odd, which removes `EXIF`, `XMP ` and C2PA chunks. Walk
+  to the end of the RIFF size and cut every byte after it. Clear the EXIF
+  (`0x08`) and XMP (`0x04`) flags in `VP8X` and rewrite the RIFF size to the
+  new file length minus 8.
+- PNG and WebP keep no orientation; their width and height are the raw
+  header values.
 
 This is a byte-level cut, not a re-encode, so it needs no image library. The
 stored bytes are the stripped bytes.
