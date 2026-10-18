@@ -12,17 +12,19 @@ export const MARKER = '⚠️ 🗄️ Attention: database change';
 
 /**
  * Patterns that mark a changed line as SQL or a database call.
- * Call forms and `PRAGMA` match as written, keyword forms are case-insensitive.
+ * Call forms and schema helpers match as written; `PRAGMA` and keyword forms are case-insensitive.
  * @type {RegExp[]}
  */
 const DATABASE_LINE_PATTERNS = [
   /_SCHEMA_SQL/,
-  /\.exec\(/,
-  /\.query\(/,
-  /\.prepare\(/,
-  /\.run\(/,
+  /\bSqliteMapPlaceStore\b/,
+  /\bPLACE_DB\b/,
+  /\.exec\s*(?:<[^()]*>)?\s*\(/,
+  /(?<!req)\.query\s*(?:<[^()]*>)?\s*\(/,
+  /\.prepare\s*(?:<[^()]*>)?\s*\(/,
+  /\.run\s*(?:<[^()]*>)?\s*\(/,
   /new Database\(/,
-  /PRAGMA/,
+  /\bPRAGMA\b/i,
   /\bSELECT\b.*\bFROM\b/i,
   /\bINSERT\s+INTO\b/i,
   new RegExp(
@@ -46,12 +48,14 @@ const DATABASE_LINE_PATTERNS = [
  */
 const DATABASE_ANCHOR_PATTERNS = [
   /_SCHEMA_SQL/,
-  /\.exec\(/,
-  /\.query\(/,
-  /\.prepare\(/,
-  /\.run\(/,
+  /\bSqliteMapPlaceStore\b/,
+  /\bPLACE_DB\b/,
+  /\.exec\s*(?:<[^()]*>)?\s*\(/,
+  /(?<!req)\.query\s*(?:<[^()]*>)?\s*\(/,
+  /\.prepare\s*(?:<[^()]*>)?\s*\(/,
+  /\.run\s*(?:<[^()]*>)?\s*\(/,
   /new Database\(/,
-  /PRAGMA/,
+  /\bPRAGMA\b/i,
 ];
 
 /**
@@ -64,9 +68,10 @@ function stripVariationSelectors(text) {
 }
 
 /**
- * Remove fenced code blocks. A fence opens on a line of at least three backticks or tildes.
- * It closes only on a line that is just a fence of the same character, at least as long as the
- * opener, so a line such as ```sql does not close a fence. One trailing CR is ignored.
+ * Remove fenced code blocks. A fence opens on a line of at least three backticks or tildes,
+ * including after nested list-item or blockquote prefixes and up to three extra spaces. It closes
+ * only on a line whose prefixed content is just a fence of the same character, at least as long as
+ * the opener, so a line such as ```sql does not close a fence. One trailing CR is ignored.
  * @param {string} text
  * @returns {string}
  */
@@ -75,8 +80,13 @@ function stripFencedCode(text) {
   const kept = [];
   /** @type {{ mark: string, length: number } | null} */
   let open = null;
-  const opener = /^[ \t]{0,3}(`{3,}|~{3,})/;
-  const closer = /^[ \t]{0,3}(`{3,}|~{3,})[ \t]*$/;
+  const listItemPrefix = /[ \t]{0,3}(?:[-*+]|\d+[.)])[ \t]/.source;
+  const blockquotePrefix = /[ \t]{0,3}>[ \t]?/.source;
+  const extraIndent = /[ \t]{0,3}/.source;
+  const containers = `(?:(?:${listItemPrefix})|(?:${blockquotePrefix}))*${extraIndent}`;
+  const fence = /(`{3,}|~{3,})/.source;
+  const opener = new RegExp(`^${containers}${fence}`);
+  const closer = new RegExp(`^${containers}${fence}[ \\t]*$`);
   for (const line of text.split('\n')) {
     const bare = line.endsWith('\r') ? line.slice(0, -1) : line;
     if (open) {

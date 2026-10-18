@@ -132,13 +132,11 @@ export function baseKind(declaredType: string): string {
     .trim();
   // SQLite's first affinity rule: any declared type containing INT is an integer (BIGINT, SMALLINT).
   if (base.includes('INT')) return 'Integer';
-  const decimalNames = ['REAL', 'DOUBLE', 'DOUBLE PRECISION', 'FLOAT', 'NUMERIC', 'DECIMAL'];
-  const decimalPrefixes = ['DOUBLE', 'FLOAT', 'NUMERIC', 'DECIMAL', 'REAL'];
-  if (decimalNames.includes(base) || decimalPrefixes.some((prefix) => base.startsWith(prefix))) {
+  // The remaining SQLite affinity rules also test for a contained word, not a prefix.
+  if (['CHAR', 'CLOB', 'TEXT'].some((word) => base.includes(word))) return 'Free text';
+  if (['REAL', 'FLOA', 'DOUB', 'NUMERIC', 'DECIMAL'].some((word) => base.includes(word))) {
     return 'Decimal';
   }
-  const textPrefixes = ['TEXT', 'VARCHAR', 'CHAR', 'CLOB', 'NCHAR', 'NVARCHAR'];
-  if (textPrefixes.some((prefix) => base.startsWith(prefix))) return 'Free text';
   if (base === 'BLOB') return 'Binary';
   if (base === 'BOOLEAN') return 'Boolean';
   if (base === 'DATE' || base === 'DATETIME' || base === 'TIMESTAMP') return 'Date/time';
@@ -319,7 +317,7 @@ function compareText(left: string, right: string): number {
 }
 
 const CREATE_TABLE_PATTERN =
-  /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?"?([A-Za-z_][A-Za-z0-9_]*)\b"?/gi;
+  /create\s+table\s+(?:if\s+not\s+exists\s+)?"?([A-Za-z_][A-Za-z0-9_]*)\b"?/gi;
 
 /**
  * Collects `.ts` files under `directory`, skipping `__tests__` directories.
@@ -837,12 +835,10 @@ export function resolveEnumColumns(
 ): Map<string, ReadonlySet<string>> {
   const resolved = new Map<string, ReadonlySet<string>>();
   for (const table of tables) {
-    if (!Object.prototype.hasOwnProperty.call(tableTypes, table.name)) {
-      throw new Error(
-        `Table "${table.name}" has no entry in TABLE_TYPES in integration/db-schema-reference.ts - add one (a TypeScript type, or null).`,
-      );
-    }
-    const entry = tableTypes[table.name];
+    // Own keys only: an inherited name such as `constructor` is not a table entry.
+    const entry = Object.prototype.hasOwnProperty.call(tableTypes, table.name)
+      ? tableTypes[table.name]
+      : undefined;
     if (entry === undefined) {
       throw new Error(
         `Table "${table.name}" has no entry in TABLE_TYPES in integration/db-schema-reference.ts - add one (a TypeScript type, or null).`,
@@ -883,7 +879,7 @@ type ForeignKeyListRow = {
   seq: number;
   table: string;
   from: string;
-  to: string;
+  to: string | null;
 };
 
 type IndexListRow = {

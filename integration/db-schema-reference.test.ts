@@ -200,6 +200,9 @@ describe('baseKind / columnKind / camelCase / renderDefault / cardinality / comp
     expect(baseKind('INTEGER')).toBe('Integer');
     expect(baseKind('INT')).toBe('Integer');
     expect(baseKind('BIGINT')).toBe('Integer');
+    expect(baseKind('VARYING CHARACTER(10)')).toBe('Free text');
+    expect(baseKind('NATIVE CHARACTER(70)')).toBe('Free text');
+    expect(baseKind('DOUBLE PRECISION')).toBe('Decimal');
     expect(baseKind('REAL')).toBe('Decimal');
     expect(baseKind('DOUBLE PRECISION')).toBe('Decimal');
     expect(baseKind('FLOAT')).toBe('Decimal');

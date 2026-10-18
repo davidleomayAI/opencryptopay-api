@@ -68,13 +68,16 @@ describe('path triggers', () => {
 describe('patch triggers under src', () => {
   /** @type {Array<[string, string]>} */
   const patterns = [
-    ['_SCHEMA_SQL', '+const q = _SCHEMA_SQL;'],
+    ['MAP_PLACE_SCHEMA_SQL', '+const q = MAP_PLACE_SCHEMA_SQL;'],
+    ['SqliteMapPlaceStore', '+const store = new SqliteMapPlaceStore(dbPath);'],
+    ['PLACE_DB', '+const path = PLACE_DB;'],
     ['.exec(', "+db.exec('PRAGMA foreign_keys = ON');"],
     ['.query(', '+db.query(text);'],
     ['.prepare(', '+db.prepare(text);'],
     ['.run(', '+db.run(text);'],
     ['new Database(', '+const db = new Database(path);'],
     ['PRAGMA', '+const p = "PRAGMA table_info(map_place)";'],
+    ['lowercase pragma', '+const p = "pragma table_info(map_place)";'],
     ['SELECT FROM', '+const q = "select id from map_place";'],
     ['INSERT INTO', '+const q = "INSERT INTO map_place values (1)";'],
     ['UPDATE SET', '+const q = "UPDATE map_place SET name = 1";'],
@@ -100,6 +103,14 @@ describe('patch triggers under src', () => {
       assert.equal(result.ok, false);
     });
   }
+
+  it('triggers when src/index.ts constructs a SqliteMapPlaceStore', () => {
+    const result = evaluate({
+      body: '',
+      files: files('src/index.ts', diffWith('+const store = new SqliteMapPlaceStore(dbPath);')),
+    });
+    assert.deepEqual(result.triggers, ['src/index.ts']);
+  });
 
   it('does not trigger on the removed patterns', () => {
     for (const line of [
@@ -248,6 +259,21 @@ describe('marker visibility', () => {
     assert.equal(isMarkerVisible(body), true);
   });
 
+  it('hides a marker inside a list-item fence', () => {
+    const body = `- \`\`\`text\n  ${MARKER}\n  \`\`\``;
+    assert.equal(isMarkerVisible(body), false);
+  });
+
+  it('hides a marker inside a blockquote fence', () => {
+    const body = `> \`\`\`\`\n> ${MARKER}\n> \`\`\`\``;
+    assert.equal(isMarkerVisible(body), false);
+  });
+
+  it('keeps a marker after a closed list-item fence visible', () => {
+    const body = `- \`\`\`text\n  sample\n  \`\`\`\n${MARKER}`;
+    assert.equal(isMarkerVisible(body), true);
+  });
+
   it('a four-backtick opener is not closed by a three-backtick line', () => {
     const body = `\`\`\`\`\n\`\`\`\n${MARKER}\n\`\`\`\``;
     assert.equal(isMarkerVisible(body), false);
@@ -279,6 +305,19 @@ describe('hunk anchors', () => {
     const patch = '@@ -1,3 +1,3 @@\n const a = 1;\n+  WHERE id = $1\n const b = 2;\n';
     const result = evaluate({ body: '', files: files('src/lib/map/query.ts', patch) });
     assert.deepEqual(result.triggers, []);
+  });
+
+  it('uses OpenCryptoPay schema helpers as anchors', () => {
+    for (const anchor of [
+      'const store = new SqliteMapPlaceStore(dbPath);',
+      'const dbPath = PLACE_DB;',
+      'const schema = MAP_PLACE_SCHEMA_SQL;',
+      'const columns = "pragma table_info(map_place)";',
+    ]) {
+      const patch = `@@ -1,2 +1,3 @@\n ${anchor}\n+const changed = true;\n`;
+      const result = evaluate({ body: '', files: files('src/index.ts', patch) });
+      assert.deepEqual(result.triggers, ['src/index.ts']);
+    }
   });
 
   it('triggers when the anchor and the changed line are in different hunks', () => {
@@ -439,5 +478,26 @@ describe('unclosed hidden regions', () => {
     });
     assert.equal(result.required, true);
     assert.equal(result.ok, false);
+  });
+});
+
+describe('query receivers', () => {
+  it('does not trigger on Hono request query parameters', () => {
+    const result = evaluate({
+      body: '',
+      files: files('src/routes/map.ts', diffWith("+  const country = c.req.query('country');")),
+    });
+    assert.deepEqual(result.triggers, []);
+  });
+
+  it('triggers on a generic db.query<Row>( call', () => {
+    const result = evaluate({
+      body: '',
+      files: files(
+        'src/lib/map/query.ts',
+        diffWith('+  const rows = db.query<PlaceRow>(sql).all();'),
+      ),
+    });
+    assert.deepEqual(result.triggers, ['src/lib/map/query.ts']);
   });
 });
