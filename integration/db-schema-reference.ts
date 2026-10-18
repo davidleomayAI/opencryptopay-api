@@ -455,6 +455,8 @@ function buildTableModel(
   const keyColumns = primaryKeyColumns(columns);
   const soleKey = keyColumns.length === 1 ? keyColumns[0] : undefined;
   const autoIncrement = soleKey !== undefined && soleKey.type.trim().toUpperCase() === 'INTEGER';
+  // A sole `INTEGER PRIMARY KEY` is the rowid: it never holds NULL, although `notnull` reads 0.
+  const rowidAlias = autoIncrement ? soleKey.name : undefined;
   const foreignKeys = [...table.foreignKeys].sort(
     (left, right) => left.id - right.id || left.seq - right.seq,
   );
@@ -484,7 +486,7 @@ function buildTableModel(
         isForeignKey: foreignKeyColumns.has(column.name),
       }),
       dbType: column.type.trim(),
-      nullable: !column.notNull,
+      nullable: !column.notNull && column.name !== rowidAlias,
       defaultText: renderDefault(column.defaultValue),
       references,
     };
@@ -509,16 +511,15 @@ function buildTableModel(
     const source = columns.find((column) => column.name === foreignKey.from);
     if (refColumn === null || source === undefined) continue;
     const alone = (sequencesById.get(foreignKey.id) ?? 0) === 1;
-    // A sole `INTEGER PRIMARY KEY` is the rowid and has no row in `PRAGMA index_list`.
-    const keyColumns = primaryKeyColumns(columns);
-    const soleKey = keyColumns.length === 1 && keyColumns[0]?.name === foreignKey.from;
+    // A sole primary key such as the rowid can have no row in `PRAGMA index_list`.
+    const keyAlone = soleKey?.name === foreignKey.from;
     foreignKeyModels.push({
       table: table.name,
       column: foreignKey.from,
       refTable: foreignKey.refTable,
       refColumn,
-      nullable: !source.notNull,
-      unique: alone && (soleKey || columnAloneUnique(table.indexes, foreignKey.from)),
+      nullable: !source.notNull && source.name !== rowidAlias,
+      unique: alone && (keyAlone || columnAloneUnique(table.indexes, foreignKey.from)),
       identifying: keyColumns.some((column) => column.name === foreignKey.from),
     });
   }

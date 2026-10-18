@@ -438,6 +438,8 @@ describe('readRawSchema', () => {
     const relation = tableModel(model, 'extension').foreignKeys.find((fk) => fk.column === 'id');
     expect(relation?.unique).toBe(true);
     expect(relation?.identifying).toBe(true);
+    expect(relation?.nullable).toBe(false);
+    expect(tableModel(model, 'extension').columns[0]?.nullable).toBe(false);
   });
 });
 
