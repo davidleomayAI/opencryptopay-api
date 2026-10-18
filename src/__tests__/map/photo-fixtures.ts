@@ -116,9 +116,9 @@ export function pngChunk(
   return bytesOf(be32(typed.length - 4), typed, be32(crc32(typed)));
 }
 
-/** IHDR data for an 8-bit RGB image. */
-export function ihdr(width: number, height: number): Uint8Array {
-  return pngChunk('IHDR', bytesOf(be32(width), be32(height), [8, 2, 0, 0, 0]));
+/** IHDR for an 8-bit image of the given colour type (2 is RGB, 3 indexed). */
+export function ihdr(width: number, height: number, colourType = 2): Uint8Array {
+  return pngChunk('IHDR', bytesOf(be32(width), be32(height), [8, colourType, 0, 0, 0]));
 }
 
 /** A PNG: signature, the given chunks, IEND and any trailing bytes. */

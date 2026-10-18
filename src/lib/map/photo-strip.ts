@@ -43,7 +43,7 @@ const PNG_LENGTHS: ReadonlyMap<string, readonly number[]> = new Map([
   ['sBIT', [1, 2, 3, 4]],
   ['bKGD', [1, 2, 6]],
 ]);
-const WEBP_KEEP: ReadonlySet<string> = new Set(['VP8 ', 'VP8L', 'VP8X', 'ALPH']);
+const WEBP_FRAMES: ReadonlySet<string> = new Set(['VP8 ', 'VP8L']);
 
 /** CRC-32 table (polynomial 0xEDB88320), as PNG uses it. */
 const CRC_TABLE: readonly number[] = Array.from({ length: 256 }, (_, n) => {
@@ -72,7 +72,8 @@ function pngChunk(type: Uint8Array, data: Uint8Array): Uint8Array {
   return concat([be32Bytes(data.length), typed, be32Bytes(crc32(typed))]);
 }
 const VP8X_ANIMATION = 0x02;
-const VP8X_CLEAR = 0x20 | 0x08 | 0x04;
+/** The only `VP8X` flag kept: alpha. ICC, EXIF, XMP and the reserved bits are cleared. */
+const VP8X_ALPHA = 0x10;
 const JFIF_ID = [0x4a, 0x46, 0x49, 0x46, 0x00];
 const EXIF_ID = [0x45, 0x78, 0x69, 0x66, 0x00, 0x00];
 const ADOBE_ID = [0x41, 0x64, 0x6f, 0x62, 0x65];
@@ -201,6 +202,17 @@ function isSof(marker: number): boolean {
   return marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
 }
 
+/**
+ * Markers that carry image data or decoding tables: SOFn, DHT, DAC, SOS, DQT,
+ * DNL, DRI, DHP and EXP. Every other marker with a length (JPG, JPGn,
+ * reserved) is dropped.
+ */
+function isImageMarker(marker: number): boolean {
+  return (
+    (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc8) || (marker >= 0xda && marker <= 0xdf)
+  );
+}
+
 /** End of the entropy-coded data that starts at `at`: the next marker other than RSTn. */
 function scanEnd(bytes: Uint8Array, at: number): number {
   let pos = at;
@@ -265,8 +277,8 @@ function stripJpeg(bytes: Uint8Array): StripResult {
         orientation = exifOrientation(content.subarray(EXIF_ID.length));
         exifAt = parts.length;
       }
-    } else if ((marker >= 0xe2 && marker <= 0xef) || marker === 0xfe) {
-      // Dropped: ICC, XMP, MPF, maker data and comments.
+    } else if (!isImageMarker(marker)) {
+      // Dropped: ICC, XMP, MPF, maker data, comments and every unknown marker.
     } else {
       if (isSof(marker) && width === 0) {
         if (length < 8) {
@@ -308,6 +320,10 @@ function stripPng(bytes: Uint8Array): StripResult {
   let pos = 8;
   let width = 0;
   let height = 0;
+  let colourType = 0;
+  let paletteEntries = 0;
+  let afterData = false;
+  const seen = new Set<string>();
   for (;;) {
     if (pos + 12 > bytes.length) {
       return { ok: false, error: 'unreadable' };
@@ -318,12 +334,13 @@ function stripPng(bytes: Uint8Array): StripResult {
     if (end > bytes.length) {
       return { ok: false, error: 'unreadable' };
     }
-    if (pos === 8) {
-      if (type !== 'IHDR' || length !== 13) {
-        return { ok: false, error: 'unreadable' };
-      }
+    if ((pos === 8) !== (type === 'IHDR') || (type === 'IHDR' && length !== 13)) {
+      return { ok: false, error: 'unreadable' };
+    }
+    if (type === 'IHDR') {
       width = be32(bytes, pos + 8);
       height = be32(bytes, pos + 12);
+      colourType = byte(bytes, pos + 17);
     }
     if (type === 'acTL') {
       return { ok: false, error: 'animated' };
@@ -335,17 +352,45 @@ function stripPng(bytes: Uint8Array): StripResult {
       parts.push(pngChunk(bytes.subarray(pos + 4, pos + 8), new Uint8Array(0)));
       break;
     }
-    const lengths = PNG_LENGTHS.get(type);
-    const fits =
-      lengths === undefined ? type !== 'tRNS' || length <= 256 : lengths.includes(length);
-    if (PNG_KEEP.has(type) && fits) {
+    // IHDR and IDAT always count; every other kept chunk only once and before the image data.
+    const keep =
+      type === 'IHDR' ||
+      type === 'IDAT' ||
+      (PNG_KEEP.has(type) &&
+        !afterData &&
+        !seen.has(type) &&
+        pngChunkFits(type, length, colourType, paletteEntries));
+    if (keep) {
       parts.push(
         pngChunk(bytes.subarray(pos + 4, pos + 8), bytes.subarray(pos + 8, pos + 8 + length)),
       );
+      seen.add(type);
     }
+    if (type === 'PLTE' && keep) {
+      paletteEntries = length / 3;
+    }
+    afterData ||= type === 'IDAT';
     pos = end;
   }
   return { ok: true, bytes: concat(parts), width, height };
+}
+
+/**
+ * Whether a kept ancillary PNG chunk has a length the format allows: the fixed
+ * size, and for `tRNS` 2 bytes for grey, 6 for RGB and up to one byte per
+ * palette entry for an indexed image. Grey and RGB with alpha have no `tRNS`.
+ */
+function pngChunkFits(
+  type: string,
+  length: number,
+  colourType: number,
+  paletteEntries: number,
+): boolean {
+  if (type === 'tRNS') {
+    const allowed = colourType === 0 ? 2 : colourType === 2 ? 6 : colourType === 3 ? -1 : 0;
+    return allowed === -1 ? length >= 1 && length <= paletteEntries : length === allowed;
+  }
+  return PNG_LENGTHS.get(type)?.includes(length) ?? true;
 }
 
 /** A WebP chunk rebuilt from its type and declared data, with a zero pad byte when odd. */
@@ -372,6 +417,7 @@ function stripWebp(bytes: Uint8Array): StripResult {
   let pos = 12;
   let canvas: { width: number; height: number } | null = null;
   let frame: { width: number; height: number } | null = null;
+  let alpha = false;
   while (pos < riffEnd) {
     if (pos + 8 > riffEnd) {
       return { ok: false, error: 'unreadable' };
@@ -387,7 +433,7 @@ function stripWebp(bytes: Uint8Array): StripResult {
       return { ok: false, error: 'animated' };
     }
     if (type === 'VP8X') {
-      if (size !== 10) {
+      if (size !== 10 || pos !== 12) {
         return { ok: false, error: 'unreadable' };
       }
       if ((byte(data, 0) & VP8X_ANIMATION) !== 0) {
@@ -395,15 +441,22 @@ function stripWebp(bytes: Uint8Array): StripResult {
       }
       canvas = { width: le24(data, 4) + 1, height: le24(data, 7) + 1 };
       const cleared = data.slice();
-      cleared[0] = byte(cleared, 0) & ~VP8X_CLEAR;
+      cleared.set([byte(data, 0) & VP8X_ALPHA, 0, 0, 0]);
       parts.push(webpChunk(bytes.subarray(pos, pos + 4), cleared));
-    } else if (WEBP_KEEP.has(type)) {
-      if (type === 'VP8 ' && frame === null) {
+    } else if (type === 'ALPH') {
+      // One ALPH, only in the extended format and before the frame.
+      if (canvas !== null && frame === null && !alpha) {
+        parts.push(webpChunk(bytes.subarray(pos, pos + 4), data));
+        alpha = true;
+      }
+    } else if (WEBP_FRAMES.has(type) && frame === null) {
+      // Only the first frame chunk is kept; a later one is never shown.
+      if (type === 'VP8 ') {
         if (size < 10 || !startsWith(data, 3, [0x9d, 0x01, 0x2a])) {
           return { ok: false, error: 'unreadable' };
         }
         frame = { width: le16(data, 6) & 0x3fff, height: le16(data, 8) & 0x3fff };
-      } else if (type === 'VP8L' && frame === null) {
+      } else {
         if (size < 5 || byte(data, 0) !== 0x2f) {
           return { ok: false, error: 'unreadable' };
         }
@@ -465,14 +518,18 @@ export function photoTypeOf(bytes: Uint8Array): PhotoType | null {
 /**
  * Remove metadata from a photo by allow-list and read its displayed size.
  * JPEG keeps a plain JFIF header without thumbnail, a 12-byte Adobe segment,
- * a minimal EXIF orientation when the original held 2 to 8, and every non-APP,
- * non-comment marker up to the main image's EOI. PNG keeps the listed
- * rendering chunks up to IEND, each rebuilt with a fresh CRC; a fixed-size
- * ancillary chunk of another length is dropped and IEND is written empty. WebP
- * keeps `VP8 `, `VP8L`, `VP8X` (exactly 10 bytes) and `ALPH` up to the RIFF
- * end, each rebuilt from its declared size with a zero pad byte, clears the
- * ICC, EXIF and XMP flags and rewrites the RIFF size. Every byte after the end
- * of the image is cut, so no byte outside the image data survives.
+ * a minimal EXIF orientation when the original held 2 to 8, and the image
+ * markers (SOFn, DHT, DAC, SOS with its scan data, DQT, DNL, DRI, DHP, EXP,
+ * TEM, RSTn) up to the main image's EOI; every other marker is dropped. PNG keeps the listed
+ * rendering chunks up to IEND, each rebuilt with a fresh CRC; an ancillary
+ * chunk or PLTE is kept once and only before the first IDAT, one of a length
+ * the format does not allow is dropped, and IEND is written empty. WebP
+ * keeps `VP8X` (first and exactly 10 bytes), one `ALPH` before the frame
+ * and the first `VP8 ` or `VP8L` frame up to the RIFF end, each rebuilt from its declared size with a zero pad byte, keeps only
+ * the alpha flag of `VP8X` with its reserved bytes zeroed and rewrites the
+ * RIFF size. Every byte after the end of the image is cut. No metadata segment
+ * or chunk survives; bytes inside a kept segment, such as DQT or DHT tables,
+ * are copied as they are.
  *
  * @param type - The file type read from the magic bytes.
  * @param bytes - Decoded photo file.

@@ -210,6 +210,23 @@ describe('stripPhotoMetadata JPEG', () => {
     expect(contains(result.bytes, [0xff, 0xd3, 0x56])).toBe(true);
   });
 
+  it('drops JPG, JPGn and reserved markers and keeps DRI', () => {
+    const result = stripped(
+      'image/jpeg',
+      jpeg([
+        DQT,
+        jpegSegment(0xf0, 'hidden f0'),
+        jpegSegment(0xc8, 'hidden c8'),
+        jpegSegment(0x02, 'hidden 02'),
+        jpegSegment(0xdd, [0, 4]),
+        sof(4, 3),
+        scan(),
+      ]),
+    );
+    expect(contains(result.bytes, 'hidden')).toBe(false);
+    expect(contains(result.bytes, [0xff, 0xdd, 0, 4, 0, 4])).toBe(true);
+  });
+
   it('keeps TEM and a stray restart marker as two-byte markers', () => {
     const result = stripped(
       'image/jpeg',
@@ -307,17 +324,62 @@ describe('stripPhotoMetadata PNG', () => {
     expect(contains(result.bytes, 'bKGD')).toBe(true);
   });
 
-  it('keeps a palette and a short tRNS, and rejects a malformed palette', () => {
-    const result = stripped(
+  it('keeps a palette and a tRNS that fits the colour type, and rejects a malformed palette', () => {
+    const indexed = stripped(
       'image/png',
-      png([ihdr(2, 2), pngChunk('PLTE', [1, 2, 3]), pngChunk('tRNS', [0]), pngChunk('IDAT', [1])]),
+      png([
+        ihdr(2, 2, 3),
+        pngChunk('PLTE', [1, 2, 3, 4, 5, 6]),
+        pngChunk('tRNS', [0, 0x7f]),
+        pngChunk('IDAT', [1]),
+      ]),
     );
-    expect(contains(result.bytes, 'PLTE')).toBe(true);
-    expect(contains(result.bytes, 'tRNS')).toBe(true);
+    expect(contains(indexed.bytes, 'PLTE')).toBe(true);
+    expect(contains(indexed.bytes, 'tRNS')).toBe(true);
+    for (const [colourType, trns, kept] of [
+      [3, [0, 0, 0], false],
+      [0, [0, 1], true],
+      [0, [0, 1, 2], false],
+      [2, new Uint8Array(6), true],
+      [2, [0, 1], false],
+      [6, [0, 1], false],
+    ] as const) {
+      const result = stripped(
+        'image/png',
+        png([
+          ihdr(2, 2, colourType),
+          pngChunk('PLTE', [1, 2, 3, 4, 5, 6]),
+          pngChunk('tRNS', trns),
+          pngChunk('IDAT', [1]),
+        ]),
+      );
+      expect(contains(result.bytes, 'tRNS')).toBe(kept);
+    }
     for (const palette of [[1, 2], [1, 2, 3, 4], new Uint8Array(771)]) {
       expect(
         strip('image/png', png([ihdr(2, 2), pngChunk('PLTE', palette), pngChunk('IDAT', [1])])),
       ).toEqual({ ok: false, error: 'unreadable' });
+    }
+  });
+
+  it('keeps each ancillary chunk once and only before the image data, and every IDAT', () => {
+    const result = stripped(
+      'image/png',
+      png([
+        ihdr(2, 2),
+        pngChunk('gAMA', [0, 0, 0, 1]),
+        pngChunk('gAMA', [0, 0, 0, 2]),
+        pngChunk('IDAT', [1]),
+        pngChunk('IDAT', [2]),
+        pngChunk('pHYs', new Uint8Array(9)),
+        pngChunk('PLTE', [1, 2, 3]),
+      ]),
+    );
+    expect(contains(result.bytes, bytesOf('gAMA', [0, 0, 0, 1]))).toBe(true);
+    expect(contains(result.bytes, bytesOf('gAMA', [0, 0, 0, 2]))).toBe(false);
+    expect(contains(result.bytes, bytesOf('IDAT', [2]))).toBe(true);
+    for (const dropped of ['pHYs', 'PLTE']) {
+      expect(contains(result.bytes, dropped)).toBe(false);
     }
   });
 
@@ -336,6 +398,7 @@ describe('stripPhotoMetadata PNG', () => {
       bytesOf(signature, pngChunk('IDAT', [1])),
       bytesOf(signature, pngChunk('IHDR', new Uint8Array(12))),
       bytesOf(signature, ihdr(2, 2), pngChunk('IDAT', [1])),
+      png([ihdr(2, 2), pngChunk('IHDR', 'hidden'), pngChunk('IDAT', [1])]),
     ]) {
       expect(strip('image/png', bytes)).toEqual({ ok: false, error: 'unreadable' });
     }
@@ -354,6 +417,16 @@ describe('stripPhotoMetadata WebP', () => {
     const result = stripped('image/webp', webp([webpChunk('VP8L', vp8l(33, 17))]));
     expect(result).toMatchObject({ width: 33, height: 17 });
     expect(result.bytes.length % 2).toBe(0);
+  });
+
+  it('keeps only the alpha flag of VP8X and zeroes its reserved bytes', () => {
+    const header = vp8x(0xc0 | 0x10 | 0x01, 10, 10);
+    header.set([7, 7, 7], 1);
+    const result = stripped(
+      'image/webp',
+      webp([webpChunk('VP8X', header), webpChunk('VP8 ', vp8(10, 10))]),
+    );
+    expect(result.bytes.subarray(20, 24)).toEqual(new Uint8Array([0x10, 0, 0, 0]));
   });
 
   it('writes the pad byte of an odd-sized chunk as zero', () => {
@@ -393,6 +466,28 @@ describe('stripPhotoMetadata WebP', () => {
       webp([webpChunk('VP8L', vp8l(8, 8)), webpChunk('VP8L', vp8l(2, 2))]),
     );
     expect(result).toMatchObject({ width: 8, height: 8 });
+    expect(result.bytes).toEqual(webp([webpChunk('VP8L', vp8l(8, 8))]));
+  });
+
+  it('keeps one ALPH only after VP8X and before the frame', () => {
+    const simple = stripped(
+      'image/webp',
+      webp([webpChunk('ALPH', 'hidden'), webpChunk('VP8 ', vp8(10, 10))]),
+    );
+    expect(contains(simple.bytes, 'ALPH')).toBe(false);
+    const extended = stripped(
+      'image/webp',
+      webp([
+        webpChunk('VP8X', vp8x(0x10, 10, 10)),
+        webpChunk('ALPH', [1]),
+        webpChunk('ALPH', 'hidden'),
+        webpChunk('VP8 ', vp8(10, 10)),
+        webpChunk('ALPH', 'later'),
+      ]),
+    );
+    expect(contains(extended.bytes, bytesOf('ALPH', [1, 0, 0, 0, 1]))).toBe(true);
+    expect(contains(extended.bytes, 'hidden')).toBe(false);
+    expect(contains(extended.bytes, 'later')).toBe(false);
   });
 
   it('skips an animated WebP', () => {
@@ -414,6 +509,7 @@ describe('stripPhotoMetadata WebP', () => {
       webp([bytesOf('VP8 ', [40, 0, 0, 0], vp8Body)]),
       webp([webpChunk('VP8X', new Uint8Array(6))]),
       webp([webpChunk('VP8X', bytesOf(vp8x(0, 10, 10), 'hidden')), webpChunk('VP8 ', vp8Body)]),
+      webp([webpChunk('VP8 ', vp8Body), webpChunk('VP8X', vp8x(0, 10, 10))]),
       webp([webpChunk('VP8 ', new Uint8Array(10))]),
       webp([webpChunk('VP8 ', [0, 0, 0, 0x9d, 0x01, 0x2a])]),
       webp([webpChunk('VP8L', [0x2f, 0, 0])]),

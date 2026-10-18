@@ -24,8 +24,8 @@ export type AppDeps = {
 };
 
 /**
- * HTTP API. `GET /` is the welcome page. `GET /healthz`, `GET /map/places`, and
- * `GET /map/filters` are public.
+ * HTTP API. `GET /` is the welcome page. `GET /healthz`, `GET /map/places`,
+ * `GET /map/places/{npub}` and `GET /map/filters` are public.
  * `POST /map/places` creates a pin once. `PUT /map/places` updates a pin.
  * `DELETE /map/places` removes a pin. `PUT /map/places/photos` replaces a shop's photos,
  * and `GET /map/photos/{sha256}.{ext}` serves a photo of a listed shop.

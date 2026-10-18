@@ -271,22 +271,35 @@ having re-encoded the image, because a phone photo can carry its GPS position:
     minimal `APP1` EXIF with only that orientation tag and no other IFD
     entry, so portrait photos keep showing upright;
   - walk the markers through the whole image, also between the scans of a
-    progressive JPEG. Keep every marker other than `APPn` and `COM`, among
-    them `SOI`, `SOFn`, `DHT`, `DAC`, `DQT`, `DRI`, `DNL`, `SOS` with its
-    entropy-coded data, `RSTn` and `EOI`. Every `APPn` and `COM` goes
-    through the allow-list above. Cut every byte after the main image's
+    progressive JPEG. Keep only the image markers `SOI`, `SOFn`, `DHT`,
+    `DAC`, `DQT`, `DRI`, `DNL`, `DHP`, `EXP`, `SOS` with its entropy-coded
+    data, `TEM`, `RSTn` and `EOI`; `TEM` and `RSTn` have no length. Every
+    `APPn` and `COM` goes through the allow-list above; every other marker
+    (`JPG`, `JPGn`, reserved) is dropped. Cut every byte after the main image's
     `EOI`; this removes appended previews, depth maps and motion-photo
     videos.
 - PNG, by allow-list: keep `IHDR`, `PLTE`, `IDAT`, `IEND`, `tRNS`, `gAMA`,
   `cHRM`, `sRGB`, `cICP`, `sBIT`, `pHYs` and `bKGD`; drop every other
-  chunk, which removes `eXIf`, `iCCP`, text, time and C2PA chunks. Walk to
-  `IEND` and cut every byte after it.
+  chunk, which removes `eXIf`, `iCCP`, text, time and C2PA chunks. Drop a
+  kept chunk whose length the format fixes when it has another length
+  (`gAMA` 4, `cHRM` 32, `sRGB` 1, `cICP` 4, `pHYs` 9, `sBIT` 1 to 4, `bKGD`
+  1, 2 or 6), and a `tRNS` that does not fit the colour type (2 bytes for
+  grey, 6 for RGB, 1 byte per palette entry at most for indexed, none with
+  alpha). Keep every ancillary chunk and `PLTE` at most once and only before
+  the first `IDAT`. `IHDR` must come first, once, with 13 bytes, and `PLTE`
+  must hold 1 to 256 entries of 3 bytes, otherwise the photo could not be
+  read. Rebuild every kept chunk with a fresh CRC, write `IEND`
+  empty, walk to `IEND` and cut every byte after it.
 - WebP, by allow-list: keep `VP8 `, `VP8L`, `VP8X` and `ALPH`; drop every
   other chunk, each together with its pad byte when the chunk size is odd,
   which removes `EXIF`, `XMP `, `ICCP` and C2PA chunks. Walk to byte 8 plus
-  the RIFF size and cut every byte after it. Clear the ICC (`0x20`), EXIF
-  (`0x08`) and XMP (`0x04`) flags in `VP8X` and rewrite the RIFF size to the
-  new file length minus 8.
+  the RIFF size and cut every byte after it. `VP8X` must be the first chunk
+  and exactly 10 bytes, otherwise the photo could not be read. Keep only the
+  first frame chunk, and one `ALPH` only after `VP8X` and before the frame. Rebuild every kept chunk
+  from its declared size with a zero pad byte, keep only the alpha flag
+  (`0x10`) of `VP8X`, which clears ICC (`0x20`), EXIF (`0x08`), XMP (`0x04`)
+  and the reserved bits, zero its three reserved bytes, and rewrite the RIFF
+  size to the new file length minus 8.
 - No format keeps an embedded ICC profile (JPEG `APP2`, PNG `iCCP`, WebP
   `ICCP`). Such a photo is shown as sRGB, or as its PNG `sRGB`, `cICP`,
   `gAMA` and `cHRM` chunks say; this is accepted so that no profile text
