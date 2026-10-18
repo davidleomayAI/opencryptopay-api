@@ -29,11 +29,12 @@ export type AdminReplayCache = Map<string, number>;
  * UTF-8 canonical string covered by the Ed25519 signature.
  *
  * `OCP-ADMIN-v1`, the method in upper case, the host, the path plus the query
- * string exactly as sent, the timestamp, the nonce, and the hex SHA-256 of the
- * raw body. An empty body hashes as zero bytes. Fields are joined with `\n`
+ * string as given, the timestamp, the nonce, and the hex SHA-256 of the raw
+ * body. The server passes the pathname plus search of the parsed request URL,
+ * so a lone trailing `?` is dropped. An empty body hashes as zero bytes. Fields are joined with `\n`
  * and there is no trailing newline.
  *
- * @param input - Method, configured host, exact path and query, unix seconds, nonce, and raw body.
+ * @param input - Method, configured host, path and query, unix seconds, nonce, and raw body.
  * @returns The string the device signs and the server rebuilds.
  * @throws When `timestamp` is not a safe integer, or the nonce does not match the format.
  */

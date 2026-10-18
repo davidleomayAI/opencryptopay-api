@@ -156,7 +156,7 @@
 
 ## Function: canonicalString
 
-- **Purpose:** Build the UTF-8 string an admin signature covers. The fields are `OCP-ADMIN-v1`, the method in upper case, the host, the path plus the query exactly as sent, the decimal unix timestamp, the nonce, and the lowercase hex SHA-256 of the raw body. An empty body hashes as zero bytes (`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`). The fields are joined with `\n`. There is no trailing newline. The key name is not a field.
+- **Purpose:** Build the UTF-8 string an admin signature covers. The fields are `OCP-ADMIN-v1`, the method in upper case, the host, the path plus the query as given (the server passes the pathname plus search of the parsed request URL, so a lone trailing `?` is dropped), the decimal unix timestamp, the nonce, and the lowercase hex SHA-256 of the raw body. An empty body hashes as zero bytes (`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`). The fields are joined with `\n`. There is no trailing newline. The key name is not a field.
 - **Inputs:** Method, host, path with query, unix seconds, the nonce (16 to 64 characters of `[A-Za-z0-9_-]`), and the raw body bytes.
 - **Returns / side effects:** The string the device signs and the server rebuilds. Throws `Admin timestamp must be an integer` when the timestamp is not a safe integer. Throws `Admin nonce is invalid` when the nonce does not match. No I/O.
 - **Used by:** `signAdminRequest` and `verifyAdminRequest`.
