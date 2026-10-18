@@ -81,6 +81,8 @@ export type ColumnModel = {
  */
 export type ForeignKeyModel = {
   table: string;
+  /** `PRAGMA foreign_key_list` id: the columns of one composite key share it. */
+  constraint: number;
   column: string;
   refTable: string;
   refColumn: string;
@@ -416,16 +418,33 @@ function resolveRefColumn(
 }
 
 /**
- * Whether `column` is the only column of some non-partial unique index, including a primary key.
+ * Whether exactly this column set is unique: a non-partial unique index or the primary key has the
+ * same columns. A wider unique that merely covers the set does not count.
  * @param indexes - Catalog indexes of the referencing table.
- * @param column - Referencing column name.
- * @returns True when the column alone is unique.
+ * @param columns - Columns of one foreign key.
+ * @param primaryKey - Primary-key columns; the rowid key has no row in `PRAGMA index_list`.
+ * @returns True when the column set is unique.
  */
-function columnAloneUnique(indexes: readonly SqliteIndex[], column: string): boolean {
-  return indexes.some(
-    (index) =>
-      index.unique && !index.partial && index.columns.length === 1 && index.columns[0] === column,
+function columnSetUnique(
+  indexes: readonly SqliteIndex[],
+  columns: readonly string[],
+  primaryKey: readonly string[],
+): boolean {
+  const sameSet = (candidate: readonly string[]): boolean =>
+    candidate.length === columns.length && columns.every((column) => candidate.includes(column));
+  return (
+    sameSet(primaryKey) ||
+    indexes.some((index) => index.unique && !index.partial && sameSet(index.columns))
   );
+}
+
+/**
+ * Number of foreign-key constraints, counting a composite key once.
+ * @param foreignKeys - Column-level foreign keys of one table.
+ * @returns Distinct constraints.
+ */
+function constraintCount(foreignKeys: readonly ForeignKeyModel[]): number {
+  return new Set(foreignKeys.map((foreignKey) => foreignKey.constraint)).size;
 }
 
 /**
@@ -460,10 +479,6 @@ function buildTableModel(
   const foreignKeys = [...table.foreignKeys].sort(
     (left, right) => left.id - right.id || left.seq - right.seq,
   );
-  const sequencesById = new Map<number, number>();
-  for (const foreignKey of table.foreignKeys) {
-    sequencesById.set(foreignKey.id, (sequencesById.get(foreignKey.id) ?? 0) + 1);
-  }
   const foreignKeyColumns = new Set(table.foreignKeys.map((foreignKey) => foreignKey.from));
   const enums = enumColumns.get(table.name);
   const columnModels: ColumnModel[] = columns.map((column) => {
@@ -510,17 +525,17 @@ function buildTableModel(
     const refColumn = resolveRefColumn(foreignKey, tablesByName);
     const source = columns.find((column) => column.name === foreignKey.from);
     if (refColumn === null || source === undefined) continue;
-    const alone = (sequencesById.get(foreignKey.id) ?? 0) === 1;
-    // A sole primary key such as the rowid can have no row in `PRAGMA index_list`.
-    const keyAlone = soleKey?.name === foreignKey.from;
+    const members = foreignKeys.filter((row) => row.id === foreignKey.id).map((row) => row.from);
+    const primaryKey = keyColumns.map((column) => column.name);
     foreignKeyModels.push({
       table: table.name,
+      constraint: foreignKey.id,
       column: foreignKey.from,
       refTable: foreignKey.refTable,
       refColumn,
       nullable: !source.notNull && source.name !== rowidAlias,
-      unique: alone && (keyAlone || columnAloneUnique(table.indexes, foreignKey.from)),
-      identifying: keyColumns.some((column) => column.name === foreignKey.from),
+      unique: columnSetUnique(table.indexes, members, primaryKey),
+      identifying: members.every((member) => primaryKey.includes(member)),
     });
   }
   foreignKeyModels.sort(
@@ -546,12 +561,12 @@ function buildTableModel(
 function renderReadme(model: SchemaModel, sources: Map<string, string[]>): string {
   const columnCount = model.tables.reduce((total, table) => total + table.columns.length, 0);
   const foreignKeyCount = model.tables.reduce(
-    (total, table) => total + table.foreignKeys.length,
+    (total, table) => total + constraintCount(table.foreignKeys),
     0,
   );
   const rows = model.tables.map((table) => {
     const paths = sources.get(table.name) ?? [];
-    return `| ${markdownCell(`[${codeSpan(table.name)}](tables/${table.name}.md)`)} | ${markdownCell(sourceLinks(paths, '../../'))} | ${table.columns.length} | ${table.foreignKeys.length} |`;
+    return `| ${markdownCell(`[${codeSpan(table.name)}](tables/${table.name}.md)`)} | ${markdownCell(sourceLinks(paths, '../../'))} | ${table.columns.length} | ${constraintCount(table.foreignKeys)} |`;
   });
   return [
     GENERATED_HEADER,
@@ -678,14 +693,30 @@ function renderRelations(
   tableName: string,
   foreignKeys: readonly ForeignKeyModel[],
 ): string | null {
+  // One edge per constraint: a composite key is labelled with all its columns and is optional when
+  // any of them accepts NULL.
+  const edges = new Map<string, { key: ForeignKeyModel; columns: string[]; nullable: boolean }>();
+  for (const foreignKey of foreignKeys) {
+    if (foreignKey.table !== tableName && foreignKey.refTable !== tableName) continue;
+    const id = `${foreignKey.table}\u0000${foreignKey.constraint}`;
+    const edge = edges.get(id);
+    if (edge === undefined) {
+      edges.set(id, {
+        key: foreignKey,
+        columns: [foreignKey.column],
+        nullable: foreignKey.nullable,
+      });
+      continue;
+    }
+    edge.columns.push(foreignKey.column);
+    edge.nullable ||= foreignKey.nullable;
+  }
   const lines = [
     ...new Set(
-      foreignKeys
-        .filter((foreignKey) => foreignKey.table === tableName || foreignKey.refTable === tableName)
-        .map(
-          (foreignKey) =>
-            `    "${escapeMermaid(foreignKey.table)}" ${cardinality(foreignKey.nullable, foreignKey.unique, foreignKey.identifying)} "${escapeMermaid(foreignKey.refTable)}" : "${escapeMermaid(foreignKey.column)}"`,
-        ),
+      [...edges.values()].map(
+        ({ key, columns, nullable }) =>
+          `    "${escapeMermaid(key.table)}" ${cardinality(nullable, key.unique, key.identifying)} "${escapeMermaid(key.refTable)}" : "${escapeMermaid(columns.join(', '))}"`,
+      ),
     ),
   ].sort(compareText);
   if (lines.length === 0) return null;

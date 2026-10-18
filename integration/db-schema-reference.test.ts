@@ -431,6 +431,29 @@ describe('readRawSchema', () => {
     db.close();
   });
 
+  test('models a composite foreign key as one constraint', async () => {
+    const db = openSchema(
+      [
+        'CREATE TABLE pair (a INTEGER NOT NULL, b TEXT NOT NULL, PRIMARY KEY (a, b));',
+        'CREATE TABLE pair_ref (a INTEGER NOT NULL, b TEXT NOT NULL, UNIQUE (b, a),',
+        '  FOREIGN KEY (a, b) REFERENCES pair (a, b));',
+        'CREATE TABLE pair_log (a INTEGER, b TEXT NOT NULL, FOREIGN KEY (a, b) REFERENCES pair (a, b));',
+      ].join('\n'),
+    );
+    const model = modelOf(readRawSchema(db), new Map());
+    db.close();
+    expect(tableModel(model, 'pair_ref').foreignKeys.every((fk) => fk.unique)).toBe(true);
+    expect(tableModel(model, 'pair_log').foreignKeys.some((fk) => fk.unique)).toBe(false);
+    const pages = await renderPages(model, new Map(), REPO_ROOT);
+    const edges = (name: string): string[] =>
+      (pages.get(`docs/database/tables/${name}.md`) ?? '')
+        .split('\n')
+        .filter((line) => line.includes(`"${name}" `));
+    expect(edges('pair_ref')).toEqual(['    "pair_ref" |o..|| "pair" : "a, b"']);
+    expect(edges('pair_log')).toEqual(['    "pair_log" }o..o| "pair" : "a, b"']);
+    expect(pages.get('docs/database/README.md')).toContain('- Foreign keys: 4');
+  });
+
   test('treats a foreign key that is the sole INTEGER PRIMARY KEY as one-to-one', () => {
     const db = openSchema('CREATE TABLE extension (id INTEGER PRIMARY KEY REFERENCES parent(id));');
     const model = modelOf(readRawSchema(db), new Map());
