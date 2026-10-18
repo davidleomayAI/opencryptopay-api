@@ -22,6 +22,7 @@ Every row below that is not "met" is a defect against the requirements.
 | R4  | Name, description | met                                   | not met    | 0 of 193 described  | not met |
 | R5  | Shop type         | met                                   | not met    | no enum (see R5)    | not met |
 | R6  | Enforcement       | met except coordinates at the address | not met    | 193 of 193 accepted | n/a     |
+| R7  | NOSTR identity    | accepted, not enforced                | not met    | no key stored       | not met |
 
 ## Live data
 
@@ -149,6 +150,22 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
   release.
 - **Data:** every one of the 193 production rows was accepted without a
   complete address, description, or shop type.
+
+## R7 NOSTR identity
+
+- **Target:** every shop has a NOSTR public key that is valid, unique over
+  all sources and over time, fixed once stored, and its id everywhere; a
+  write without one is rejected.
+- **Code:** accepted, not enforced (step 1a of
+  [shop-identity.md](shop-identity.md)). `POST` and `PUT /map/places` accept
+  and validate `nostrPubkey`, reserve it for its origin and external id, and
+  refuse a changed key or a key of another shop with 409. A row without a key
+  is not complete, so it stays out of `GET /map/places`, `GET /map/places/{npub}`
+  and the countries of `GET /map/filters`. A write without a key is still
+  stored; step 1b rejects it with 400.
+- **Data:** the column is new, so no stored shop has a key yet, and none is
+  public until its source sends one.
+- **Sources:** neither sends a key yet (step 3 of shop-identity.md).
 
 ## What closes the gap
 

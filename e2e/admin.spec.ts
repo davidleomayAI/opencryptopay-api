@@ -1,5 +1,11 @@
 import { execFileSync } from 'node:child_process';
-import { createPrivateKey, createPublicKey, generateKeyPairSync, sign } from 'node:crypto';
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  generateKeyPairSync,
+  sign,
+} from 'node:crypto';
 import type { KeyObject } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -7,6 +13,19 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { canonicalString, signAdminRequest } from '../src/lib/admin/signature';
+import { isNostrPubkey } from '../src/lib/map/nostr-key';
+
+/** A valid NIP-01 key derived from a label, so each test shop has its own. */
+function keyFor(label: string): string {
+  for (let round = 0; ; round += 1) {
+    const candidate = createHash('sha256')
+      .update(`${label}:${String(round)}`)
+      .digest('hex');
+    if (isNostrPubkey(candidate)) {
+      return candidate;
+    }
+  }
+}
 
 const DESCRIPTION =
   'SPAR supermarket in Triesen. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
@@ -31,6 +50,7 @@ const fremd = {
   postalCode: '9495',
   city: 'Triesen',
   country: 'LI',
+  nostrPubkey: '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d',
 };
 
 let replay:
@@ -585,7 +605,12 @@ test('Function: ocp-admin CLI — list, put, and delete sign like the server', (
     writeFileSync(join(keyDir, 'e2e.key'), privateKeyPem, { mode: 0o600 });
 
     const placesFile = join(home, 'places.json');
-    writeFileSync(placesFile, JSON.stringify([{ ...fremd, origin: 'cli', externalId: 'cli-1' }]));
+    writeFileSync(
+      placesFile,
+      JSON.stringify([
+        { ...fremd, origin: 'cli', externalId: 'cli-1', nostrPubkey: keyFor('cli/cli-1') },
+      ]),
+    );
 
     const run = (...args: string[]): string =>
       execFileSync(

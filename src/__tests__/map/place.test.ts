@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   normalizeMapPlace,
+  normalizeMapPlaceDelete,
   normalizeMapPlaceFilter,
   normalizeMapPlaceKey,
   normalizePlaceOrigin,
@@ -1154,7 +1155,7 @@ describe('normalizePlaceTransaction', () => {
 });
 
 describe('toPublicMapPlace', () => {
-  it('omits the caller id and payment methods and derives shopName from shopType', () => {
+  it('omits the caller id and payment methods, derives shopName and gives a keyless row a null id', () => {
     const stored: StoredMapPlace = {
       origin: 'dfx',
       externalId: 'store-1',
@@ -1174,11 +1175,12 @@ describe('toPublicMapPlace', () => {
       supports: [],
       lastTransactionAt: null,
       activity: 'none',
+      nostrPubkey: null,
       id: 'id-1',
       createdAt: '2026-09-26T00:00:00.000Z',
     };
     expect(toPublicMapPlace(stored)).toEqual({
-      id: 'id-1',
+      id: null,
       origin: 'dfx',
       name: 'SPAR Triesen',
       description: DESCRIPTION,
@@ -1201,7 +1203,7 @@ describe('toPublicMapPlace', () => {
     expect(hidden).not.toHaveProperty('paymentMethods');
   });
 
-  it('returns SPAR shopName when shopType is SPAR and copies supports', () => {
+  it('returns SPAR shopName, copies supports and uses the npub as id', () => {
     const supports = [{ blockchain: 'Ethereum', asset: 'ZCHF' }];
     const stored: StoredMapPlace = {
       origin: 'dfx',
@@ -1222,12 +1224,13 @@ describe('toPublicMapPlace', () => {
       supports,
       lastTransactionAt: null,
       activity: 'daily',
+      nostrPubkey: '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d',
       id: 'id-1',
       createdAt: '2026-09-26T00:00:00.000Z',
     };
     const publicPlace = toPublicMapPlace(stored);
     expect(publicPlace).toEqual({
-      id: 'id-1',
+      id: 'npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6',
       origin: 'dfx',
       name: 'SPAR Triesen',
       description: DESCRIPTION,
@@ -1247,5 +1250,91 @@ describe('toPublicMapPlace', () => {
     });
     publicPlace.supports.push({ blockchain: 'Polygon', asset: 'ETH' });
     expect(stored.supports).toEqual([{ blockchain: 'Ethereum', asset: 'ZCHF' }]);
+  });
+});
+
+const KEY = '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d';
+
+describe('normalizeMapPlace NOSTR key and revision', () => {
+  it('stores a valid key and returns the revision next to the pin', () => {
+    const parsed = normalizeMapPlace({ ...valid, nostrPubkey: KEY, revision: 7 });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.value.nostrPubkey).toBe(KEY);
+      expect(parsed.revision).toBe(7);
+    }
+  });
+
+  it('leaves the key and the revision unset when they are omitted', () => {
+    const parsed = normalizeMapPlace(valid);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect('nostrPubkey' in parsed.value).toBe(false);
+      expect(parsed.revision).toBeUndefined();
+    }
+  });
+
+  it('rejects a key that is not 64 lowercase hex characters on the curve', () => {
+    for (const nostrPubkey of [
+      KEY.toUpperCase(),
+      'npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6',
+      '0'.repeat(64),
+      null,
+      1,
+    ]) {
+      expect(normalizeMapPlace({ ...valid, nostrPubkey })).toEqual({
+        ok: false,
+        error: 'Place NOSTR public key is invalid',
+      });
+    }
+  });
+
+  it('accepts revisions from 1 to the largest exact JSON integer and rejects anything else', () => {
+    const top = normalizeMapPlace({ ...valid, revision: Number.MAX_SAFE_INTEGER });
+    expect(top.ok && top.revision).toBe(Number.MAX_SAFE_INTEGER);
+    for (const revision of [0, -1, 1.5, '3', null, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(normalizeMapPlace({ ...valid, revision })).toEqual({
+        ok: false,
+        error: 'Place revision is invalid',
+      });
+    }
+  });
+});
+
+describe('normalizeMapPlaceDelete', () => {
+  it('accepts origin, external id and an optional revision', () => {
+    expect(normalizeMapPlaceDelete({ origin: 'dfx', externalId: 'store-1' })).toEqual({
+      ok: true,
+      value: { origin: 'dfx', externalId: 'store-1' },
+      revision: undefined,
+    });
+    expect(normalizeMapPlaceDelete({ origin: 'dfx', externalId: 'store-1', revision: 3 })).toEqual({
+      ok: true,
+      value: { origin: 'dfx', externalId: 'store-1' },
+      revision: 3,
+    });
+  });
+
+  it('rejects a non-object, an array and any other key', () => {
+    expect(normalizeMapPlaceDelete(null)).toEqual({ ok: false, error: 'Place origin is invalid' });
+    expect(normalizeMapPlaceDelete([])).toEqual({ ok: false, error: 'Place origin is invalid' });
+    expect(
+      normalizeMapPlaceDelete({ origin: 'dfx', externalId: 'store-1', nostrPubkey: KEY }),
+    ).toEqual({ ok: false, error: 'Place field is not allowed: nostrPubkey' });
+  });
+
+  it('rejects a bad origin, external id or revision', () => {
+    expect(normalizeMapPlaceDelete({ origin: 'SPAR', externalId: 'store-1' })).toEqual({
+      ok: false,
+      error: 'Place origin is invalid',
+    });
+    expect(normalizeMapPlaceDelete({ origin: 'dfx', externalId: '' })).toEqual({
+      ok: false,
+      error: 'Place external id is required',
+    });
+    expect(normalizeMapPlaceDelete({ origin: 'dfx', externalId: 'store-1', revision: 0 })).toEqual({
+      ok: false,
+      error: 'Place revision is invalid',
+    });
   });
 });

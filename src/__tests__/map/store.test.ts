@@ -1,8 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { MAP_PLACE_SCHEMA_SQL, MemoryMapPlaceStore, placeProblems } from '@/lib/map/store';
+import {
+  MAP_PLACE_SCHEMA_SQL,
+  MemoryMapPlaceStore,
+  placeProblems,
+  placeWriteConflict,
+} from '@/lib/map/store';
 import type { MapPlaceInput, ShopType } from '@/lib/map/place';
+import { keyFor, keyedStore } from './keys';
 
 const DESCRIPTION =
   'SPAR supermarket in Triesen. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
@@ -44,7 +50,9 @@ describe('MAP_PLACE_SCHEMA_SQL', () => {
 describe('MemoryMapPlaceStore', () => {
   it('inserts once and lists newest first without changing the first row', () => {
     let tick = 0;
-    const store = new MemoryMapPlaceStore(() => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++)));
+    const store = keyedStore(
+      new MemoryMapPlaceStore(() => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++))),
+    );
     const first = store.insertIfNew(input);
     expect(first.created).toBe(true);
     expect(first.place.techProvider).toBe('DFX.swiss');
@@ -82,12 +90,14 @@ describe('MemoryMapPlaceStore', () => {
 
   it('orders a later timestamp first and breaks a tie by id', () => {
     let tick = 0;
-    const rising = new MemoryMapPlaceStore(() => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++)));
+    const rising = keyedStore(
+      new MemoryMapPlaceStore(() => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++))),
+    );
     rising.insertIfNew({ ...input, externalId: 'older' });
     rising.insertIfNew({ ...input, externalId: 'newer' });
     expect(rising.list(10).map((row) => row.externalId)).toEqual(['newer', 'older']);
 
-    const fixed = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
+    const fixed = keyedStore(new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z')));
     const a = fixed.insertIfNew({ ...input, externalId: 'a' });
     const b = fixed.insertIfNew({ ...input, externalId: 'b' });
     const expected = [a.place.id, b.place.id].sort((left, right) => right.localeCompare(left));
@@ -95,7 +105,7 @@ describe('MemoryMapPlaceStore', () => {
   });
 
   it('defaults an omitted tech provider and stores an explicit value on insert', () => {
-    const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z')));
     const omitted = store.insertIfNew(input);
     expect(omitted.place.techProvider).toBe('DFX.swiss');
     const labeled = store.insertIfNew({
@@ -108,7 +118,7 @@ describe('MemoryMapPlaceStore', () => {
   });
 
   it('does not change techProvider on a repeated insert', () => {
-    const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z')));
     store.insertIfNew({ ...input, techProvider: '21.gifts' });
     const again = store.insertIfNew({ ...input, name: 'Other', techProvider: 'Other.lab' });
     expect(again.created).toBe(false);
@@ -117,7 +127,7 @@ describe('MemoryMapPlaceStore', () => {
   });
 
   it('upserts a new pair and replaces every field on an existing pair', () => {
-    const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z')));
     const created = store.upsert(input);
     expect(created.created).toBe(true);
     expect(created.place.techProvider).toBe('DFX.swiss');
@@ -155,7 +165,7 @@ describe('MemoryMapPlaceStore', () => {
   });
 
   it('resets techProvider to DFX.swiss on upsert when omitted', () => {
-    const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z')));
     store.upsert({ ...input, techProvider: '21.gifts' });
     const reset = store.upsert({ ...input, name: 'Reset Label' });
     expect(reset.place.name).toBe('Reset Label');
@@ -167,7 +177,9 @@ describe('MemoryMapPlaceStore', () => {
 
   it('applies the limit after filtering by origin', () => {
     let tick = 0;
-    const store = new MemoryMapPlaceStore(() => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++)));
+    const store = keyedStore(
+      new MemoryMapPlaceStore(() => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++))),
+    );
     store.insertIfNew({ ...input, origin: 'spar', externalId: 'spar-1' });
     store.insertIfNew({ ...input, origin: 'dfx', externalId: 'dfx-1' });
     const listed = store.list(1, { origin: 'spar' });
@@ -178,7 +190,9 @@ describe('MemoryMapPlaceStore', () => {
 
   it('returns the older CH pin when a newer pin has another country', () => {
     let tick = 0;
-    const store = new MemoryMapPlaceStore(() => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++)));
+    const store = keyedStore(
+      new MemoryMapPlaceStore(() => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++))),
+    );
     store.insertIfNew({ ...input, externalId: 'ch-old', country: 'CH', postalCode: '8001' });
     store.insertIfNew({ ...input, externalId: 'de-new', country: 'DE', postalCode: '10115' });
     expect(store.list(1).map((row) => row.externalId)).toEqual(['de-new']);
@@ -190,7 +204,9 @@ describe('MemoryMapPlaceStore', () => {
 
   it('lists SPAR shop types and Others separately', () => {
     let tick = 0;
-    const store = new MemoryMapPlaceStore(() => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++)));
+    const store = keyedStore(
+      new MemoryMapPlaceStore(() => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++))),
+    );
     store.insertIfNew({ ...input, externalId: 'spar-brand', shopType: 'SPAR' });
     store.insertIfNew({ ...input, externalId: 'other-brand', shopType: 'Others' });
     const spar = store.list(10, { shopType: 'SPAR' });
@@ -201,7 +217,7 @@ describe('MemoryMapPlaceStore', () => {
   });
 
   it('uses the payment-link catalog when a pin has no support rows', () => {
-    const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z')));
     store.insertIfNew({ ...input, externalId: 'dfx-open' });
     store.insertIfNew({
       ...input,
@@ -251,7 +267,7 @@ describe('MemoryMapPlaceStore', () => {
   });
 
   it('requires blockchain and asset to match the same support row', () => {
-    const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z')));
     store.insertIfNew({
       ...input,
       supports: [
@@ -275,7 +291,7 @@ describe('MemoryMapPlaceStore', () => {
   });
 
   it('sorts supports and copies them so a caller cannot mutate the store', () => {
-    const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z')));
     const created = store.insertIfNew({
       ...input,
       supports: [
@@ -299,7 +315,7 @@ describe('MemoryMapPlaceStore', () => {
   });
 
   it('keeps same-chain supports that arrive in ascending asset order', () => {
-    const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z')));
     const created = store.insertIfNew({
       ...input,
       supports: [
@@ -314,7 +330,7 @@ describe('MemoryMapPlaceStore', () => {
   });
 
   it('does not replace fields on a repeated insert', () => {
-    const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z')));
     store.insertIfNew({
       ...input,
       country: 'CH',
@@ -348,7 +364,7 @@ describe('MemoryMapPlaceStore', () => {
   });
 
   it('replaces supports with an empty list on upsert when sent empty', () => {
-    const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z')));
     store.upsert({
       ...input,
       country: 'CH',
@@ -371,7 +387,7 @@ describe('MemoryMapPlaceStore', () => {
   });
 
   it('hides incomplete rows from list and countries', () => {
-    const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z')));
     store.insertIfNew({ ...input, externalId: 'complete', country: 'LI' });
     const blanks: Array<Partial<MapPlaceInput> & { externalId: string }> = [
       { externalId: 'empty-name', name: '', country: 'CH' },
@@ -393,7 +409,7 @@ describe('MemoryMapPlaceStore', () => {
   });
 
   it('returns distinct sorted filter values and restricts assets by blockchain', () => {
-    const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z')));
     expect(store.filters()).toEqual({ countries: [], blockchains: [], assets: [] });
     store.insertIfNew({
       ...input,
@@ -433,7 +449,9 @@ describe('MemoryMapPlaceStore', () => {
 
   it('applies AND predicates before the limit', () => {
     let tick = 0;
-    const store = new MemoryMapPlaceStore(() => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++)));
+    const store = keyedStore(
+      new MemoryMapPlaceStore(() => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++))),
+    );
     store.insertIfNew({
       ...input,
       origin: 'spar',
@@ -464,7 +482,7 @@ describe('MemoryMapPlaceStore', () => {
   });
 
   it('deletes by key and reports a miss', () => {
-    const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z')));
     expect(store.deleteByKey('dfx', 'store-1')).toBe(false);
     store.insertIfNew({
       ...input,
@@ -480,7 +498,7 @@ describe('MemoryMapPlaceStore', () => {
 
   it('records a newer transaction instant and does not move backward', () => {
     const nowMs = Date.parse('2026-09-26T18:00:00.000Z');
-    const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z')));
     expect(
       store.recordTransaction('dfx', 'store-1', '2026-09-26T00:00:00.000Z', nowMs),
     ).toBeUndefined();
@@ -502,7 +520,7 @@ describe('MemoryMapPlaceStore', () => {
 
   it('ignores an unparseable argument and keeps the timestamp on insert and upsert', () => {
     const nowMs = Date.parse('2026-09-26T00:00:00.000Z');
-    const store = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z'));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z')));
     store.insertIfNew(input);
     const seeded = store.recordTransaction('dfx', 'store-1', 'not-a-date', nowMs);
     expect(seeded?.lastTransactionAt).toBeNull();
@@ -532,7 +550,7 @@ describe('MemoryMapPlaceStore', () => {
 
   it('stores in-window days, ignores an outside day, and becomes daily at five distinct UTC days', () => {
     const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
-    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date(nowMs)));
     store.insertIfNew(input);
     const day = (value: string): string => `${value}T12:00:00.000Z`;
     expect(store.recordTransaction('dfx', 'store-1', day('2026-10-08'), nowMs)?.activity).toBe(
@@ -562,7 +580,7 @@ describe('MemoryMapPlaceStore', () => {
   });
 
   it('deletes payment days older than the window start on a later parseable write', () => {
-    const store = new MemoryMapPlaceStore(() => new Date('2026-10-01T12:00:00.000Z'));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date('2026-10-01T12:00:00.000Z')));
     store.insertIfNew(input);
     const first = '2026-10-01T12:00:00.000Z';
     store.recordTransaction('dfx', 'store-1', first, Date.parse(first));
@@ -574,7 +592,7 @@ describe('MemoryMapPlaceStore', () => {
 
   it('adds an older in-window day without moving lastTransactionAt backward', () => {
     const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
-    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date(nowMs)));
     store.insertIfNew(input);
     const recent = '2026-10-08T12:00:00.000Z';
     store.recordTransaction('dfx', 'store-1', recent, nowMs);
@@ -585,7 +603,7 @@ describe('MemoryMapPlaceStore', () => {
 
   it('stores olderThan30Days for a parseable instant older than 30 days', () => {
     const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
-    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date(nowMs)));
     store.insertIfNew(input);
     const oldIso = new Date(nowMs - (30 * 24 * 60 * 60 * 1000 + 1)).toISOString();
     const recorded = store.recordTransaction('dfx', 'store-1', oldIso, nowMs);
@@ -597,7 +615,7 @@ describe('MemoryMapPlaceStore', () => {
 
   it('returns none after delete then insert and keeps activity on upsert', () => {
     const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
-    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date(nowMs)));
     store.insertIfNew(input);
     store.recordTransaction('dfx', 'store-1', '2026-10-08T12:00:00.000Z', nowMs);
     const kept = store.upsert({ ...input, name: 'Renamed' });
@@ -614,7 +632,7 @@ describe('MemoryMapPlaceStore', () => {
   it('does not change GET-copied activity until refreshActivity at the due clock', () => {
     const nowMs = Date.parse('2026-10-08T00:00:00.000Z');
     const seven = 7 * 24 * 60 * 60 * 1000;
-    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date(nowMs)));
     store.insertIfNew(input);
     const last = new Date(nowMs - seven).toISOString();
     const recorded = store.recordTransaction('dfx', 'store-1', last, nowMs);
@@ -627,7 +645,7 @@ describe('MemoryMapPlaceStore', () => {
 
   it('keeps daily before the pivot midnight and drops it at that instant', () => {
     const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
-    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date(nowMs)));
     store.insertIfNew(input);
     const day = (value: string): string => `${value}T12:00:00.000Z`;
     store.recordTransaction('dfx', 'store-1', day('2026-10-04'), nowMs);
@@ -648,7 +666,7 @@ describe('MemoryMapPlaceStore', () => {
   it('refreshes a due within30Days row to olderThan30Days', () => {
     const nowMs = Date.parse('2026-10-08T00:00:00.000Z');
     const thirty = 30 * 24 * 60 * 60 * 1000;
-    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date(nowMs)));
     store.insertIfNew(input);
     store.refreshActivity(nowMs);
     expect(store.list(1)[0]?.activity).toBe('none');
@@ -952,9 +970,9 @@ describe('MemoryMapPlaceStore', () => {
 });
 
 describe('placeProblems', () => {
-  const place = new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z')).insertIfNew(
-    input,
-  ).place;
+  const place = keyedStore(
+    new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z')),
+  ).insertIfNew(input).place;
 
   it('names each empty field on its own', () => {
     expect(placeProblems({ ...place, name: '' })).toEqual(['name is empty']);
@@ -1013,7 +1031,9 @@ describe('placeProblems', () => {
 describe('MemoryMapPlaceStore.listAll', () => {
   it('lists incomplete rows newest first and returns copies', () => {
     let tick = 0;
-    const store = new MemoryMapPlaceStore(() => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++)));
+    const store = keyedStore(
+      new MemoryMapPlaceStore(() => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++))),
+    );
     store.insertIfNew(input);
     store.insertIfNew({ ...input, externalId: 'blank', name: '' });
     store.insertIfNew({ ...input, externalId: 'newer' });
@@ -1029,5 +1049,199 @@ describe('MemoryMapPlaceStore.listAll', () => {
     const again = store.listAll().find((row) => row.externalId === 'blank');
     expect(again?.name).toBe('');
     expect(again?.supports).toEqual([]);
+  });
+});
+
+describe('placeWriteConflict', () => {
+  const free = {
+    storedRevision: undefined,
+    revision: undefined,
+    rowExists: false,
+    storedKey: null,
+    key: undefined,
+    reservedFor: undefined,
+    origin: 'dfx',
+    externalId: 'store-1',
+  };
+
+  it('lets a write without revision and key through when nothing is stored', () => {
+    expect(placeWriteConflict(free)).toBeNull();
+  });
+
+  it('refuses a revision that is not higher, and a missing one once a revision is stored', () => {
+    expect(placeWriteConflict({ ...free, storedRevision: 2, revision: 2 })).toBe('Stale revision');
+    expect(placeWriteConflict({ ...free, storedRevision: 2, revision: 1 })).toBe('Stale revision');
+    expect(placeWriteConflict({ ...free, storedRevision: 2 })).toBe('Stale revision');
+    expect(placeWriteConflict({ ...free, storedRevision: 2, revision: 3 })).toBeNull();
+  });
+
+  it('checks the revision before the key', () => {
+    expect(
+      placeWriteConflict({
+        ...free,
+        storedRevision: 2,
+        revision: 2,
+        rowExists: true,
+        storedKey: 'a',
+        key: 'b',
+      }),
+    ).toBe('Stale revision');
+  });
+
+  it('keeps a stored key and lets the same key through', () => {
+    expect(placeWriteConflict({ ...free, rowExists: true, storedKey: 'a', key: 'b' })).toBe(
+      'nostrPubkey of a place cannot change',
+    );
+    expect(placeWriteConflict({ ...free, rowExists: true, storedKey: 'a', key: 'a' })).toBeNull();
+  });
+
+  it('lets the stored key decide when both rules break', () => {
+    expect(
+      placeWriteConflict({
+        ...free,
+        rowExists: true,
+        storedKey: 'a',
+        key: 'b',
+        reservedFor: { origin: 'spar', externalId: 'other' },
+      }),
+    ).toBe('nostrPubkey of a place cannot change');
+  });
+
+  it('refuses a key reserved for another origin or external id and allows the own pair', () => {
+    expect(
+      placeWriteConflict({
+        ...free,
+        key: 'a',
+        reservedFor: { origin: 'spar', externalId: 'store-1' },
+      }),
+    ).toBe('nostrPubkey belongs to another place');
+    expect(
+      placeWriteConflict({
+        ...free,
+        key: 'a',
+        reservedFor: { origin: 'dfx', externalId: 'other' },
+      }),
+    ).toBe('nostrPubkey belongs to another place');
+    expect(
+      placeWriteConflict({
+        ...free,
+        rowExists: true,
+        key: 'a',
+        reservedFor: { origin: 'dfx', externalId: 'store-1' },
+      }),
+    ).toBeNull();
+  });
+});
+
+describe('MemoryMapPlaceStore NOSTR key and revision', () => {
+  const keyA = keyFor('memory-a');
+  const keyB = keyFor('memory-b');
+  const keyC = keyFor('memory-c');
+
+  it('hides a row without a key and reports it as a problem', () => {
+    const store = new MemoryMapPlaceStore();
+    const written = store.insertIfNew(input);
+    expect(written.ok && written.place.nostrPubkey).toBeNull();
+    expect(store.list(10)).toEqual([]);
+    expect(store.filters().countries).toEqual([]);
+    const [row] = store.listAll();
+    expect(row === undefined ? [] : placeProblems(row)).toEqual(['nostrPubkey is missing']);
+  });
+
+  it('adds a key with POST, keeps it on PUT, refuses a change and finds the public row', () => {
+    const store = new MemoryMapPlaceStore();
+    store.insertIfNew(input);
+    const added = store.insertIfNew({ ...input, name: 'Ignored', nostrPubkey: keyA });
+    expect(added).toMatchObject({ ok: true, created: false });
+    expect(added.ok && added.place.nostrPubkey).toBe(keyA);
+    expect(added.ok && added.place.name).toBe('SPAR Triesen');
+    const same = store.insertIfNew({ ...input, nostrPubkey: keyA });
+    expect(same.ok).toBe(true);
+    const kept = store.upsert({ ...input, name: 'SPAR Triesen Nord' });
+    expect(kept.ok && kept.place.nostrPubkey).toBe(keyA);
+    expect(store.upsert({ ...input, nostrPubkey: keyB })).toEqual({
+      ok: false,
+      error: 'nostrPubkey of a place cannot change',
+    });
+    expect(store.insertIfNew({ ...input, nostrPubkey: keyB })).toEqual({
+      ok: false,
+      error: 'nostrPubkey of a place cannot change',
+    });
+    expect(store.findPublicByPubkey(keyA)?.name).toBe('SPAR Triesen Nord');
+    expect(store.findPublicByPubkey(keyB)).toBeUndefined();
+    expect(store.list(10).map((row) => row.nostrPubkey)).toEqual([keyA]);
+  });
+
+  it('does not find a row whose key is stored but which is incomplete', () => {
+    const store = new MemoryMapPlaceStore();
+    store.insertIfNew({ ...input, name: '', nostrPubkey: keyA });
+    expect(store.findPublicByPubkey(keyA)).toBeUndefined();
+  });
+
+  it('reserves a key for its pair, also after delete', () => {
+    const store = new MemoryMapPlaceStore();
+    store.insertIfNew({ ...input, nostrPubkey: keyA });
+    expect(store.insertIfNew({ ...input, externalId: 'store-2', nostrPubkey: keyA })).toEqual({
+      ok: false,
+      error: 'nostrPubkey belongs to another place',
+    });
+    expect(store.deleteByKey('dfx', 'store-1')).toEqual({ ok: true, deleted: true });
+    expect(store.upsert({ ...input, externalId: 'store-2', nostrPubkey: keyA })).toEqual({
+      ok: false,
+      error: 'nostrPubkey belongs to another place',
+    });
+    const again = store.insertIfNew({ ...input, nostrPubkey: keyA });
+    expect(again).toMatchObject({ ok: true, created: true });
+    store.deleteByKey('dfx', 'store-1');
+    const moved = store.insertIfNew({ ...input, nostrPubkey: keyC });
+    expect(moved.ok && moved.place.nostrPubkey).toBe(keyC);
+    expect(store.findPublicByPubkey(keyA)).toBeUndefined();
+  });
+
+  it('stores revisions, refuses stale and missing ones and keeps them across delete', () => {
+    const store = new MemoryMapPlaceStore();
+    expect(store.insertIfNew({ ...input, nostrPubkey: keyA }, 1).ok).toBe(true);
+    expect(store.upsert({ ...input, nostrPubkey: keyA }, 1)).toEqual({
+      ok: false,
+      error: 'Stale revision',
+    });
+    expect(store.upsert({ ...input, nostrPubkey: keyA })).toEqual({
+      ok: false,
+      error: 'Stale revision',
+    });
+    expect(store.upsert({ ...input, nostrPubkey: keyB }, 2)).toEqual({
+      ok: false,
+      error: 'nostrPubkey of a place cannot change',
+    });
+    expect(store.upsert({ ...input, name: 'Renamed', nostrPubkey: keyA }, 2).ok).toBe(true);
+    expect(store.insertIfNew({ ...input, nostrPubkey: keyA }, 3)).toMatchObject({
+      ok: true,
+      created: false,
+    });
+    expect(store.insertIfNew({ ...input, nostrPubkey: keyA }, 3)).toEqual({
+      ok: false,
+      error: 'Stale revision',
+    });
+    expect(store.deleteByKey('dfx', 'store-1', 3)).toEqual({ ok: false, error: 'Stale revision' });
+    expect(store.deleteByKey('dfx', 'store-1')).toEqual({ ok: false, error: 'Stale revision' });
+    expect(store.deleteByKey('dfx', 'store-1', 4)).toEqual({ ok: true, deleted: true });
+    expect(store.deleteByKey('dfx', 'store-1', 5)).toEqual({ ok: true, deleted: false });
+    expect(store.upsert({ ...input, nostrPubkey: keyA }, 5)).toEqual({
+      ok: false,
+      error: 'Stale revision',
+    });
+    expect(store.upsert({ ...input, nostrPubkey: keyA }, 6)).toMatchObject({
+      ok: true,
+      created: true,
+    });
+  });
+
+  it('forgets reservations and revisions on close', () => {
+    const store = new MemoryMapPlaceStore();
+    store.insertIfNew({ ...input, nostrPubkey: keyA }, 5);
+    store.close();
+    expect(store.insertIfNew({ ...input, externalId: 'store-2', nostrPubkey: keyA }, 1).ok).toBe(
+      true,
+    );
   });
 });

@@ -10,14 +10,15 @@ import {
 } from '@/lib/map/place';
 import {
   MAP_PLACE_SCHEMA_SQL,
+  placeWriteConflict,
+  type MapPlaceDeleteResult,
   type MapPlaceListFilter,
   type MapPlaceStore,
-  type ReplaceByIdInput,
-  type ReplaceByIdResult,
+  type MapPlaceWriteResult,
 } from '@/lib/map/store';
 
 const MAP_PLACE_COLUMNS =
-  'id, origin, external_id, name, description, lat, lon, category, payment_methods, created_at, tech_provider, country, street, house_number, postal_code, city, shop_type, last_transaction_at, activity';
+  'id, origin, external_id, name, description, lat, lon, category, payment_methods, created_at, tech_provider, country, street, house_number, postal_code, city, shop_type, last_transaction_at, activity, nostr_pubkey';
 
 /** SQL predicate: a row is complete and may appear in GET /map/places and countries. */
 const COMPLETE_PLACE_SQL = `(name IS NOT NULL AND name != ''
@@ -28,6 +29,7 @@ const COMPLETE_PLACE_SQL = `(name IS NOT NULL AND name != ''
   AND postal_code IS NOT NULL AND postal_code != ''
   AND city IS NOT NULL AND city != ''
   AND country IS NOT NULL AND country != ''
+  AND nostr_pubkey IS NOT NULL
   AND (last_transaction_at IS NULL OR julianday(last_transaction_at) IS NOT NULL))`;
 
 const SUPPORT_ID_CHUNK = 500;
@@ -52,6 +54,7 @@ type MapPlaceRow = {
   shop_type: string | null;
   last_transaction_at: string | null;
   activity: PlaceActivity;
+  nostr_pubkey: string | null;
 };
 
 function compareSupport(a: MapPlaceSupport, b: MapPlaceSupport): number {
@@ -113,6 +116,7 @@ function mapRow(row: MapPlaceRow, supports: MapPlaceSupport[]): StoredMapPlace {
     shopType: asShopType(row.shop_type),
     lastTransactionAt: row.last_transaction_at,
     activity: row.activity,
+    nostrPubkey: row.nostr_pubkey,
     supports: supports.map((item) => ({ blockchain: item.blockchain, asset: item.asset })),
   };
 }
@@ -297,6 +301,9 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
         if (!columns.some((column) => column.name === 'activity_until')) {
           this.#db.exec('ALTER TABLE map_place ADD COLUMN activity_until TEXT');
         }
+        if (!columns.some((column) => column.name === 'nostr_pubkey')) {
+          this.#db.exec('ALTER TABLE map_place ADD COLUMN nostr_pubkey TEXT');
+        }
       }
     }
     if (addedActivity) {
@@ -306,50 +313,130 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Insert when the pair is new. An existing pair is returned unchanged.
+   * Insert when the pair is new. An existing pair is returned unchanged, except
+   * that a row without a key stores the key this write carries.
    *
    * @param input - Validated pin.
-   * @returns Whether this call inserted the row.
+   * @param revision - Request revision (R8), when sent.
+   * @returns Whether this call inserted the row, or the 409 text.
    */
-  insertIfNew(input: MapPlaceInput): { created: boolean; place: StoredMapPlace } {
-    const id = crypto.randomUUID();
-    const createdAt = new Date().toISOString();
+  insertIfNew(input: MapPlaceInput, revision?: number): MapPlaceWriteResult {
+    return this.#db.transaction(() => this.#write(input, revision, false))();
+  }
+
+  /**
+   * Insert when the pair is new, otherwise replace every field of the stored pin.
+   * A stored key is kept; a row without a key stores the key this write carries.
+   *
+   * @param input - Validated pin.
+   * @param revision - Request revision (R8), when sent.
+   * @returns Whether this call inserted the row, or the 409 text.
+   */
+  upsert(input: MapPlaceInput, revision?: number): MapPlaceWriteResult {
+    return this.#db.transaction(() => this.#write(input, revision, true))();
+  }
+
+  #storedRevision(origin: string, externalId: string): number | undefined {
+    const row = this.#db
+      .query('SELECT revision FROM map_place_revision WHERE origin = ? AND external_id = ?')
+      .get(origin, externalId) as { revision: number } | null;
+    return row === null ? undefined : row.revision;
+  }
+
+  #storeRevision(origin: string, externalId: string, revision: number | undefined): void {
+    if (revision === undefined) {
+      return;
+    }
+    this.#db
+      .query(
+        `INSERT INTO map_place_revision (origin, external_id, revision) VALUES (?, ?, ?)
+         ON CONFLICT (origin, external_id) DO UPDATE SET revision = excluded.revision`,
+      )
+      .run(origin, externalId, revision);
+  }
+
+  #write(
+    input: MapPlaceInput,
+    revision: number | undefined,
+    replace: boolean,
+  ): MapPlaceWriteResult {
+    const existing = this.#db
+      .query(
+        `SELECT ${MAP_PLACE_COLUMNS}
+         FROM map_place WHERE origin = ? AND external_id = ?`,
+      )
+      .get(input.origin, input.externalId) as MapPlaceRow | null;
+    const key = input.nostrPubkey;
+    const reservation =
+      key === undefined
+        ? null
+        : (this.#db
+            .query('SELECT origin, external_id FROM map_pubkey_reservation WHERE nostr_pubkey = ?')
+            .get(key) as { origin: string; external_id: string } | null);
+    const conflict = placeWriteConflict({
+      storedRevision: this.#storedRevision(input.origin, input.externalId),
+      revision,
+      rowExists: existing !== null,
+      storedKey: existing?.nostr_pubkey ?? null,
+      key,
+      reservedFor:
+        reservation === null
+          ? undefined
+          : { origin: reservation.origin, externalId: reservation.external_id },
+      origin: input.origin,
+      externalId: input.externalId,
+    });
+    if (conflict !== null) {
+      return { ok: false, error: conflict };
+    }
+    if (key !== undefined && reservation === null) {
+      this.#db
+        .query(
+          `INSERT INTO map_pubkey_reservation (nostr_pubkey, origin, external_id, created_at)
+           VALUES (?, ?, ?, ?)`,
+        )
+        .run(key, input.origin, input.externalId, new Date().toISOString());
+    }
+    this.#storeRevision(input.origin, input.externalId, revision);
     const techProvider = input.techProvider ?? 'DFX.swiss';
     const supports = storedSupports(input.supports);
-    const result = this.#db
-      .query(
-        `INSERT INTO map_place (
-           id, origin, external_id, name, description, lat, lon, category, payment_methods,
-           created_at, tech_provider, country, street, house_number, postal_code, city,
-           shop_type, last_transaction_at, activity, activity_until
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (origin, external_id) DO NOTHING`,
-      )
-      .run(
-        id,
-        input.origin,
-        input.externalId,
-        input.name,
-        input.description,
-        input.lat,
-        input.lon,
-        input.category,
-        input.paymentMethods,
-        createdAt,
-        techProvider,
-        input.country,
-        input.street,
-        input.houseNumber,
-        input.postalCode,
-        input.city,
-        input.shopType,
-        null,
-        'none',
-        null,
-      );
-    if (result.changes === 1) {
+    if (existing === null) {
+      const id = crypto.randomUUID();
+      const createdAt = new Date().toISOString();
+      this.#db
+        .query(
+          `INSERT INTO map_place (
+             id, origin, external_id, name, description, lat, lon, category, payment_methods,
+             created_at, tech_provider, country, street, house_number, postal_code, city,
+             shop_type, last_transaction_at, activity, activity_until, nostr_pubkey
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          id,
+          input.origin,
+          input.externalId,
+          input.name,
+          input.description,
+          input.lat,
+          input.lon,
+          input.category,
+          input.paymentMethods,
+          createdAt,
+          techProvider,
+          input.country,
+          input.street,
+          input.houseNumber,
+          input.postalCode,
+          input.city,
+          input.shopType,
+          null,
+          'none',
+          null,
+          key ?? null,
+        );
       insertSupportRows(this.#db, id, supports);
       return {
+        ok: true,
         created: true,
         place: {
           origin: input.origin,
@@ -371,6 +458,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
             blockchain: item.blockchain,
             asset: item.asset,
           })),
+          nostrPubkey: key ?? null,
           lastTransactionAt: null,
           activity: 'none',
           id,
@@ -378,43 +466,24 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
         },
       };
     }
-    const existing = this.#db
-      .query(
-        `SELECT ${MAP_PLACE_COLUMNS}
-         FROM map_place WHERE origin = ? AND external_id = ?`,
-      )
-      .get(input.origin, input.externalId) as MapPlaceRow | null;
-    if (existing === null) {
-      throw new Error('map place insert conflict missing row');
+    const nostrPubkey = existing.nostr_pubkey ?? key ?? null;
+    if (existing.nostr_pubkey === null && key !== undefined) {
+      this.#db.query('UPDATE map_place SET nostr_pubkey = ? WHERE id = ?').run(key, existing.id);
     }
-    return { created: false, place: mapOne(this.#db, existing) };
-  }
-
-  /**
-   * Insert when the pair is new, otherwise replace every field of the stored pin.
-   *
-   * @param input - Validated pin.
-   * @returns Whether this call inserted the row.
-   */
-  upsert(input: MapPlaceInput): { created: boolean; place: StoredMapPlace } {
-    const existing = this.#db
-      .query(
-        `SELECT ${MAP_PLACE_COLUMNS}
-         FROM map_place WHERE origin = ? AND external_id = ?`,
-      )
-      .get(input.origin, input.externalId) as MapPlaceRow | null;
-    if (existing === null) {
-      return this.insertIfNew(input);
+    if (!replace) {
+      return {
+        ok: true,
+        created: false,
+        place: mapOne(this.#db, { ...existing, nostr_pubkey: nostrPubkey }),
+      };
     }
-    const techProvider = input.techProvider ?? 'DFX.swiss';
-    const supports = storedSupports(input.supports);
     this.#db
       .query(
         `UPDATE map_place
          SET name = ?, description = ?, lat = ?, lon = ?, category = ?, payment_methods = ?,
              tech_provider = ?, country = ?, street = ?, house_number = ?, postal_code = ?,
              city = ?, shop_type = ?
-         WHERE origin = ? AND external_id = ?`,
+         WHERE id = ?`,
       )
       .run(
         input.name,
@@ -430,11 +499,11 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
         input.postalCode,
         input.city,
         input.shopType,
-        input.origin,
-        input.externalId,
+        existing.id,
       );
     replaceSupportRows(this.#db, existing.id, supports);
     return {
+      ok: true,
       created: false,
       place: mapOne(this.#db, {
         ...existing,
@@ -451,6 +520,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
         postal_code: input.postalCode,
         city: input.city,
         shop_type: input.shopType,
+        nostr_pubkey: nostrPubkey,
       }),
     };
   }
@@ -647,17 +717,43 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Remove the pin for this origin and external id.
+   * Remove the pin for this origin and external id. The pair's key reservations
+   * and revision stay.
    *
    * @param origin - Pin origin.
    * @param externalId - Caller id.
-   * @returns Whether a row was removed.
+   * @param revision - Request revision (R8), when sent. Stored also when no row matched.
+   * @returns Whether a row was removed, or `Stale revision`.
    */
-  deleteByKey(origin: string, externalId: string): boolean {
-    const result = this.#db
-      .query('DELETE FROM map_place WHERE origin = ? AND external_id = ?')
-      .run(origin, externalId);
-    return result.changes > 0;
+  deleteByKey(origin: string, externalId: string, revision?: number): MapPlaceDeleteResult {
+    return this.#db.transaction((): MapPlaceDeleteResult => {
+      const stored = this.#storedRevision(origin, externalId);
+      if (stored !== undefined && (revision === undefined || revision <= stored)) {
+        return { ok: false, error: 'Stale revision' };
+      }
+      this.#storeRevision(origin, externalId, revision);
+      const result = this.#db
+        .query('DELETE FROM map_place WHERE origin = ? AND external_id = ?')
+        .run(origin, externalId);
+      return { ok: true, deleted: result.changes > 0 };
+    })();
+  }
+
+  /**
+   * The complete pin that carries this key.
+   *
+   * @param pubkey - 64 lowercase hex characters.
+   * @returns The row, or undefined when no complete row has the key.
+   */
+  findPublicByPubkey(pubkey: string): StoredMapPlace | undefined {
+    const row = this.#db
+      .query(
+        `SELECT ${MAP_PLACE_COLUMNS}
+         FROM map_place
+         WHERE nostr_pubkey = ? AND ${COMPLETE_PLACE_SQL}`,
+      )
+      .get(pubkey) as MapPlaceRow | null;
+    return row === null ? undefined : mapOne(this.#db, row);
   }
 
   /**

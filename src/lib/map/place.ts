@@ -4,6 +4,7 @@
  */
 
 import { isCatalogAsset, isCatalogBlockchain } from '@/lib/map/filter-catalog';
+import { isNostrPubkey, npubEncode } from '@/lib/map/nostr-key';
 
 /** Allowed shop type values. */
 export const SHOP_TYPES = ['SPAR', 'Others'] as const;
@@ -32,12 +33,16 @@ export type MapPlaceInput = {
   city: string;
   country: string;
   supports: MapPlaceSupport[];
+  /** NIP-01 public key, the shop id (R7). Optional until step 1b. */
+  nostrPubkey?: string;
 };
 
 export type PlaceActivity = 'daily' | 'within7Days' | 'within30Days' | 'olderThan30Days' | 'none';
 
-export type StoredMapPlace = Omit<MapPlaceInput, 'techProvider'> & {
+export type StoredMapPlace = Omit<MapPlaceInput, 'techProvider' | 'nostrPubkey'> & {
   id: string;
+  /** Null for a row stored without a key; such a row is not complete. */
+  nostrPubkey: string | null;
   createdAt: string;
   techProvider: string;
   lastTransactionAt: string | null;
@@ -46,7 +51,8 @@ export type StoredMapPlace = Omit<MapPlaceInput, 'techProvider'> & {
 
 /** Fields the public map may show. The caller's own id stays off this list. */
 export type PublicMapPlace = {
-  id: string;
+  /** The shop's npub, or null for a row without a key (only outside the public list). */
+  id: string | null;
   origin: string;
   name: string;
   description: string;
@@ -91,6 +97,8 @@ const SHOP_TYPE_ERROR = 'Place shop type is invalid';
 const DESCRIPTION_ERROR = 'Place description is invalid';
 const SUPPORT_ERROR = 'Place support is invalid';
 const TRANSACTION_TIME_ERROR = 'Place transaction time is invalid';
+const NOSTR_PUBKEY_ERROR = 'Place NOSTR public key is invalid';
+const REVISION_ERROR = 'Place revision is invalid';
 const FOUR_DIGIT_YEAR = /^\d{4}-/u;
 
 const ALLOWED_PLACE_KEYS: ReadonlySet<string> = new Set([
@@ -110,7 +118,11 @@ const ALLOWED_PLACE_KEYS: ReadonlySet<string> = new Set([
   'city',
   'country',
   'supports',
+  'nostrPubkey',
+  'revision',
 ]);
+
+const ALLOWED_DELETE_KEYS: ReadonlySet<string> = new Set(['origin', 'externalId', 'revision']);
 
 const PAYMENT_METHODS = /^(onchain|lightning|nfc)(,(onchain|lightning|nfc))*$/;
 const TECH_PROVIDER = /^[A-Za-z0-9][A-Za-z0-9.-]{0,39}$/;
@@ -740,15 +752,40 @@ function normalizeSupports(
   return { ok: true, value: uniqueSortedSupports(items) };
 }
 
+function normalizeRevision(
+  raw: unknown,
+): { ok: true; value: number | undefined } | { ok: false; error: string } {
+  if (raw === undefined) {
+    return { ok: true, value: undefined };
+  }
+  if (typeof raw !== 'number' || !Number.isSafeInteger(raw) || raw < 1) {
+    return { ok: false, error: REVISION_ERROR };
+  }
+  return { ok: true, value: raw };
+}
+
+function normalizeNostrPubkey(
+  raw: unknown,
+): { ok: true; value: string | undefined } | { ok: false; error: string } {
+  if (raw === undefined) {
+    return { ok: true, value: undefined };
+  }
+  if (!isNostrPubkey(raw)) {
+    return { ok: false, error: NOSTR_PUBKEY_ERROR };
+  }
+  return { ok: true, value: raw };
+}
+
 /**
- * Validate a JSON body for one map pin.
+ * Validate a JSON body for one map pin, including the optional NOSTR key (R7)
+ * and request revision (R8).
  *
  * @param input - Request JSON.
- * @returns The pin, or a fixed error message.
+ * @returns The pin and its revision, or a fixed error message.
  */
 export function normalizeMapPlace(
   input: unknown,
-): { ok: true; value: MapPlaceInput } | { ok: false; error: string } {
+): { ok: true; value: MapPlaceInput; revision: number | undefined } | { ok: false; error: string } {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {
     return { ok: false, error: COORD_ERROR };
   }
@@ -856,6 +893,16 @@ export function normalizeMapPlace(
     return shopType;
   }
 
+  const nostrPubkey = normalizeNostrPubkey(rec['nostrPubkey']);
+  if (!nostrPubkey.ok) {
+    return nostrPubkey;
+  }
+
+  const revision = normalizeRevision(rec['revision']);
+  if (!revision.ok) {
+    return revision;
+  }
+
   const value: MapPlaceInput = {
     origin: origin.value,
     externalId: externalId.value,
@@ -876,7 +923,10 @@ export function normalizeMapPlace(
   if (techProvider.value !== undefined) {
     value.techProvider = techProvider.value;
   }
-  return { ok: true, value };
+  if (nostrPubkey.value !== undefined) {
+    value.nostrPubkey = nostrPubkey.value;
+  }
+  return { ok: true, value, revision: revision.value };
 }
 
 /**
@@ -905,6 +955,39 @@ export function normalizeMapPlaceKey(
     return externalId;
   }
   return { ok: true, value: { origin: origin.value, externalId: externalId.value } };
+}
+
+/**
+ * Validate a `DELETE /map/places` body: exactly `origin`, `externalId` and an
+ * optional `revision` (R8). `POST /map/places/transactions` keeps using
+ * {@link normalizeMapPlaceKey}, which ignores other keys.
+ *
+ * @param input - Request JSON.
+ * @returns The key and revision, or a fixed error message.
+ */
+export function normalizeMapPlaceDelete(
+  input: unknown,
+):
+  | { ok: true; value: { origin: string; externalId: string }; revision: number | undefined }
+  | { ok: false; error: string } {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    return { ok: false, error: ORIGIN_ERROR };
+  }
+  const rec = input as Record<string, unknown>;
+  for (const key of Object.keys(rec)) {
+    if (!ALLOWED_DELETE_KEYS.has(key)) {
+      return { ok: false, error: `Place field is not allowed: ${key.slice(0, 40)}` };
+    }
+  }
+  const parsed = normalizeMapPlaceKey(rec);
+  if (!parsed.ok) {
+    return parsed;
+  }
+  const revision = normalizeRevision(rec['revision']);
+  if (!revision.ok) {
+    return revision;
+  }
+  return { ok: true, value: parsed.value, revision: revision.value };
 }
 
 const PAYMENT_DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -1101,14 +1184,15 @@ export function normalizeMapPlaceFilter(
 }
 
 /**
- * Drop fields that only the ingest caller needs.
+ * Drop fields that only the ingest caller needs. The id is the shop's npub; the
+ * internal UUID never leaves the store.
  *
  * @param place - Stored pin.
  * @returns The public map row, including the stored activity.
  */
 export function toPublicMapPlace(place: StoredMapPlace): PublicMapPlace {
   return {
-    id: place.id,
+    id: place.nostrPubkey === null ? null : npubEncode(place.nostrPubkey),
     origin: place.origin,
     name: place.name,
     description: place.description,

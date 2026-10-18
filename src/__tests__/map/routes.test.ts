@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { publicFilterResponse } from '@/lib/map/filter-catalog';
+import { npubEncode } from '@/lib/map/nostr-key';
 import { MemoryMapPlaceStore } from '@/lib/map/store';
 import { createApp } from '@/server';
+import { keyFor } from './keys';
 
 const DESCRIPTION =
   'SPAR supermarket in Triesen. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
@@ -50,13 +52,15 @@ const jsonHeaders = {
   'Content-Type': 'application/json',
 };
 
-function app(opts: {
+type AppOptions = {
   token?: string;
   env?: Record<string, string | undefined>;
   fetchImpl?: (input: string, init: RequestInit) => Promise<Response>;
   store?: MemoryMapPlaceStore;
   now?: () => number;
-}) {
+};
+
+function rawApp(opts: AppOptions) {
   return createApp({
     store: opts.store ?? new MemoryMapPlaceStore(),
     env: opts.env ?? {},
@@ -64,6 +68,40 @@ function app(opts: {
     ...(opts.token === undefined ? {} : { ingestToken: opts.token }),
     ...(opts.now === undefined ? {} : { now: opts.now }),
   });
+}
+
+/** Adds a key derived from origin and external id to a POST or PUT pin body without one. */
+function keyedBody(path: string, init?: RequestInit): RequestInit | undefined {
+  if (
+    path !== '/map/places' ||
+    (init?.method !== 'POST' && init?.method !== 'PUT') ||
+    typeof init.body !== 'string'
+  ) {
+    return init;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(init.body);
+  } catch {
+    return init;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return init;
+  }
+  const rec = parsed as Record<string, unknown>;
+  if ('nostrPubkey' in rec || typeof rec['origin'] !== 'string') {
+    return init;
+  }
+  const key = keyFor(`${rec['origin']}\n${String(rec['externalId'])}`);
+  return { ...init, body: JSON.stringify({ ...rec, nostrPubkey: key }) };
+}
+
+/** The app, with keys added to pin writes so tests about other fields need not send one. */
+function app(opts: AppOptions) {
+  const api = rawApp(opts);
+  return {
+    request: (path: string, init?: RequestInit) => api.request(path, keyedBody(path, init)),
+  };
 }
 
 describe('map routes', () => {
@@ -601,10 +639,17 @@ describe('map routes', () => {
     const missing = await api.request('/map/places', {
       method: 'DELETE',
       headers: jsonHeaders,
-      body: JSON.stringify({ origin: 'dfx', externalId: 'store-1', name: 'ignored' }),
+      body: JSON.stringify({ origin: 'dfx', externalId: 'store-1' }),
     });
     expect(missing.status).toBe(200);
     expect(await missing.json()).toEqual({ deleted: false });
+    const extra = await api.request('/map/places', {
+      method: 'DELETE',
+      headers: jsonHeaders,
+      body: JSON.stringify({ origin: 'dfx', externalId: 'store-1', name: 'ignored' }),
+    });
+    expect(extra.status).toBe(400);
+    expect(await extra.json()).toEqual({ error: 'Place field is not allowed: name' });
     expect(calls).toHaveLength(1);
   });
 
@@ -1077,5 +1122,144 @@ describe('map routes', () => {
       places: Array<{ name: string; activity: string }>;
     };
     expect(after.places.find((row) => row.name === 'Stale Clock')?.activity).toBe('within30Days');
+  });
+});
+
+describe('map routes NOSTR identity and request order', () => {
+  const keyA = keyFor('route-a');
+  const keyB = keyFor('route-b');
+  const npubA = npubEncode(keyA);
+
+  function send(api: ReturnType<typeof rawApp>, method: string, payload: unknown) {
+    return api.request('/map/places', {
+      method,
+      headers: jsonHeaders,
+      body: JSON.stringify(payload),
+    });
+  }
+
+  it('stores a place without a key, answers id null and keeps it off the list', async () => {
+    const api = rawApp({ token: 'secret' });
+    const created = await send(api, 'POST', body);
+    expect(created.status).toBe(201);
+    expect(await created.json()).toMatchObject({ created: true, id: null });
+    const listed = (await (await api.request('/map/places')).json()) as { places: unknown[] };
+    expect(listed.places).toEqual([]);
+  });
+
+  it('answers the npub as id and lists the place once it has a key', async () => {
+    const api = rawApp({ token: 'secret' });
+    await send(api, 'POST', body);
+    const added = await send(api, 'POST', { ...body, nostrPubkey: keyA });
+    expect(added.status).toBe(200);
+    expect(await added.json()).toMatchObject({ created: false, id: npubA });
+    const replaced = await send(api, 'PUT', { ...body, name: 'SPAR Triesen Nord' });
+    expect(replaced.status).toBe(200);
+    expect(await replaced.json()).toMatchObject({ created: false, id: npubA });
+    const listed = (await (await api.request('/map/places')).json()) as {
+      places: Array<{ id: string; name: string }>;
+    };
+    expect(listed.places).toEqual([
+      expect.objectContaining({ id: npubA, name: 'SPAR Triesen Nord' }),
+    ]);
+  });
+
+  it('answers 409 for a changed key and for a key of another place', async () => {
+    const api = rawApp({ token: 'secret' });
+    await send(api, 'PUT', { ...body, nostrPubkey: keyA });
+    const changed = await send(api, 'PUT', { ...body, nostrPubkey: keyB });
+    expect(changed.status).toBe(409);
+    expect(await changed.json()).toEqual({ error: 'nostrPubkey of a place cannot change' });
+    const taken = await send(api, 'POST', { ...body, externalId: 'store-2', nostrPubkey: keyA });
+    expect(taken.status).toBe(409);
+    expect(await taken.json()).toEqual({ error: 'nostrPubkey belongs to another place' });
+  });
+
+  it('answers 400 for an invalid key or revision before any 409', async () => {
+    const api = rawApp({ token: 'secret' });
+    await send(api, 'PUT', { ...body, nostrPubkey: keyA, revision: 5 });
+    const badKey = await send(api, 'PUT', { ...body, nostrPubkey: 'zz', revision: 1 });
+    expect(badKey.status).toBe(400);
+    expect(await badKey.json()).toEqual({ error: 'Place NOSTR public key is invalid' });
+    const badRevision = await send(api, 'POST', { ...body, revision: '6' });
+    expect(badRevision.status).toBe(400);
+    expect(await badRevision.json()).toEqual({ error: 'Place revision is invalid' });
+    const badDelete = await send(api, 'DELETE', {
+      origin: 'dfx',
+      externalId: 'store-1',
+      revision: 0,
+    });
+    expect(badDelete.status).toBe(400);
+  });
+
+  it('refuses a stale revision on POST, PUT and DELETE and keeps it after delete', async () => {
+    const api = rawApp({ token: 'secret' });
+    await send(api, 'PUT', { ...body, nostrPubkey: keyA, revision: 2 });
+    for (const [method, payload] of [
+      ['POST', { ...body, nostrPubkey: keyA, revision: 2 }],
+      ['PUT', { ...body, nostrPubkey: keyA }],
+      ['PUT', { ...body, nostrPubkey: keyB, revision: 1 }],
+      ['DELETE', { origin: 'dfx', externalId: 'store-1', revision: 2 }],
+      ['DELETE', { origin: 'dfx', externalId: 'store-1' }],
+    ] as const) {
+      const stale = await send(api, method, payload);
+      expect(stale.status).toBe(409);
+      expect(await stale.json()).toEqual({ error: 'Stale revision' });
+    }
+    const removed = await send(api, 'DELETE', {
+      origin: 'dfx',
+      externalId: 'store-1',
+      revision: 3,
+    });
+    expect(await removed.json()).toEqual({ deleted: true });
+    const late = await send(api, 'PUT', { ...body, nostrPubkey: keyA, revision: 3 });
+    expect(late.status).toBe(409);
+    const fresh = await send(api, 'PUT', { ...body, nostrPubkey: keyA, revision: 4 });
+    expect(fresh.status).toBe(201);
+  });
+
+  it('serves a listed shop by npub, redirects its hex and caches both', async () => {
+    const api = rawApp({ token: 'secret' });
+    await send(api, 'PUT', { ...body, nostrPubkey: keyA });
+    const detail = await api.request(`/map/places/${npubA}`);
+    expect(detail.status).toBe(200);
+    expect(detail.headers.get('cache-control')).toBe('public, max-age=60');
+    expect(detail.headers.get('access-control-allow-origin')).toBe('*');
+    expect(await detail.json()).toEqual({ place: { ...publicPin, id: npubA } });
+    const hex = await api.request(`/map/places/${keyA}`);
+    expect(hex.status).toBe(301);
+    expect(hex.headers.get('location')).toBe(`/map/places/${npubA}`);
+    expect(hex.headers.get('cache-control')).toBe('public, max-age=60');
+  });
+
+  it('answers 404 for an unlisted shop, an unknown key and anything else', async () => {
+    const api = rawApp({ token: 'secret' });
+    await send(api, 'PUT', { ...body, name: '', nostrPubkey: keyA });
+    for (const segment of [
+      npubA,
+      keyA,
+      npubEncode(keyB),
+      keyB.toUpperCase(),
+      `${npubA.slice(0, -1)}${npubA.endsWith('q') ? 'p' : 'q'}`,
+      'store-1',
+    ]) {
+      const missing = await api.request(`/map/places/${segment}`);
+      expect(missing.status).toBe(404);
+      expect(missing.headers.get('cache-control')).toBe('public, max-age=60');
+      expect(await missing.json()).toEqual({ error: 'Place not found' });
+    }
+  });
+
+  it('answers 503 without caching when the store fails', async () => {
+    class FailingStore extends MemoryMapPlaceStore {
+      override findPublicByPubkey(): undefined {
+        throw new Error('store down');
+      }
+    }
+    const api = rawApp({ store: new FailingStore() });
+    const failed = await api.request(`/map/places/${npubA}`);
+    expect(failed.status).toBe(503);
+    expect(failed.headers.get('cache-control')).toBe('no-store');
+    expect(await failed.json()).toEqual({ error: 'Places are unavailable' });
   });
 });

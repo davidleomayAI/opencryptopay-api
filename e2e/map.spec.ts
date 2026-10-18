@@ -1,5 +1,19 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { expect, test } from '@playwright/test';
+import { isNostrPubkey, npubEncode } from '../src/lib/map/nostr-key';
+
+/** A valid NIP-01 key derived from a label, so each test shop has its own. */
+function keyFor(label: string): string {
+  for (let round = 0; ; round += 1) {
+    const candidate = createHash('sha256')
+      .update(`${label}:${String(round)}`)
+      .digest('hex');
+    if (isNostrPubkey(candidate)) {
+      return candidate;
+    }
+  }
+}
 
 const DESCRIPTION =
   'SPAR supermarket in Triesen. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
@@ -24,8 +38,22 @@ function completePlace(overrides: Record<string, unknown> = {}): Record<string, 
     city: 'Triesen',
     country: 'LI',
     ...overrides,
+    nostrPubkey:
+      overrides['nostrPubkey'] ??
+      keyFor(
+        `${String(overrides['origin'] ?? 'dfx')}/${String(overrides['externalId'] ?? 'e2e-store')}`,
+      ),
   };
 }
+
+/** A complete pin without a key, as a source sends it before step 3. */
+function keylessPlace(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const place = completePlace(overrides);
+  delete place['nostrPubkey'];
+  return place;
+}
+
+const ingest = { Authorization: 'Bearer e2e-ingest' };
 
 const body = completePlace();
 
@@ -926,4 +954,135 @@ test('Function: normalizePlaceTransaction — a future occurredAt beyond skew is
 test('Function: SqliteMapPlaceStore — old schema hides incomplete rows; listAll returns incomplete rows and loads supports in chunks', () => {
   const stdout = execFileSync('bun', ['e2e/sqlite-backfill.ts'], { encoding: 'utf8' });
   expect(stdout.trim()).toBe('ok');
+});
+
+test('Function: isNostrPubkey — an invalid key is 400 and a shop without a key stays off the list', async ({
+  request,
+}) => {
+  const invalid = await request.post('/map/places', {
+    headers: ingest,
+    data: completePlace({ externalId: 'e2e-bad-key', nostrPubkey: 'f'.repeat(64) }),
+  });
+  expect(invalid.status()).toBe(400);
+  expect(await invalid.json()).toEqual({ error: 'Place NOSTR public key is invalid' });
+  const keyless = await request.post('/map/places', {
+    headers: ingest,
+    data: keylessPlace({ externalId: 'e2e-keyless', name: 'Keyless SPAR' }),
+  });
+  expect(keyless.status()).toBe(201);
+  expect(await keyless.json()).toMatchObject({ created: true, id: null });
+  const listed = (await (await request.get('/map/places')).json()) as {
+    places: Array<{ name: string }>;
+  };
+  expect(listed.places.some((row) => row.name === 'Keyless SPAR')).toBe(false);
+});
+
+test('Function: npubEncode — the answer id is the npub and GET /map/places/:id serves the shop', async ({
+  request,
+}) => {
+  const key = keyFor('e2e-identity');
+  const npub = npubEncode(key);
+  await request.post('/map/places', {
+    headers: ingest,
+    data: keylessPlace({ externalId: 'e2e-identity', name: 'Identity SPAR' }),
+  });
+  const added = await request.post('/map/places', {
+    headers: ingest,
+    data: completePlace({ externalId: 'e2e-identity', name: 'Identity SPAR', nostrPubkey: key }),
+  });
+  expect(added.status()).toBe(200);
+  expect(await added.json()).toMatchObject({ created: false, id: npub });
+  const detail = await request.get(`/map/places/${npub}`);
+  expect(detail.status()).toBe(200);
+  expect(detail.headers()['cache-control']).toBe('public, max-age=60');
+  const json = (await detail.json()) as { place: { id: string; name: string } };
+  expect(json.place).toMatchObject({ id: npub, name: 'Identity SPAR' });
+  const listed = (await (await request.get('/map/places')).json()) as {
+    places: Array<{ id: string }>;
+  };
+  expect(listed.places.some((row) => row.id === npub)).toBe(true);
+  const hex = await request.get(`/map/places/${key}`, { maxRedirects: 0 });
+  expect(hex.status()).toBe(301);
+  expect(hex.headers()['location']).toBe(`/map/places/${npub}`);
+});
+
+test('Function: npubDecode — GET /map/places/:id answers 404 for anything that is not a listed shop', async ({
+  request,
+}) => {
+  const literal = await request.get('/map/places/:id');
+  expect(literal.status()).toBe(404);
+  expect(await literal.json()).toEqual({ error: 'Place not found' });
+  const unknown = await request.get(`/map/places/${npubEncode(keyFor('e2e-never-stored'))}`);
+  expect(unknown.status()).toBe(404);
+  expect(unknown.headers()['cache-control']).toBe('public, max-age=60');
+});
+
+test('Function: placeWriteConflict — a changed key, a taken key and a stale revision are 409', async ({
+  request,
+}) => {
+  const key = keyFor('e2e-conflict');
+  const first = await request.put('/map/places', {
+    headers: ingest,
+    data: completePlace({ externalId: 'e2e-conflict', nostrPubkey: key, revision: 2 }),
+  });
+  expect(first.status()).toBe(201);
+  const changed = await request.put('/map/places', {
+    headers: ingest,
+    data: completePlace({
+      externalId: 'e2e-conflict',
+      nostrPubkey: keyFor('e2e-conflict-other'),
+      revision: 3,
+    }),
+  });
+  expect(changed.status()).toBe(409);
+  expect(await changed.json()).toEqual({ error: 'nostrPubkey of a place cannot change' });
+  const taken = await request.post('/map/places', {
+    headers: ingest,
+    data: completePlace({ externalId: 'e2e-conflict-2', nostrPubkey: key }),
+  });
+  expect(taken.status()).toBe(409);
+  expect(await taken.json()).toEqual({ error: 'nostrPubkey belongs to another place' });
+  const stale = await request.put('/map/places', {
+    headers: ingest,
+    data: completePlace({ externalId: 'e2e-conflict', nostrPubkey: key, revision: 2 }),
+  });
+  expect(stale.status()).toBe(409);
+  expect(await stale.json()).toEqual({ error: 'Stale revision' });
+});
+
+test('Function: normalizeMapPlaceDelete — DELETE refuses another key, keeps the revision and the reservation', async ({
+  request,
+}) => {
+  const key = keyFor('e2e-delete-order');
+  await request.put('/map/places', {
+    headers: ingest,
+    data: completePlace({ externalId: 'e2e-delete-order', nostrPubkey: key, revision: 1 }),
+  });
+  const extra = await request.delete('/map/places', {
+    headers: ingest,
+    data: { origin: 'dfx', externalId: 'e2e-delete-order', name: 'x' },
+  });
+  expect(extra.status()).toBe(400);
+  expect(await extra.json()).toEqual({ error: 'Place field is not allowed: name' });
+  const stale = await request.delete('/map/places', {
+    headers: ingest,
+    data: { origin: 'dfx', externalId: 'e2e-delete-order', revision: 1 },
+  });
+  expect(stale.status()).toBe(409);
+  const removed = await request.delete('/map/places', {
+    headers: ingest,
+    data: { origin: 'dfx', externalId: 'e2e-delete-order', revision: 2 },
+  });
+  expect(await removed.json()).toEqual({ deleted: true });
+  const late = await request.put('/map/places', {
+    headers: ingest,
+    data: completePlace({ externalId: 'e2e-delete-order', nostrPubkey: key, revision: 2 }),
+  });
+  expect(late.status()).toBe(409);
+  const moved = await request.post('/map/places', {
+    headers: ingest,
+    data: completePlace({ externalId: 'e2e-delete-moved', nostrPubkey: key }),
+  });
+  expect(moved.status()).toBe(409);
+  expect(await moved.json()).toEqual({ error: 'nostrPubkey belongs to another place' });
 });

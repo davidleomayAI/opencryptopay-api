@@ -3,15 +3,19 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { pushMapPlace, type FetchLike, type MapPushResult } from '@/lib/map/btcmap';
 import { publicFilterResponse } from '@/lib/map/filter-catalog';
+import { isNostrPubkey, npubDecode, npubEncode } from '@/lib/map/nostr-key';
 import {
   normalizeMapPlace,
+  normalizeMapPlaceDelete,
   normalizeMapPlaceFilter,
-  normalizeMapPlaceKey,
   normalizePlaceOrigin,
   normalizePlaceTransaction,
   toPublicMapPlace,
 } from '@/lib/map/place';
-import type { MapPlaceListFilter, MapPlaceStore } from '@/lib/map/store';
+import type { MapPlaceListFilter, MapPlaceStore, MapPlaceWriteError } from '@/lib/map/store';
+
+/** Cache rule of `GET /map/places/{npub}` on 200, 301 and 404. */
+const DETAIL_CACHE = 'public, max-age=60';
 
 export type MapRouteDeps = {
   store: MapPlaceStore;
@@ -49,7 +53,9 @@ function checkIngest(
  *
  * @param deps - Store, BTC Map environment, and fetch.
  * @param raw - Request JSON, or null when the body is not JSON.
- * @returns 400 with the validator message, 201 when inserted, or 200 when replaced.
+ * @returns 400 with the validator message, 409 for a stale revision or a key
+ * conflict (R7, R8), 201 when inserted, or 200 when replaced. `id` is the npub,
+ * or null for a place stored without a key.
  */
 export async function putPlace(
   deps: {
@@ -60,39 +66,55 @@ export async function putPlace(
   raw: unknown,
 ): Promise<
   | { status: 400; body: { error: string } }
-  | { status: 200 | 201; body: { created: boolean; id: string; btcmap: MapPushResult } }
+  | { status: 409; body: { error: MapPlaceWriteError } }
+  | { status: 200 | 201; body: { created: boolean; id: string | null; btcmap: MapPushResult } }
 > {
   const parsed = normalizeMapPlace(raw);
   if (!parsed.ok) {
     return { status: 400, body: { error: parsed.error } };
   }
-  const { created, place } = deps.store.upsert(parsed.value);
+  const result = deps.store.upsert(parsed.value, parsed.revision);
+  if (!result.ok) {
+    return { status: 409, body: { error: result.error } };
+  }
+  const { created, place } = result;
   let btcmap: MapPushResult = 'skipped';
   if (created) {
     btcmap = await pushMapPlace(place, deps.env, deps.fetchImpl);
   }
-  return { status: created ? 201 : 200, body: { created, id: place.id, btcmap } };
+  const id = place.nostrPubkey === null ? null : npubEncode(place.nostrPubkey);
+  return { status: created ? 201 : 200, body: { created, id, btcmap } };
 }
 
 /**
  * Remove one map pin by origin and external id.
- * Same validation as `DELETE /map/places`. A missing pair is `{ deleted: false }`.
- * An own property `id` is rejected and nothing is deleted. Other extra fields are ignored.
+ * Same validation as `DELETE /map/places`: exactly `origin`, `externalId` and an
+ * optional `revision`. A missing pair is `{ deleted: false }`.
  *
  * @param deps - Store.
  * @param raw - Request JSON, or null when the body is not JSON.
- * @returns 400 with the validator message, or 200 `{ deleted }`.
+ * @returns 400 with the validator message, 409 `Stale revision` (R8), or 200 `{ deleted }`.
  */
 export function deletePlace(
   deps: { store: MapPlaceStore },
   raw: unknown,
-): { status: 400; body: { error: string } } | { status: 200; body: { deleted: boolean } } {
-  const parsed = normalizeMapPlaceKey(raw);
+):
+  | { status: 400; body: { error: string } }
+  | { status: 409; body: { error: 'Stale revision' } }
+  | { status: 200; body: { deleted: boolean } } {
+  const parsed = normalizeMapPlaceDelete(raw);
   if (!parsed.ok) {
     return { status: 400, body: { error: parsed.error } };
   }
-  const deleted = deps.store.deleteByKey(parsed.value.origin, parsed.value.externalId);
-  return { status: 200, body: { deleted } };
+  const result = deps.store.deleteByKey(
+    parsed.value.origin,
+    parsed.value.externalId,
+    parsed.revision,
+  );
+  if (!result.ok) {
+    return { status: 409, body: { error: result.error } };
+  }
+  return { status: 200, body: { deleted: result.deleted } };
 }
 
 /**
@@ -152,6 +174,26 @@ export function mapRoutes(deps: MapRouteDeps): Hono {
     return c.json({ places });
   });
 
+  app.get('/places/:id', (c) => {
+    const segment = c.req.param('id');
+    const fromNpub = npubDecode(segment);
+    const pubkey = fromNpub ?? (isNostrPubkey(segment) ? segment : null);
+    try {
+      const place = pubkey === null ? undefined : deps.store.findPublicByPubkey(pubkey);
+      c.header('Cache-Control', DETAIL_CACHE);
+      if (place === undefined) {
+        return c.json({ error: 'Place not found' }, 404);
+      }
+      if (fromNpub === null) {
+        return c.redirect(`/map/places/${npubEncode(segment)}`, 301);
+      }
+      return c.json({ place: toPublicMapPlace(place) });
+    } catch {
+      c.header('Cache-Control', 'no-store');
+      return c.json({ error: 'Places are unavailable' }, 503);
+    }
+  });
+
   app.get('/filters', (c) => {
     const parsed = normalizeMapPlaceFilter(
       undefined,
@@ -180,12 +222,17 @@ export function mapRoutes(deps: MapRouteDeps): Hono {
     if (!parsed.ok) {
       return c.json({ error: parsed.error }, 400);
     }
-    const { created, place } = deps.store.insertIfNew(parsed.value);
+    const result = deps.store.insertIfNew(parsed.value, parsed.revision);
+    if (!result.ok) {
+      return c.json({ error: result.error }, 409);
+    }
+    const { created, place } = result;
     let btcmap: MapPushResult = 'skipped';
     if (created) {
       btcmap = await pushMapPlace(place, deps.env, deps.fetchImpl);
     }
-    return c.json({ created, id: place.id, btcmap }, created ? 201 : 200);
+    const id = place.nostrPubkey === null ? null : npubEncode(place.nostrPubkey);
+    return c.json({ created, id, btcmap }, created ? 201 : 200);
   });
 
   app.put('/places', async (c) => {

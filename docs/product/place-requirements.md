@@ -99,3 +99,22 @@ and 21.gifts. The same rules apply to both, and to any later source.
   R1 from the transactions it records. A source cannot set the activity.
 - A shop already stored that does not meet R2 to R5 is not served in the public
   list until its source delivers the complete data.
+
+## R7 NOSTR identity
+
+Every shop must state a NOSTR public key, which is its id everywhere, also in
+the public URL `https://opencryptopay.io/{npub}`. The full rules are in
+[shop-identity.md](shop-identity.md).
+
+- The key is the x-only secp256k1 public key from NIP-01, sent as 64
+  lowercase hex characters, and must be a point on the curve. It is never
+  defaulted, generated or derived by the API.
+- It is unique across all shops of all sources, also over time: once stored
+  for an origin and external id, it stays reserved for that pair, also after
+  the shop is deleted.
+- It is fixed once stored. A shop moves to a new key only by being deleted
+  and registered again.
+- A shop already stored without a key is not served in the public list.
+- A registration or update without a key is rejected once every source sends
+  keys (step 1b in shop-identity.md). Until then such a write is stored, and
+  the shop stays out of the public list.

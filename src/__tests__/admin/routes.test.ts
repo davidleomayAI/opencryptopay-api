@@ -6,6 +6,7 @@ import { signAdminRequest } from '@/lib/admin/signature';
 import type { MapPlaceInput } from '@/lib/map/place';
 import { MemoryMapPlaceStore, type ReplaceByIdInput } from '@/lib/map/store';
 import { createApp } from '@/server';
+import { withKey } from '../map/keys';
 
 const DESCRIPTION =
   'SPAR supermarket in Triesen. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
@@ -268,9 +269,8 @@ describe('admin routes', () => {
 
   it('lists complete and incomplete places', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
-    store.insertIfNew(pin);
-    store.insertIfNew({ ...pin, externalId: 'blank', name: '' });
-    store.insertIfNew({ ...pin, externalId: 'cash', paymentMethods: null, name: 'Cash Shop' });
+    store.insertIfNew(withKey(pin));
+    store.insertIfNew(withKey({ ...pin, externalId: 'blank', name: '' }));
     const response = await bind(build({ store }))('GET', '/admin/places');
     expect(response.status).toBe(200);
     const listed = (await response.json()) as {

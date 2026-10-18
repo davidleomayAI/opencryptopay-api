@@ -1,11 +1,25 @@
 import { Database } from 'bun:sqlite';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { isNostrPubkey } from '../src/lib/map/nostr-key';
 import { placeActivity } from '../src/lib/map/place';
 import type { MapPlaceInput } from '../src/lib/map/place';
 import { SqliteMapPlaceStore } from '../src/lib/map/sqlite';
 import { placeProblems } from '../src/lib/map/store';
+
+/** A valid NIP-01 key derived from a label, so each test row has its own. */
+function keyFor(label: string): string {
+  for (let round = 0; ; round += 1) {
+    const candidate = createHash('sha256')
+      .update(`${label}:${String(round)}`)
+      .digest('hex');
+    if (isNostrPubkey(candidate)) {
+      return candidate;
+    }
+  }
+}
 
 const DESCRIPTION =
   'SPAR supermarket in Triesen. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
@@ -26,6 +40,7 @@ const COMPLETE: MapPlaceInput = {
   city: 'Triesen',
   country: 'LI',
   supports: [],
+  nostrPubkey: keyFor('dfx-null'),
 };
 
 const OLD_MAP_PLACE_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS map_place (
@@ -195,6 +210,7 @@ try {
       ...COMPLETE,
       origin: 'dfx',
       externalId: 'bad-time',
+      nostrPubkey: keyFor('bad-time'),
       country: 'AT',
       postalCode: '1010',
       city: 'Wien',
@@ -213,7 +229,9 @@ try {
     const afterBad = store.list(20);
     const afterBadCountries = store.filters().countries;
     if (
-      published.created === false &&
+      published.ok &&
+      !published.created &&
+      columns.includes('nostr_pubkey') &&
       afterPut.length === 1 &&
       afterPut[0]?.externalId === 'dfx-null' &&
       afterPut[0]?.country === 'LI' &&
@@ -229,7 +247,7 @@ try {
     } else {
       process.stdout.write(
         `${JSON.stringify({
-          published: published.created,
+          published,
           afterPut: afterPut.map((row) => row.externalId),
           afterCountries,
           afterBad: afterBad.map((row) => row.externalId),
@@ -274,10 +292,15 @@ if (schemaOk) {
   let listStore: SqliteMapPlaceStore | undefined;
   try {
     listStore = new SqliteMapPlaceStore(listFile);
-    const complete = listStore.insertIfNew({ ...COMPLETE, externalId: 'complete' });
+    const complete = listStore.insertIfNew({
+      ...COMPLETE,
+      externalId: 'complete',
+      nostrPubkey: keyFor('complete'),
+    });
     const incomplete = listStore.insertIfNew({
       ...COMPLETE,
       externalId: 'incomplete',
+      nostrPubkey: keyFor('incomplete'),
       name: '',
     });
     const order = new Database(listFile);
@@ -296,6 +319,7 @@ if (schemaOk) {
       listStore.insertIfNew({
         ...COMPLETE,
         externalId: `bulk-${String(index)}`,
+        nostrPubkey: keyFor(`bulk-${String(index)}`),
         name: `Bulk Place ${String(index)}`,
         supports: [{ blockchain: 'Bitcoin', asset: `BTC-${String(index)}` }],
       });
@@ -315,7 +339,9 @@ if (schemaOk) {
     const negativeYearProblems = negativeYear === undefined ? [] : placeProblems(negativeYear);
     const negativeYearHidden = listStore.list(1000).every((row) => row.externalId !== 'complete');
     if (
+      complete.ok &&
       complete.created &&
+      incomplete.ok &&
       incomplete.created &&
       initialAll.length === 2 &&
       initialAll[0]?.externalId === 'incomplete' &&
@@ -371,7 +397,125 @@ if (schemaOk) {
   }
 }
 
+let identityOk = false;
 if (schemaOk && listAllOk) {
+  const identityDir = mkdtempSync(join(tmpdir(), 'sqlite-identity-'));
+  const identityFile = join(identityDir, 'map.sqlite');
+  let identityStore: SqliteMapPlaceStore | undefined;
+  try {
+    identityStore = new SqliteMapPlaceStore(identityFile);
+    const keyA = keyFor('identity-a');
+    const keyB = keyFor('identity-b');
+    const keyC = keyFor('identity-c');
+    const base: MapPlaceInput = { ...COMPLETE, externalId: 'identity-1' };
+    const keyless: MapPlaceInput = { ...base };
+    delete keyless.nostrPubkey;
+    const noKey = identityStore.insertIfNew(keyless, 1);
+    const hiddenWithoutKey = identityStore
+      .list(1000)
+      .every((row) => row.externalId !== 'identity-1');
+    const staleSame = identityStore.upsert({ ...base, nostrPubkey: keyA }, 1);
+    const staleMissing = identityStore.upsert({ ...base, nostrPubkey: keyA });
+    const addKey = identityStore.insertIfNew({ ...base, nostrPubkey: keyA }, 2);
+    const changed = identityStore.upsert({ ...base, nostrPubkey: keyB }, 3);
+    const keptOnPut = identityStore.upsert({ ...keyless, name: 'SPAR Triesen Nord' }, 3);
+    const otherPair = identityStore.insertIfNew(
+      { ...base, externalId: 'identity-2', nostrPubkey: keyA },
+      1,
+    );
+    const found = identityStore.findPublicByPubkey(keyA);
+    const missing = identityStore.findPublicByPubkey(keyC);
+    const deleteStale = identityStore.deleteByKey('dfx', 'identity-1', 3);
+    const deleted = identityStore.deleteByKey('dfx', 'identity-1', 4);
+    const deletedAgain = identityStore.deleteByKey('dfx', 'identity-1', 5);
+    const lateOld = identityStore.upsert({ ...base, nostrPubkey: keyA }, 5);
+    const reuseOld = identityStore.insertIfNew({ ...base, nostrPubkey: keyA }, 6);
+    const afterReuse = identityStore.findPublicByPubkey(keyA);
+    identityStore.deleteByKey('dfx', 'identity-1', 7);
+    const takenAfterDelete = identityStore.insertIfNew(
+      { ...base, externalId: 'identity-3', nostrPubkey: keyA },
+      undefined,
+    );
+    const newKey = identityStore.insertIfNew({ ...base, nostrPubkey: keyC }, 8);
+    if (
+      noKey.ok &&
+      noKey.created &&
+      noKey.place.nostrPubkey === null &&
+      hiddenWithoutKey &&
+      !staleSame.ok &&
+      staleSame.error === 'Stale revision' &&
+      !staleMissing.ok &&
+      staleMissing.error === 'Stale revision' &&
+      addKey.ok &&
+      !addKey.created &&
+      addKey.place.nostrPubkey === keyA &&
+      !changed.ok &&
+      changed.error === 'nostrPubkey of a place cannot change' &&
+      keptOnPut.ok &&
+      keptOnPut.place.nostrPubkey === keyA &&
+      keptOnPut.place.name === 'SPAR Triesen Nord' &&
+      !otherPair.ok &&
+      otherPair.error === 'nostrPubkey belongs to another place' &&
+      found?.externalId === 'identity-1' &&
+      missing === undefined &&
+      !deleteStale.ok &&
+      deleted.ok &&
+      deleted.deleted &&
+      deletedAgain.ok &&
+      !deletedAgain.deleted &&
+      !lateOld.ok &&
+      lateOld.error === 'Stale revision' &&
+      reuseOld.ok &&
+      reuseOld.created &&
+      afterReuse?.externalId === 'identity-1' &&
+      !takenAfterDelete.ok &&
+      takenAfterDelete.error === 'nostrPubkey belongs to another place' &&
+      newKey.ok &&
+      newKey.place.nostrPubkey === keyC
+    ) {
+      identityOk = true;
+    } else {
+      process.stdout.write(
+        `${JSON.stringify({
+          noKey,
+          hiddenWithoutKey,
+          staleSame,
+          staleMissing,
+          addKey: addKey.ok,
+          changed,
+          keptOnPut: keptOnPut.ok,
+          otherPair,
+          found: found?.externalId,
+          missing,
+          deleteStale,
+          deleted,
+          deletedAgain,
+          lateOld,
+          reuseOld: reuseOld.ok,
+          afterReuse: afterReuse?.externalId,
+          takenAfterDelete,
+          newKey: newKey.ok,
+        })}\n`,
+      );
+      process.exitCode = 1;
+    }
+  } catch (error) {
+    process.stdout.write(
+      `${JSON.stringify({ error: error instanceof Error ? error.message : error })}\n`,
+    );
+    process.exitCode = 1;
+  } finally {
+    try {
+      if (identityStore !== undefined) {
+        identityStore.close();
+      }
+    } finally {
+      rmSync(identityDir, { recursive: true, force: true });
+    }
+  }
+}
+
+if (schemaOk && listAllOk && identityOk) {
   const activityDir = mkdtempSync(join(tmpdir(), 'sqlite-activity-backfill-'));
   const activityFile = join(activityDir, 'map.sqlite');
   let activitySeed: Database | undefined;
