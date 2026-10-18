@@ -59,7 +59,7 @@ Pull requests target `develop`. A push there publishes `dfxswiss/opencryptopay-a
 
 ## Checks
 
-`bun run typecheck`, `bun run lint`, `bun run handbook:check`, `bun run e2e:check`, `bun run test:coverage`, `bun run build`, and `bun run e2e`. Coverage on `src` is 100 percent. `src/index.ts` is the process entry and is exercised by the HTTP end-to-end run.
+`bun run typecheck`, `bun run lint`, `bun run handbook:check`, `bun run e2e:check`, `bun run test:coverage`, `bun run test:schema`, `node --test scripts/db-change-notice.test.mjs`, `bun run build`, and `bun run e2e`. Coverage on `src` is 100 percent. `src/index.ts` is the process entry and is exercised by the HTTP end-to-end run.
 
 ## Product notes
 

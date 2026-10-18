@@ -25,11 +25,11 @@ Before a change is ready, run the same commands CI runs. Bun is pinned to `1.3.1
 
 - `bun run typecheck`
 - `bun run lint` (ESLint and Prettier)
-- `node --test scripts/db-change-notice.test.mjs`
 - `bun run handbook:check` — every exported function and every HTTP route has a handbook section
 - `bun run e2e:check` — every exported function and every HTTP route has an end-to-end title or request
 - `bun run test:coverage` — 100 percent lines, branches, functions, and statements under `src`, except `src/index.ts`
 - `bun run test:schema` — `docs/database/` matches the schema `SqliteMapPlaceStore` creates at boot (regenerate with `bun run db:docs`)
+- `node --test scripts/db-change-notice.test.mjs` — tests of the database change notice script
 - `bun run build`
 - `bun run e2e` — HTTP checks against `GET /`, `GET /healthz`, `/map/places`, and `/admin/places`
 
@@ -42,13 +42,13 @@ Do not lower a coverage threshold to land a change. A genuinely unreachable bran
 
 ## CI / CD
 
-| Workflow                | Trigger                                                               | Action                                                                                            |
-| ----------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `ci.yaml`               | Pull request, and push to `develop`                                   | Typecheck, lint, handbook, e2e-check, test (100% coverage), database schema reference, build, e2e |
-| `db-change-notice.yaml` | Pull request into `develop` (opened, edited, synchronize, reopened)   | Require the database change notice                                                                |
-| `publish-dev.yaml`      | Push to `develop`, except Markdown-only, or a manual run on `develop` | Build and push `dfxswiss/opencryptopay-api:beta`                                                  |
-| `publish-prd.yaml`      | Push to `main`, except Markdown-only, or a manual run on `main`       | Build and push `dfxswiss/opencryptopay-api:latest`                                                |
-| `auto-release-pr.yaml`  | Push to `develop`                                                     | Open the release pull request (`develop` → `main`) when there is a diff                           |
+| Workflow                | Trigger                                                               | Action                                                                                                                 |
+| ----------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `ci.yaml`               | Pull request, and push to `develop`                                   | Typecheck, lint, handbook, e2e-check, test (100% coverage), database schema reference, notice script tests, build, e2e |
+| `db-change-notice.yaml` | Pull request into `develop` (opened, edited, synchronize, reopened)   | Require the database change notice                                                                                     |
+| `publish-dev.yaml`      | Push to `develop`, except Markdown-only, or a manual run on `develop` | Build and push `dfxswiss/opencryptopay-api:beta`                                                                       |
+| `publish-prd.yaml`      | Push to `main`, except Markdown-only, or a manual run on `main`       | Build and push `dfxswiss/opencryptopay-api:latest`                                                                     |
+| `auto-release-pr.yaml`  | Push to `develop`                                                     | Open the release pull request (`develop` → `main`) when there is a diff                                                |
 
 Images are `linux/arm64`. The publish workflows push the image and do not deploy it.
 

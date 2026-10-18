@@ -29,16 +29,23 @@ jobs:
       # No pull request code runs in this job: source files are only read as text, the tests of the
       # notice script run in ci.yaml, and the decision is made by the base branch's copy of
       # db-change-notice.mjs, so a pull request cannot turn its own check green by editing the
-      # script. The pull request's copy is used only while the base does not have the script yet.
+      # script. Without a base copy the job fails; the pull request's copy is never imported.
+      # The rules come from the current tip of the base branch (the default ref of
+      # pull_request_target); the base text of changed files comes from the pull request's base.
+      - name: Checkout rules
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          path: notice-rules
+          sparse-checkout: scripts
+
       - name: Checkout base
         uses: actions/checkout@v4
         with:
           persist-credentials: false
           ref: ${{ github.event.pull_request.base.sha }}
           path: notice-base
-          sparse-checkout: |
-            scripts
-            src
+          sparse-checkout: src
 
       - name: Checkout pull request
         uses: actions/checkout@v4
@@ -69,7 +76,7 @@ jobs:
               }
             };
             const { pathToFileURL } = require('node:url');
-            const basePath = `${process.env.GITHUB_WORKSPACE}/notice-base/scripts/db-change-notice.mjs`;
+            const basePath = `${process.env.GITHUB_WORKSPACE}/notice-rules/scripts/db-change-notice.mjs`;
             // Only the base copy is ever imported: this job runs with the base repository's token, so
             // pull request code must not run in it. Without a base copy there is nothing to decide with.
             if (!existsSync(basePath)) {
