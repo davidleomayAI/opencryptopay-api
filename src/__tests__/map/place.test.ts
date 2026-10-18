@@ -1098,6 +1098,15 @@ describe('normalizePlaceTransaction', () => {
     });
   });
 
+  it('rejects an occurredAt whose year is not four digits', () => {
+    expect(
+      normalizePlaceTransaction({ ...key, occurredAt: '-000001-01-01T00:00:00Z' }, nowMs),
+    ).toEqual({
+      ok: false,
+      error: 'Place transaction time is invalid',
+    });
+  });
+
   it('accepts exactly 120 seconds of future skew and rejects one millisecond later', () => {
     const atSkew = nowMs + 120_000;
     expect(

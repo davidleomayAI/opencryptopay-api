@@ -112,7 +112,8 @@ function copyStoredPlace(place: StoredMapPlace): StoredMapPlace {
  * Empty when the pin is complete.
  * A row is complete when name, description, street, house number, postal code,
  * city, and country are non-empty, shop type is SPAR or Others, and
- * lastTransactionAt is null or a parseable instant.
+ * lastTransactionAt is null or a parseable instant with a four-digit year, which
+ * is what SQLite `julianday()` reads.
  *
  * @param place - Stored pin, including an incomplete row.
  * @returns The problems, in check order. No I/O.
@@ -145,7 +146,8 @@ export function placeProblems(place: StoredMapPlace): string[] {
   }
   const lastTransactionAt = place.lastTransactionAt;
   const lastInstantOk =
-    lastTransactionAt === null || Number.isFinite(Date.parse(lastTransactionAt));
+    lastTransactionAt === null ||
+    (/^\d{4}-/u.test(lastTransactionAt) && Number.isFinite(Date.parse(lastTransactionAt)));
   if (!lastInstantOk) {
     problems.push('lastTransactionAt is not a valid instant');
   }

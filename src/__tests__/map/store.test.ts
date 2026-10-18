@@ -681,6 +681,9 @@ describe('placeProblems', () => {
     expect(placeProblems({ ...place, lastTransactionAt: 'not-a-date' })).toEqual([
       'lastTransactionAt is not a valid instant',
     ]);
+    expect(placeProblems({ ...place, lastTransactionAt: '-000001-01-01T00:00:00.000Z' })).toEqual([
+      'lastTransactionAt is not a valid instant',
+    ]);
   });
 
   it('returns no problems for a complete pin', () => {
