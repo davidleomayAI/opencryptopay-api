@@ -430,6 +430,15 @@ describe('readRawSchema', () => {
 
     db.close();
   });
+
+  test('treats a foreign key that is the sole INTEGER PRIMARY KEY as one-to-one', () => {
+    const db = openSchema('CREATE TABLE extension (id INTEGER PRIMARY KEY REFERENCES parent(id));');
+    const model = modelOf(readRawSchema(db), new Map());
+    db.close();
+    const relation = tableModel(model, 'extension').foreignKeys.find((fk) => fk.column === 'id');
+    expect(relation?.unique).toBe(true);
+    expect(relation?.identifying).toBe(true);
+  });
 });
 
 describe('renderPages', () => {

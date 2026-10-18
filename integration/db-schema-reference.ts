@@ -509,14 +509,17 @@ function buildTableModel(
     const source = columns.find((column) => column.name === foreignKey.from);
     if (refColumn === null || source === undefined) continue;
     const alone = (sequencesById.get(foreignKey.id) ?? 0) === 1;
+    // A sole `INTEGER PRIMARY KEY` is the rowid and has no row in `PRAGMA index_list`.
+    const keyColumns = primaryKeyColumns(columns);
+    const soleKey = keyColumns.length === 1 && keyColumns[0]?.name === foreignKey.from;
     foreignKeyModels.push({
       table: table.name,
       column: foreignKey.from,
       refTable: foreignKey.refTable,
       refColumn,
       nullable: !source.notNull,
-      unique: alone && columnAloneUnique(table.indexes, foreignKey.from),
-      identifying: primaryKeyColumns(columns).some((column) => column.name === foreignKey.from),
+      unique: alone && (soleKey || columnAloneUnique(table.indexes, foreignKey.from)),
+      identifying: keyColumns.some((column) => column.name === foreignKey.from),
     });
   }
   foreignKeyModels.sort(
