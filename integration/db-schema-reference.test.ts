@@ -293,10 +293,12 @@ describe('baseKind / columnKind / camelCase / renderDefault / cardinality / comp
   });
 
   test('covers every nullability and uniqueness pair', () => {
-    expect(cardinality(true, false)).toBe('}o--o|');
-    expect(cardinality(false, false)).toBe('}o--||');
-    expect(cardinality(true, true)).toBe('|o--o|');
-    expect(cardinality(false, true)).toBe('|o--||');
+    expect(cardinality(true, false, false)).toBe('}o..o|');
+    expect(cardinality(false, false, false)).toBe('}o..||');
+    expect(cardinality(true, true, false)).toBe('|o..o|');
+    expect(cardinality(false, true, false)).toBe('|o..||');
+    expect(cardinality(false, false, true)).toBe('}o--||');
+    expect(cardinality(false, true, true)).toBe('|o--||');
   });
 
   test('reports missing, differing, and stale paths in sorted order', () => {
@@ -452,7 +454,7 @@ describe('renderPages', () => {
     expect(parentPage).toContain('## Referenced by');
     expect(parentPage).toContain('## Relations');
     expect(pages.get('docs/database/tables/child.md')).toContain('}o--||');
-    expect(pages.get('docs/database/tables/solo.md')).toContain('|o--o|');
+    expect(pages.get('docs/database/tables/solo.md')).toContain('|o..o|');
 
     const again = await renderPages(modelOf(tables, enums), sources, REPO_ROOT);
     expect(again).toEqual(pages);

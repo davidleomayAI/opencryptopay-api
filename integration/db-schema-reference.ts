@@ -86,6 +86,7 @@ export type ForeignKeyModel = {
   refColumn: string;
   nullable: boolean;
   unique: boolean;
+  identifying: boolean;
 };
 
 /**
@@ -190,13 +191,17 @@ export function renderDefault(defaultValue: string | null): string {
  * Uniqueness is the key's own uniqueness, not a multi-column unique that merely covers it.
  * One-to-one (the key is unique on its own): the child side is always optional-one `|o`, and the
  * parent side is `||` for a NOT NULL foreign key and `o|` for a nullable one (`|o--||` / `|o--o|`).
+ * The line is solid (`--`) for an identifying relationship, whose column is part of the child's
+ * primary key, and dashed (`..`) otherwise, as Mermaid defines them.
  */
 export function cardinality(
   fkNullable: boolean,
   fkAloneUnique: boolean,
-): '}o--o|' | '}o--||' | '|o--o|' | '|o--||' {
-  if (!fkAloneUnique) return fkNullable ? '}o--o|' : '}o--||';
-  return fkNullable ? '|o--o|' : '|o--||';
+  fkIdentifying: boolean,
+): `${'}o' | '|o'}${'--' | '..'}${'o|' | '||'}` {
+  const child = fkAloneUnique ? '|o' : '}o';
+  const line = fkIdentifying ? '--' : '..';
+  return `${child}${line}${fkNullable ? 'o|' : '||'}`;
 }
 
 /**
@@ -511,6 +516,7 @@ function buildTableModel(
       refColumn,
       nullable: !source.notNull,
       unique: alone && columnAloneUnique(table.indexes, foreignKey.from),
+      identifying: primaryKeyColumns(columns).some((column) => column.name === foreignKey.from),
     });
   }
   foreignKeyModels.sort(
@@ -674,7 +680,7 @@ function renderRelations(
         .filter((foreignKey) => foreignKey.table === tableName || foreignKey.refTable === tableName)
         .map(
           (foreignKey) =>
-            `    "${escapeMermaid(foreignKey.table)}" ${cardinality(foreignKey.nullable, foreignKey.unique)} "${escapeMermaid(foreignKey.refTable)}" : "${escapeMermaid(foreignKey.column)}"`,
+            `    "${escapeMermaid(foreignKey.table)}" ${cardinality(foreignKey.nullable, foreignKey.unique, foreignKey.identifying)} "${escapeMermaid(foreignKey.refTable)}" : "${escapeMermaid(foreignKey.column)}"`,
         ),
     ),
   ].sort(compareText);
