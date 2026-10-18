@@ -979,10 +979,11 @@ export function readRawSchema(db: Database): RawTable[] {
       const ordered = [...info].sort(
         (left: { seqno: number }, right: { seqno: number }): number => left.seqno - right.seqno,
       );
-      const indexColumns: string[] = [];
-      for (const part of ordered) {
-        if (part.name !== null) indexColumns.push(part.name);
-      }
+      // An unnamed term is an expression (cid -2) or the rowid (cid -1). It stays in the list, so the
+      // index is documented in full and never matches the column set of a foreign key.
+      const indexColumns = ordered.map(
+        (part) => part.name ?? (part.cid === -1 ? 'rowid' : '(expression)'),
+      );
       return {
         name: indexRow.name,
         unique: indexRow.unique === 1,

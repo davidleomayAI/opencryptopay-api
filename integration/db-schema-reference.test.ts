@@ -454,6 +454,23 @@ describe('readRawSchema', () => {
     expect(pages.get('docs/database/README.md')).toContain('- Foreign keys: 4');
   });
 
+  test('keeps an expression term in a unique index, so it does not make a foreign key unique', () => {
+    const db = openSchema(
+      [
+        'CREATE TABLE tagged (parent_id INTEGER REFERENCES parent (id), tag TEXT);',
+        'CREATE UNIQUE INDEX tagged_parent_tag ON tagged (parent_id, lower(tag));',
+      ].join('\n'),
+    );
+    const model = modelOf(readRawSchema(db), new Map());
+    db.close();
+    const table = tableModel(model, 'tagged');
+    expect(table.indexes.find((index) => index.name === 'tagged_parent_tag')?.columns).toEqual([
+      'parent_id',
+      '(expression)',
+    ]);
+    expect(table.foreignKeys[0]?.unique).toBe(false);
+  });
+
   test('treats a foreign key that is the sole INTEGER PRIMARY KEY as one-to-one', () => {
     const db = openSchema('CREATE TABLE extension (id INTEGER PRIMARY KEY REFERENCES parent(id));');
     const model = modelOf(readRawSchema(db), new Map());
