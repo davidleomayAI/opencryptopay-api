@@ -1173,13 +1173,14 @@ describe('toPublicMapPlace', () => {
       city: 'Triesen',
       country: 'LI',
       supports: [],
+      photos: [],
       lastTransactionAt: null,
       activity: 'none',
       nostrPubkey: null,
       id: 'id-1',
       createdAt: '2026-09-26T00:00:00.000Z',
     };
-    expect(toPublicMapPlace(stored)).toEqual({
+    expect(toPublicMapPlace(stored, 'https://api.test')).toEqual({
       id: null,
       origin: 'dfx',
       name: 'SPAR Triesen',
@@ -1197,6 +1198,7 @@ describe('toPublicMapPlace', () => {
       city: 'Triesen',
       supports: [],
       activity: 'none',
+      coverPhoto: null,
     });
     const hidden = toPublicMapPlace(stored);
     expect(hidden).not.toHaveProperty('externalId');
@@ -1222,13 +1224,14 @@ describe('toPublicMapPlace', () => {
       city: 'Triesen',
       country: 'LI',
       supports,
+      photos: [],
       lastTransactionAt: null,
       activity: 'daily',
       nostrPubkey: '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d',
       id: 'id-1',
       createdAt: '2026-09-26T00:00:00.000Z',
     };
-    const publicPlace = toPublicMapPlace(stored);
+    const publicPlace = toPublicMapPlace(stored, 'https://api.test');
     expect(publicPlace).toEqual({
       id: 'npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6',
       origin: 'dfx',
@@ -1247,6 +1250,7 @@ describe('toPublicMapPlace', () => {
       city: 'Triesen',
       supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
       activity: 'daily',
+      coverPhoto: null,
     });
     publicPlace.supports.push({ blockchain: 'Polygon', asset: 'ETH' });
     expect(stored.supports).toEqual([{ blockchain: 'Ethereum', asset: 'ZCHF' }]);

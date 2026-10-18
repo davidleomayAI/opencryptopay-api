@@ -5,6 +5,7 @@
 
 import { isCatalogAsset, isCatalogBlockchain } from '@/lib/map/filter-catalog';
 import { isNostrPubkey, npubEncode } from '@/lib/map/nostr-key';
+import { photoExtension, type PhotoType } from '@/lib/map/photo-strip';
 
 /** Allowed shop type values. */
 export const SHOP_TYPES = ['SPAR', 'Others'] as const;
@@ -39,8 +40,27 @@ export type MapPlaceInput = {
 
 export type PlaceActivity = 'daily' | 'within7Days' | 'within30Days' | 'olderThan30Days' | 'none';
 
+/** One stored photo of a place, in display order. The file is stored once per hash. */
+export type StoredPlacePhoto = {
+  sha256: string;
+  contentType: PhotoType;
+  width: number;
+  height: number;
+  caption: string | null;
+};
+
+/** A photo as the public API shows it; `url` is absolute. */
+export type PublicPhoto = {
+  url: string;
+  width: number;
+  height: number;
+  caption: string | null;
+};
+
 export type StoredMapPlace = Omit<MapPlaceInput, 'techProvider' | 'nostrPubkey'> & {
   id: string;
+  /** Photos in display order; the first is the cover. */
+  photos: StoredPlacePhoto[];
   /** Null for a row stored without a key; such a row is not complete. */
   nostrPubkey: string | null;
   createdAt: string;
@@ -70,7 +90,12 @@ export type PublicMapPlace = {
   country: string;
   supports: MapPlaceSupport[];
   activity: PlaceActivity;
+  /** The first photo without its caption, or null. */
+  coverPhoto: Omit<PublicPhoto, 'caption'> | null;
 };
+
+/** One shop of `GET /map/places/{npub}`: the list entry plus every photo. */
+export type PublicMapPlaceDetail = PublicMapPlace & { photos: PublicPhoto[] };
 
 /** Query fields that restrict GET /map/places, all optional. */
 export type MapPlaceQueryFilter = {
@@ -1183,14 +1208,25 @@ export function normalizeMapPlaceFilter(
   return { ok: true, value };
 }
 
+function publicPhoto(photo: StoredPlacePhoto, baseUrl: string): PublicPhoto {
+  return {
+    url: `${baseUrl}/map/photos/${photo.sha256}.${photoExtension(photo.contentType)}`,
+    width: photo.width,
+    height: photo.height,
+    caption: photo.caption,
+  };
+}
+
 /**
  * Drop fields that only the ingest caller needs. The id is the shop's npub; the
  * internal UUID never leaves the store.
  *
  * @param place - Stored pin.
- * @returns The public map row, including the stored activity.
+ * @param baseUrl - `OCP_PUBLIC_BASE_URL`, the origin of every photo URL.
+ * @returns The public map row, including the stored activity and the cover photo.
  */
-export function toPublicMapPlace(place: StoredMapPlace): PublicMapPlace {
+export function toPublicMapPlace(place: StoredMapPlace, baseUrl: string): PublicMapPlace {
+  const cover = place.photos[0];
   return {
     id: place.nostrPubkey === null ? null : npubEncode(place.nostrPubkey),
     origin: place.origin,
@@ -1212,5 +1248,31 @@ export function toPublicMapPlace(place: StoredMapPlace): PublicMapPlace {
       asset: item.asset,
     })),
     activity: place.activity,
+    coverPhoto:
+      cover === undefined
+        ? null
+        : {
+            url: publicPhoto(cover, baseUrl).url,
+            width: cover.width,
+            height: cover.height,
+          },
+  };
+}
+
+/**
+ * One shop for `GET /map/places/{npub}`: the list entry plus every photo in
+ * display order.
+ *
+ * @param place - Stored complete pin.
+ * @param baseUrl - `OCP_PUBLIC_BASE_URL`, the origin of every photo URL.
+ * @returns The public detail.
+ */
+export function toPublicMapPlaceDetail(
+  place: StoredMapPlace,
+  baseUrl: string,
+): PublicMapPlaceDetail {
+  return {
+    ...toPublicMapPlace(place, baseUrl),
+    photos: place.photos.map((photo) => publicPhoto(photo, baseUrl)),
   };
 }

@@ -60,6 +60,7 @@ function build(opts?: {
   store?: MemoryMapPlaceStore;
 }): Hono {
   return createApp({
+    publicBaseUrl: 'https://api.test',
     store: opts?.store ?? new MemoryMapPlaceStore(),
     env: {},
     fetchImpl: async () => new Response('{}', { status: 201 }),
@@ -124,6 +125,7 @@ describe('admin routes', () => {
 
   it('uses the real clock when no clock is injected', async () => {
     const api = createApp({
+      publicBaseUrl: 'https://api.test',
       store: new MemoryMapPlaceStore(),
       env: {},
       fetchImpl: async () => new Response('{}', { status: 201 }),

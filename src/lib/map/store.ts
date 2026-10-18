@@ -1,4 +1,6 @@
 import { matchesUnstatedPayment } from '@/lib/map/filter-catalog';
+import type { PreparedPhoto } from '@/lib/map/photo';
+import type { PhotoType } from '@/lib/map/photo-strip';
 import {
   placeActivity,
   type MapPlaceInput,
@@ -6,6 +8,7 @@ import {
   type MapPlaceSupport,
   type PlaceActivity,
   type StoredMapPlace,
+  type StoredPlacePhoto,
 } from '@/lib/map/place';
 
 const DEFAULT_TECH_PROVIDER = 'DFX.swiss';
@@ -64,6 +67,22 @@ CREATE TABLE IF NOT EXISTS map_place_revision (
   external_id TEXT NOT NULL,
   revision INTEGER NOT NULL,
   PRIMARY KEY (origin, external_id)
+);
+CREATE TABLE IF NOT EXISTS map_photo (
+  sha256 TEXT PRIMARY KEY,
+  content_type TEXT NOT NULL CHECK (content_type IN ('image/jpeg', 'image/png', 'image/webp')),
+  width INTEGER NOT NULL CHECK (width BETWEEN 1 AND 4096),
+  height INTEGER NOT NULL CHECK (height BETWEEN 1 AND 4096),
+  data BLOB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS map_place_photo (
+  place_id TEXT NOT NULL,
+  position INTEGER NOT NULL CHECK (position BETWEEN 0 AND 9),
+  sha256 TEXT NOT NULL,
+  caption TEXT,
+  PRIMARY KEY (place_id, position),
+  FOREIGN KEY (place_id) REFERENCES map_place(id) ON DELETE CASCADE,
+  FOREIGN KEY (sha256) REFERENCES map_photo(sha256)
 )`;
 
 /** Optional AND predicates for `list`, applied before sort and limit. */
@@ -80,6 +99,14 @@ export type MapPlaceWriteError =
 /** Outcome of `insertIfNew` and `upsert`. */
 export type MapPlaceWriteResult =
   { ok: true; created: boolean; place: StoredMapPlace } | { ok: false; error: MapPlaceWriteError };
+
+/** Outcome of `replacePhotos`. */
+export type MapPhotoWriteResult =
+  | { ok: true; photos: StoredPlacePhoto[] }
+  | { ok: false; error: 'Place not found' | 'Stale revision' };
+
+/** A stored photo file served by `GET /map/photos/{sha256}.{ext}`. */
+export type MapPhotoFile = { contentType: PhotoType; data: Uint8Array };
 
 /** Outcome of `deleteByKey`. */
 export type MapPlaceDeleteResult =
@@ -173,6 +200,18 @@ function copyStoredPlace(place: StoredMapPlace): StoredMapPlace {
       blockchain: item.blockchain,
       asset: item.asset,
     })),
+    photos: place.photos.map((photo) => ({ ...photo })),
+  };
+}
+
+/** The stored reference of a prepared photo, without its bytes. */
+function storedPhotoOf(photo: PreparedPhoto): StoredPlacePhoto {
+  return {
+    sha256: photo.sha256,
+    contentType: photo.contentType,
+    width: photo.width,
+    height: photo.height,
+    caption: photo.caption,
   };
 }
 
@@ -280,6 +319,7 @@ function toStoredPlace(input: MapPlaceInput, id: string, createdAt: string): Sto
     city: input.city,
     country: input.country,
     supports: storedSupports(input.supports),
+    photos: [],
     nostrPubkey: input.nostrPubkey ?? null,
     lastTransactionAt: null,
     activity: 'none',
@@ -347,6 +387,13 @@ export interface MapPlaceStore {
   ): StoredMapPlace | undefined;
   refreshActivity(nowMs: number): void;
   deleteByKey(origin: string, externalId: string, revision?: number): MapPlaceDeleteResult;
+  replacePhotos(
+    origin: string,
+    nostrPubkey: string,
+    photos: PreparedPhoto[],
+    revision?: number,
+  ): MapPhotoWriteResult;
+  findPublicPhoto(sha256: string): MapPhotoFile | undefined;
   list(limit: number, filter?: MapPlaceListFilter): StoredMapPlace[];
   findPublicByPubkey(pubkey: string): StoredMapPlace | undefined;
   listAll(): StoredMapPlace[];
@@ -369,6 +416,8 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
   readonly #reservations = new Map<string, { origin: string; externalId: string }>();
   /** Highest accepted revision per pair. A place delete keeps it (R8). */
   readonly #revisions = new Map<string, number>();
+  /** Each distinct photo file once, by the hash of its stripped bytes. */
+  readonly #photoFiles = new Map<string, MapPhotoFile>();
   readonly #now: () => Date;
 
   /**
@@ -642,7 +691,77 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
     this.#paymentDays.delete(existing.id);
     this.#activityUntil.delete(existing.id);
     this.#rows.splice(this.#rows.indexOf(existing), 1);
+    this.#dropUnusedPhotos();
     return { ok: true, deleted: true };
+  }
+
+  #dropUnusedPhotos(): void {
+    const used = new Set(this.#rows.flatMap((row) => row.photos.map((photo) => photo.sha256)));
+    for (const sha256 of [...this.#photoFiles.keys()]) {
+      if (!used.has(sha256)) {
+        this.#photoFiles.delete(sha256);
+      }
+    }
+  }
+
+  /**
+   * Replace every photo of the stored place with this key and origin, listed or
+   * not. Files no place uses any more are dropped.
+   *
+   * @param origin - Origin that registered the place.
+   * @param nostrPubkey - The place's key.
+   * @param photos - Prepared photos in display order.
+   * @param revision - Request revision (R8), when sent; it shares the place's counter.
+   * @returns The stored photo list, `Place not found` when no place of that origin
+   * has the key, or `Stale revision`.
+   */
+  replacePhotos(
+    origin: string,
+    nostrPubkey: string,
+    photos: PreparedPhoto[],
+    revision?: number,
+  ): MapPhotoWriteResult {
+    const row = this.#rows.find(
+      (item) => item.nostrPubkey === nostrPubkey && item.origin === origin,
+    );
+    if (row === undefined) {
+      return { ok: false, error: 'Place not found' };
+    }
+    const pair = pairKey(row.origin, row.externalId);
+    const stored = this.#revisions.get(pair);
+    if (stored !== undefined && (revision === undefined || revision <= stored)) {
+      return { ok: false, error: 'Stale revision' };
+    }
+    if (revision !== undefined) {
+      this.#revisions.set(pair, revision);
+    }
+    for (const photo of photos) {
+      if (!this.#photoFiles.has(photo.sha256)) {
+        this.#photoFiles.set(photo.sha256, {
+          contentType: photo.contentType,
+          data: photo.data.slice(),
+        });
+      }
+    }
+    row.photos = photos.map(storedPhotoOf);
+    this.#dropUnusedPhotos();
+    return { ok: true, photos: row.photos.map((photo) => ({ ...photo })) };
+  }
+
+  /**
+   * A photo file that a complete place uses.
+   *
+   * @param sha256 - Hash of the stripped bytes.
+   * @returns A copy of the file, or undefined when no complete place shows it.
+   */
+  findPublicPhoto(sha256: string): MapPhotoFile | undefined {
+    const file = this.#photoFiles.get(sha256);
+    const shown = this.#rows.some(
+      (row) => isCompletePlace(row) && row.photos.some((photo) => photo.sha256 === sha256),
+    );
+    return file === undefined || !shown
+      ? undefined
+      : { contentType: file.contentType, data: file.data.slice() };
   }
 
   /**
@@ -748,5 +867,6 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
     this.#activityUntil.clear();
     this.#reservations.clear();
     this.#revisions.clear();
+    this.#photoFiles.clear();
   }
 }

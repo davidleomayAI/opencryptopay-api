@@ -9,6 +9,8 @@ import {
 } from '@/lib/map/store';
 import type { MapPlaceInput, ShopType } from '@/lib/map/place';
 import { keyFor, keyedStore } from './keys';
+import { base64, simplePng } from './photo-fixtures';
+import { preparePhoto, type PreparedPhoto } from '@/lib/map/photo';
 
 const DESCRIPTION =
   'SPAR supermarket in Triesen. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
@@ -1243,5 +1245,97 @@ describe('MemoryMapPlaceStore NOSTR key and revision', () => {
     expect(store.insertIfNew({ ...input, externalId: 'store-2', nostrPubkey: keyA }, 1).ok).toBe(
       true,
     );
+  });
+});
+
+describe('MemoryMapPlaceStore photos', () => {
+  function photoOf(bytes: Uint8Array, caption?: string): PreparedPhoto {
+    const result = preparePhoto(
+      {
+        contentType: 'image/png',
+        data: base64(bytes),
+        ...(caption === undefined ? {} : { caption }),
+      },
+      0,
+    );
+    if (!result.ok) {
+      throw new Error(result.error);
+    }
+    return result.photo;
+  }
+  const first = photoOf(simplePng(3, 2), 'Front');
+  const second = photoOf(simplePng(5, 4));
+  const keyA = keyFor('photos-a');
+  const keyB = keyFor('photos-b');
+
+  it('finds the place by key and origin, listed or not', () => {
+    const store = new MemoryMapPlaceStore();
+    store.insertIfNew({ ...input, name: '', nostrPubkey: keyA });
+    expect(store.replacePhotos('spar', keyA, [first])).toEqual({
+      ok: false,
+      error: 'Place not found',
+    });
+    expect(store.replacePhotos('dfx', keyB, [first])).toEqual({
+      ok: false,
+      error: 'Place not found',
+    });
+    const stored = store.replacePhotos('dfx', keyA, [first, second]);
+    expect(stored).toEqual({
+      ok: true,
+      photos: [
+        { sha256: first.sha256, contentType: 'image/png', width: 3, height: 2, caption: 'Front' },
+        { sha256: second.sha256, contentType: 'image/png', width: 5, height: 4, caption: null },
+      ],
+    });
+    expect(store.listAll()[0]?.photos.map((photo) => photo.sha256)).toEqual([
+      first.sha256,
+      second.sha256,
+    ]);
+    expect(store.findPublicPhoto(first.sha256)).toBeUndefined();
+  });
+
+  it('serves a file only while a complete place uses it and drops unused files', () => {
+    const store = new MemoryMapPlaceStore();
+    store.insertIfNew({ ...input, nostrPubkey: keyA });
+    store.insertIfNew({ ...input, externalId: 'store-2', nostrPubkey: keyB });
+    store.replacePhotos('dfx', keyA, [first, second]);
+    store.replacePhotos('dfx', keyB, [first]);
+    expect(store.findPublicPhoto(first.sha256)?.contentType).toBe('image/png');
+    expect(store.findPublicPhoto(second.sha256)?.data).toEqual(second.data);
+    expect(store.findPublicPhoto('0'.repeat(64))).toBeUndefined();
+    store.replacePhotos('dfx', keyA, []);
+    expect(store.findPublicPhoto(second.sha256)).toBeUndefined();
+    expect(store.findPublicPhoto(first.sha256)).toBeDefined();
+    store.upsert({ ...input, externalId: 'store-2', name: 'Kept photos', nostrPubkey: keyB });
+    expect(store.listAll().find((row) => row.externalId === 'store-2')?.photos).toHaveLength(1);
+    expect(store.deleteByKey('dfx', 'store-2')).toEqual({ ok: true, deleted: true });
+    expect(store.findPublicPhoto(first.sha256)).toBeUndefined();
+    expect(store.list(10)[0]?.photos).toEqual([]);
+  });
+
+  it('shares the revision counter with place writes', () => {
+    const store = new MemoryMapPlaceStore();
+    store.insertIfNew({ ...input, nostrPubkey: keyA }, 2);
+    expect(store.replacePhotos('dfx', keyA, [first], 2)).toEqual({
+      ok: false,
+      error: 'Stale revision',
+    });
+    expect(store.replacePhotos('dfx', keyA, [first])).toEqual({
+      ok: false,
+      error: 'Stale revision',
+    });
+    expect(store.replacePhotos('dfx', keyA, [first], 3).ok).toBe(true);
+    expect(store.upsert({ ...input, nostrPubkey: keyA }, 3)).toEqual({
+      ok: false,
+      error: 'Stale revision',
+    });
+  });
+
+  it('accepts photos without a revision while none is stored and forgets files on close', () => {
+    const store = new MemoryMapPlaceStore();
+    store.insertIfNew({ ...input, nostrPubkey: keyA });
+    expect(store.replacePhotos('dfx', keyA, [first]).ok).toBe(true);
+    store.close();
+    expect(store.findPublicPhoto(first.sha256)).toBeUndefined();
   });
 });

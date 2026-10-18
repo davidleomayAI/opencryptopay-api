@@ -4,6 +4,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isNostrPubkey } from '../src/lib/map/nostr-key';
+import { preparePhoto, type PreparedPhoto } from '../src/lib/map/photo';
+import { simplePng } from '../src/__tests__/map/photo-fixtures';
 import { placeActivity } from '../src/lib/map/place';
 import type { MapPlaceInput } from '../src/lib/map/place';
 import { SqliteMapPlaceStore } from '../src/lib/map/sqlite';
@@ -515,7 +517,118 @@ if (schemaOk && listAllOk) {
   }
 }
 
+let photosOk = false;
 if (schemaOk && listAllOk && identityOk) {
+  const photoDir = mkdtempSync(join(tmpdir(), 'sqlite-photos-'));
+  const photoFile = join(photoDir, 'map.sqlite');
+  let photoStore: SqliteMapPlaceStore | undefined;
+  try {
+    photoStore = new SqliteMapPlaceStore(photoFile);
+    const prepare = (bytes: Uint8Array, caption?: string): PreparedPhoto => {
+      const result = preparePhoto(
+        {
+          contentType: 'image/png',
+          data: Buffer.from(bytes).toString('base64'),
+          ...(caption === undefined ? {} : { caption }),
+        },
+        0,
+      );
+      if (!result.ok) {
+        throw new Error(result.error);
+      }
+      return result.photo;
+    };
+    const front = prepare(simplePng(3, 2), 'Front');
+    const side = prepare(simplePng(5, 4));
+    const keyA = keyFor('photo-a');
+    const keyB = keyFor('photo-b');
+    const keyC = keyFor('photo-c');
+    photoStore.insertIfNew({ ...COMPLETE, externalId: 'photo-a', nostrPubkey: keyA }, 1);
+    photoStore.insertIfNew({ ...COMPLETE, externalId: 'photo-b', nostrPubkey: keyB });
+    photoStore.insertIfNew({ ...COMPLETE, externalId: 'photo-c', name: '', nostrPubkey: keyC });
+    const otherOrigin = photoStore.replacePhotos('spar', keyA, [front]);
+    const stale = photoStore.replacePhotos('dfx', keyA, [front], 1);
+    const stored = photoStore.replacePhotos('dfx', keyA, [front, side], 2);
+    photoStore.replacePhotos('dfx', keyB, [front]);
+    photoStore.replacePhotos('dfx', keyC, [side]);
+    const listed = photoStore.list(10).find((row) => row.externalId === 'photo-a');
+    const served = photoStore.findPublicPhoto(front.sha256);
+    const sideServed = photoStore.findPublicPhoto(side.sha256) !== undefined;
+    photoStore.upsert({ ...COMPLETE, externalId: 'photo-a', nostrPubkey: keyA }, 3);
+    const keptOnPut = photoStore.listAll().find((row) => row.externalId === 'photo-a')
+      ?.photos.length;
+    photoStore.replacePhotos('dfx', keyA, [], 4);
+    const sideAfterReplace = photoStore.findPublicPhoto(side.sha256);
+    photoStore.deleteByKey('dfx', 'photo-b');
+    const frontAfterDelete = photoStore.findPublicPhoto(front.sha256);
+    photoStore.deleteByKey('dfx', 'photo-c');
+    photoStore.close();
+    photoStore = undefined;
+    const check = new Database(photoFile);
+    let files = -1;
+    let refs = -1;
+    try {
+      files = (check.query('SELECT COUNT(*) AS n FROM map_photo').get() as { n: number }).n;
+      refs = (check.query('SELECT COUNT(*) AS n FROM map_place_photo').get() as { n: number }).n;
+    } finally {
+      check.close();
+    }
+    if (
+      !otherOrigin.ok &&
+      otherOrigin.error === 'Place not found' &&
+      !stale.ok &&
+      stale.error === 'Stale revision' &&
+      stored.ok &&
+      stored.photos.length === 2 &&
+      listed?.photos.map((photo) => photo.sha256).join(',') === `${front.sha256},${side.sha256}` &&
+      listed.photos[0]?.caption === 'Front' &&
+      listed.photos[1]?.caption === null &&
+      listed.photos[1]?.width === 5 &&
+      served?.contentType === 'image/png' &&
+      Buffer.from(served.data).equals(Buffer.from(front.data)) &&
+      sideServed &&
+      keptOnPut === 2 &&
+      sideAfterReplace === undefined &&
+      frontAfterDelete === undefined &&
+      files === 0 &&
+      refs === 0
+    ) {
+      photosOk = true;
+    } else {
+      process.stdout.write(
+        `${JSON.stringify({
+          otherOrigin,
+          stale,
+          stored: stored.ok,
+          listed: listed?.photos,
+          served: served?.contentType,
+          sideServed,
+          keptOnPut,
+          sideAfterReplace: sideAfterReplace !== undefined,
+          frontAfterDelete: frontAfterDelete !== undefined,
+          files,
+          refs,
+        })}\n`,
+      );
+      process.exitCode = 1;
+    }
+  } catch (error) {
+    process.stdout.write(
+      `${JSON.stringify({ error: error instanceof Error ? error.message : error })}\n`,
+    );
+    process.exitCode = 1;
+  } finally {
+    try {
+      if (photoStore !== undefined) {
+        photoStore.close();
+      }
+    } finally {
+      rmSync(photoDir, { recursive: true, force: true });
+    }
+  }
+}
+
+if (schemaOk && listAllOk && identityOk && photosOk) {
   const activityDir = mkdtempSync(join(tmpdir(), 'sqlite-activity-backfill-'));
   const activityFile = join(activityDir, 'map.sqlite');
   let activitySeed: Database | undefined;

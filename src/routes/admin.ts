@@ -23,6 +23,8 @@ export type AdminRouteDeps = {
   /** Public host this instance answers as. Blank means admin is not configured. */
   host: string;
   now?: () => number;
+  /** `OCP_PUBLIC_BASE_URL`, the origin of photo URLs in the list. */
+  publicBaseUrl: string;
 };
 
 type AdminEnv = {
@@ -266,7 +268,7 @@ export function adminRoutes(deps: AdminRouteDeps): Hono<AdminEnv> {
     const places = deps.store.listAll().map((place) => {
       const problems = placeProblems(place);
       return {
-        ...toPublicMapPlace(place),
+        ...toPublicMapPlace(place, deps.publicBaseUrl),
         complete: problems.length === 0,
         problems,
         externalId: place.externalId,

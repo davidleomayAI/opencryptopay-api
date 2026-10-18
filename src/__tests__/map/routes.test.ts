@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { publicFilterResponse } from '@/lib/map/filter-catalog';
 import { npubEncode } from '@/lib/map/nostr-key';
+import { normalizeMapPlace } from '@/lib/map/place';
 import { MemoryMapPlaceStore } from '@/lib/map/store';
 import { createApp } from '@/server';
 import { keyFor } from './keys';
+import { base64, simpleJpeg, simplePng } from './photo-fixtures';
 
 const DESCRIPTION =
   'SPAR supermarket in Triesen. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
@@ -45,6 +47,7 @@ const publicPin = {
   city: 'Triesen',
   supports: [] as Array<{ blockchain: string; asset: string }>,
   activity: 'none',
+  coverPhoto: null,
 };
 
 const jsonHeaders = {
@@ -65,6 +68,7 @@ function rawApp(opts: AppOptions) {
     store: opts.store ?? new MemoryMapPlaceStore(),
     env: opts.env ?? {},
     fetchImpl: opts.fetchImpl ?? (async () => new Response('{}', { status: 201 })),
+    publicBaseUrl: 'https://api.test',
     ...(opts.token === undefined ? {} : { ingestToken: opts.token }),
     ...(opts.now === undefined ? {} : { now: opts.now }),
   });
@@ -479,6 +483,7 @@ describe('map routes', () => {
       city: 'Zürich',
       supports: [],
       activity: 'none',
+      coverPhoto: null,
     });
   });
 
@@ -1225,7 +1230,7 @@ describe('map routes NOSTR identity and request order', () => {
     expect(detail.status).toBe(200);
     expect(detail.headers.get('cache-control')).toBe('public, max-age=60');
     expect(detail.headers.get('access-control-allow-origin')).toBe('*');
-    expect(await detail.json()).toEqual({ place: { ...publicPin, id: npubA } });
+    expect(await detail.json()).toEqual({ place: { ...publicPin, id: npubA, photos: [] } });
     const hex = await api.request(`/map/places/${keyA}`);
     expect(hex.status).toBe(301);
     expect(hex.headers.get('location')).toBe(`/map/places/${npubA}`);
@@ -1261,5 +1266,155 @@ describe('map routes NOSTR identity and request order', () => {
     expect(failed.status).toBe(503);
     expect(failed.headers.get('cache-control')).toBe('no-store');
     expect(await failed.json()).toEqual({ error: 'Places are unavailable' });
+  });
+});
+
+describe('map routes photos', () => {
+  const key = keyFor('route-photos');
+  const npub = npubEncode(key);
+  const jpegBytes = simpleJpeg(2, 1);
+  const pngBytes = simplePng(3, 2);
+
+  function upload(api: ReturnType<typeof rawApp>, payload: unknown, headers = jsonHeaders) {
+    return api.request('/map/places/photos', {
+      method: 'PUT',
+      headers,
+      body: typeof payload === 'string' ? payload : JSON.stringify(payload),
+    });
+  }
+
+  async function shop(listed = true) {
+    const store = new MemoryMapPlaceStore();
+    const api = rawApp({ token: 'secret', store });
+    if (listed) {
+      await api.request('/map/places', {
+        method: 'PUT',
+        headers: jsonHeaders,
+        body: JSON.stringify({ ...body, nostrPubkey: key, revision: 1 }),
+      });
+    } else {
+      const parsed = normalizeMapPlace({ ...body, nostrPubkey: key });
+      if (!parsed.ok) {
+        throw new Error(parsed.error);
+      }
+      store.insertIfNew({ ...parsed.value, name: '' }, 1);
+    }
+    return api;
+  }
+
+  it('answers 503 and 401 before reading the body, then 413 for a body above 15 MiB', async () => {
+    expect((await upload(rawApp({}), {})).status).toBe(503);
+    const api = await shop();
+    const unauthorized = await upload(api, {}, { ...jsonHeaders, Authorization: 'Bearer wrong' });
+    expect(unauthorized.status).toBe(401);
+    const huge = await upload(api, 'x'.repeat(15 * 1_048_576 + 1));
+    expect(huge.status).toBe(413);
+    expect(await huge.json()).toEqual({ error: 'Payload too large' });
+  });
+
+  it('answers 400 for a malformed envelope, 404 for another origin or key, then 409 for a stale revision', async () => {
+    const api = await shop();
+    const bad = await upload(api, 'not json');
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toEqual({ error: 'Photo upload is invalid' });
+    const other = await upload(api, { origin: 'spar', nostrPubkey: key, revision: 2, photos: [] });
+    expect(other.status).toBe(404);
+    expect(await other.json()).toEqual({ error: 'Place not found' });
+    const stale = await upload(api, { origin: 'dfx', nostrPubkey: key, revision: 1, photos: [] });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toEqual({ error: 'Stale revision' });
+  });
+
+  it('stores the good photos, reports the skipped ones and shows them in the list and the detail', async () => {
+    const api = await shop();
+    const stored = await upload(api, {
+      origin: 'dfx',
+      nostrPubkey: key,
+      revision: 2,
+      photos: [
+        { contentType: 'image/jpeg', data: base64(jpegBytes), caption: 'Front' },
+        { contentType: 'image/gif', data: 'R0lG' },
+        { contentType: 'image/png', data: base64(pngBytes) },
+      ],
+    });
+    expect(stored.status).toBe(200);
+    const result = (await stored.json()) as {
+      photos: Array<{ url: string; width: number; height: number; caption: string | null }>;
+      skipped: unknown[];
+    };
+    expect(result.skipped).toEqual([
+      { index: 1, error: 'Photo 2 is not a JPEG, PNG or WebP image' },
+    ]);
+    expect(result.photos).toHaveLength(2);
+    expect(result.photos[0]).toMatchObject({ width: 2, height: 1, caption: 'Front' });
+    expect(result.photos[0]?.url).toMatch(/^https:\/\/api\.test\/map\/photos\/[0-9a-f]{64}\.jpg$/u);
+    expect(result.photos[1]).toMatchObject({ width: 3, height: 2, caption: null });
+    expect(result.photos[1]?.url).toMatch(/\.png$/u);
+    const listed = (await (await api.request('/map/places')).json()) as {
+      places: Array<{ coverPhoto: unknown }>;
+    };
+    expect(listed.places[0]?.coverPhoto).toEqual({
+      url: result.photos[0]?.url,
+      width: 2,
+      height: 1,
+    });
+    const detail = (await (await api.request(`/map/places/${npub}`)).json()) as {
+      place: { photos: unknown[] };
+    };
+    expect(detail.place.photos).toEqual(result.photos);
+  });
+
+  it('serves a photo of a listed shop with its type, nosniff and an immutable cache', async () => {
+    const api = await shop();
+    const stored = (await (
+      await upload(api, {
+        origin: 'dfx',
+        nostrPubkey: key,
+        revision: 2,
+        photos: [{ contentType: 'image/png', data: base64(pngBytes) }],
+      })
+    ).json()) as { photos: Array<{ url: string }> };
+    const path = new URL(stored.photos[0]?.url ?? '').pathname;
+    const served = await api.request(path);
+    expect(served.status).toBe(200);
+    expect(served.headers.get('content-type')).toBe('image/png');
+    expect(served.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(served.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
+    expect(served.headers.get('access-control-allow-origin')).toBe('*');
+    expect(new Uint8Array(await served.arrayBuffer())).toEqual(pngBytes);
+    for (const missing of [
+      path.replace('.png', '.jpg'),
+      '/map/photos/abc.png',
+      `/map/photos/${'0'.repeat(64)}.png`,
+    ]) {
+      const res = await api.request(missing);
+      expect(res.status).toBe(404);
+      expect(res.headers.get('cache-control')).toBe('no-store');
+      expect(await res.json()).toEqual({ error: 'Photo not found' });
+    }
+  });
+
+  it('answers 404 for the photo of an unlisted shop and 503 when the store fails', async () => {
+    const api = await shop(false);
+    const stored = (await (
+      await upload(api, {
+        origin: 'dfx',
+        nostrPubkey: key,
+        photos: [{ contentType: 'image/png', data: base64(pngBytes) }],
+        revision: 2,
+      })
+    ).json()) as { photos: Array<{ url: string }> };
+    expect((await api.request(new URL(stored.photos[0]?.url ?? '').pathname)).status).toBe(404);
+    class FailingStore extends MemoryMapPlaceStore {
+      override findPublicPhoto(): undefined {
+        throw new Error('store down');
+      }
+    }
+    const failing = await rawApp({ store: new FailingStore() }).request(
+      `/map/photos/${'0'.repeat(64)}.png`,
+    );
+    expect(failing.status).toBe(503);
+    expect(failing.headers.get('cache-control')).toBe('no-store');
+    expect(await failing.json()).toEqual({ error: 'Places are unavailable' });
   });
 });

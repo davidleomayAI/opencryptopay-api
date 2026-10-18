@@ -1,8 +1,8 @@
 # Shop identity, photos and shop page
 
-Status: **step 1a implemented** (R7 accepted, R8, `id` = npub,
-`GET /map/places/{npub}` without photos); the other steps are specified, not
-implemented. A change that builds a part of this adds its routes to
+Status: **steps 1a and 2 implemented** (R7 accepted, R8, `id` = npub,
+`GET /map/places/{npub}`, photos); steps 3, 1b and 4 are specified, not
+implemented in this repository. A change that builds a part of this adds its routes to
 [endpoints.md](../handbook/endpoints.md), its exported functions to
 [functions.md](../handbook/functions.md) and its columns and tables to
 [map-place.sql](../schema/map-place.sql) in that same change, and documents

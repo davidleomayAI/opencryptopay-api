@@ -56,3 +56,21 @@ CREATE TABLE IF NOT EXISTS map_place_revision (
   revision INTEGER NOT NULL,
   PRIMARY KEY (origin, external_id)
 );
+-- Each distinct shop photo once, by the SHA-256 of its stripped bytes.
+CREATE TABLE IF NOT EXISTS map_photo (
+  sha256 TEXT PRIMARY KEY,
+  content_type TEXT NOT NULL CHECK (content_type IN ('image/jpeg', 'image/png', 'image/webp')),
+  width INTEGER NOT NULL CHECK (width BETWEEN 1 AND 4096),
+  height INTEGER NOT NULL CHECK (height BETWEEN 1 AND 4096),
+  data BLOB NOT NULL
+);
+-- A shop's photos in display order. A file a shop still uses cannot be deleted.
+CREATE TABLE IF NOT EXISTS map_place_photo (
+  place_id TEXT NOT NULL,
+  position INTEGER NOT NULL CHECK (position BETWEEN 0 AND 9),
+  sha256 TEXT NOT NULL,
+  caption TEXT,
+  PRIMARY KEY (place_id, position),
+  FOREIGN KEY (place_id) REFERENCES map_place(id) ON DELETE CASCADE,
+  FOREIGN KEY (sha256) REFERENCES map_photo(sha256)
+);

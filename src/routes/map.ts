@@ -1,9 +1,17 @@
 import { timingSafeEqual } from 'node:crypto';
-import { Hono } from 'hono';
+import { Hono, type Context, type Next } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { cors } from 'hono/cors';
 import { pushMapPlace, type FetchLike, type MapPushResult } from '@/lib/map/btcmap';
 import { publicFilterResponse } from '@/lib/map/filter-catalog';
 import { isNostrPubkey, npubDecode, npubEncode } from '@/lib/map/nostr-key';
+import {
+  MAX_PHOTO_BODY_BYTES,
+  normalizePhotoUpload,
+  preparePhoto,
+  type PreparedPhoto,
+} from '@/lib/map/photo';
+import { photoExtension } from '@/lib/map/photo-strip';
 import {
   normalizeMapPlace,
   normalizeMapPlaceDelete,
@@ -11,11 +19,22 @@ import {
   normalizePlaceOrigin,
   normalizePlaceTransaction,
   toPublicMapPlace,
+  toPublicMapPlaceDetail,
 } from '@/lib/map/place';
-import type { MapPlaceListFilter, MapPlaceStore, MapPlaceWriteError } from '@/lib/map/store';
+import type {
+  MapPhotoFile,
+  MapPlaceListFilter,
+  MapPlaceStore,
+  MapPlaceWriteError,
+} from '@/lib/map/store';
 
 /** Cache rule of `GET /map/places/{npub}` on 200, 301 and 404. */
 const DETAIL_CACHE = 'public, max-age=60';
+
+/** Cache rule of a served photo: its URL names its bytes. */
+const PHOTO_CACHE = 'public, max-age=31536000, immutable';
+
+const PHOTO_FILE = /^([0-9a-f]{64})\.(jpg|png|webp)$/u;
 
 export type MapRouteDeps = {
   store: MapPlaceStore;
@@ -24,6 +43,8 @@ export type MapRouteDeps = {
   env: Record<string, string | undefined>;
   fetchImpl: FetchLike;
   now?: () => number;
+  /** `OCP_PUBLIC_BASE_URL`, the origin of every photo URL. */
+  publicBaseUrl: string;
 };
 
 function checkIngest(
@@ -170,7 +191,9 @@ export function mapRoutes(deps: MapRouteDeps): Hono {
     if (origin !== undefined) {
       filter.origin = origin;
     }
-    const places = deps.store.list(limit, filter).map((place) => toPublicMapPlace(place));
+    const places = deps.store
+      .list(limit, filter)
+      .map((place) => toPublicMapPlace(place, deps.publicBaseUrl));
     return c.json({ places });
   });
 
@@ -187,7 +210,7 @@ export function mapRoutes(deps: MapRouteDeps): Hono {
       if (fromNpub === null) {
         return c.redirect(`/map/places/${npubEncode(segment)}`, 301);
       }
-      return c.json({ place: toPublicMapPlace(place) });
+      return c.json({ place: toPublicMapPlaceDetail(place, deps.publicBaseUrl) });
     } catch {
       c.header('Cache-Control', 'no-store');
       return c.json({ error: 'Places are unavailable' }, 503);
@@ -259,6 +282,83 @@ export function mapRoutes(deps: MapRouteDeps): Hono {
     const raw: unknown = await c.req.json().catch(() => null);
     const result = deletePlace(deps, raw);
     return c.json(result.body, result.status);
+  });
+
+  const requireIngest = async (c: Context, next: Next): Promise<Response | void> => {
+    const auth = checkIngest(deps.ingestToken, c.req.header('authorization'));
+    if (auth === 'unconfigured') {
+      return c.json({ error: 'Place ingest is not configured' }, 503);
+    }
+    if (auth === 'unauthorized') {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    await next();
+  };
+
+  /** Runs after `requireIngest`, so 503 and 401 come before 413. */
+  const photoBodyLimit = bodyLimit({
+    maxSize: MAX_PHOTO_BODY_BYTES,
+    onError: (c) => c.json({ error: 'Payload too large' }, 413),
+  });
+
+  app.put('/places/photos', requireIngest, photoBodyLimit, async (c) => {
+    const raw: unknown = await c.req.json().catch(() => null);
+    const parsed = normalizePhotoUpload(raw);
+    if (!parsed.ok) {
+      return c.json({ error: parsed.error }, 400);
+    }
+    const prepared: PreparedPhoto[] = [];
+    const skipped: Array<{ index: number; error: string }> = [];
+    for (const [index, entry] of parsed.value.photos.entries()) {
+      const photo = preparePhoto(entry, index);
+      if (photo.ok) {
+        prepared.push(photo.photo);
+      } else {
+        skipped.push({ index, error: photo.error });
+      }
+    }
+    const result = deps.store.replacePhotos(
+      parsed.value.origin,
+      parsed.value.nostrPubkey,
+      prepared,
+      parsed.value.revision,
+    );
+    if (!result.ok) {
+      return c.json({ error: result.error }, result.error === 'Place not found' ? 404 : 409);
+    }
+    const photos = result.photos.map((photo) => ({
+      url: `${deps.publicBaseUrl}/map/photos/${photo.sha256}.${photoExtension(photo.contentType)}`,
+      width: photo.width,
+      height: photo.height,
+      caption: photo.caption,
+    }));
+    return c.json({ photos, skipped });
+  });
+
+  app.get('/photos/:file', (c) => {
+    const match = PHOTO_FILE.exec(c.req.param('file'));
+    const notFound = (): Response => {
+      c.header('Cache-Control', 'no-store');
+      return c.json({ error: 'Photo not found' }, 404);
+    };
+    if (match === null) {
+      return notFound();
+    }
+    let file: MapPhotoFile | undefined;
+    try {
+      file = deps.store.findPublicPhoto(match[1] as string);
+    } catch {
+      c.header('Cache-Control', 'no-store');
+      return c.json({ error: 'Places are unavailable' }, 503);
+    }
+    if (file === undefined || photoExtension(file.contentType) !== match[2]) {
+      return notFound();
+    }
+    return c.body(file.data.slice().buffer, 200, {
+      'Content-Type': file.contentType,
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': PHOTO_CACHE,
+    });
   });
 
   app.post('/places/transactions', async (c) => {

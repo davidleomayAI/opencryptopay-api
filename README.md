@@ -10,11 +10,14 @@ Requires [Bun](https://bun.sh).
 
 ```sh
 export OCP_PLACE_INGEST_TOKEN=replace-me
+export OCP_PUBLIC_BASE_URL=https://api.opencryptopay.io
 bun install
 bun run start
 ```
 
 The process listens on port `3000` unless `PORT` is set. The database file is `data/places.sqlite` unless `PLACE_DB` is set.
+
+`OCP_PUBLIC_BASE_URL` is required: the `https://` origin this API is reached at, without a trailing slash, for example `https://api.opencryptopay.io` in production and `https://dev-api.opencryptopay.io` on dev. Every shop photo URL in a JSON answer is built from it, never from the request's `Host` header. It is not a secret. The process refuses to start when it is missing or not such an origin.
 
 `GET /` returns a short HTML welcome page. `GET /healthz` returns `{ "ok": true }`.
 

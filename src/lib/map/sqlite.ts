@@ -1,5 +1,7 @@
 import { Database, SQLiteError } from 'bun:sqlite';
 import { unstatedPaymentSql } from '@/lib/map/filter-catalog';
+import type { PreparedPhoto } from '@/lib/map/photo';
+import type { PhotoType } from '@/lib/map/photo-strip';
 import {
   placeActivity,
   type MapPlaceInput,
@@ -7,10 +9,13 @@ import {
   type PlaceActivity,
   type ShopType,
   type StoredMapPlace,
+  type StoredPlacePhoto,
 } from '@/lib/map/place';
 import {
   MAP_PLACE_SCHEMA_SQL,
   placeWriteConflict,
+  type MapPhotoFile,
+  type MapPhotoWriteResult,
   type MapPlaceDeleteResult,
   type MapPlaceListFilter,
   type MapPlaceStore,
@@ -95,7 +100,11 @@ function asShopType(value: string | null): ShopType {
   return 'Others';
 }
 
-function mapRow(row: MapPlaceRow, supports: MapPlaceSupport[]): StoredMapPlace {
+function mapRow(
+  row: MapPlaceRow,
+  supports: MapPlaceSupport[],
+  photos: StoredPlacePhoto[],
+): StoredMapPlace {
   return {
     id: row.id,
     origin: row.origin,
@@ -118,6 +127,7 @@ function mapRow(row: MapPlaceRow, supports: MapPlaceSupport[]): StoredMapPlace {
     activity: row.activity,
     nostrPubkey: row.nostr_pubkey,
     supports: supports.map((item) => ({ blockchain: item.blockchain, asset: item.asset })),
+    photos,
   };
 }
 
@@ -174,18 +184,57 @@ function loadSupportsByPlaceId(db: Database, ids: string[]): Map<string, MapPlac
   return supportsById;
 }
 
+function loadPhotosByPlaceId(db: Database, ids: string[]): Map<string, StoredPlacePhoto[]> {
+  const photosById = new Map<string, StoredPlacePhoto[]>();
+  for (const id of ids) {
+    photosById.set(id, []);
+  }
+  for (let start = 0; start < ids.length; start += SUPPORT_ID_CHUNK) {
+    const chunk = ids.slice(start, start + SUPPORT_ID_CHUNK);
+    const placeholders = chunk.map(() => '?').join(', ');
+    const rows = db
+      .query(
+        `SELECT pp.place_id, pp.sha256, pp.caption, p.content_type, p.width, p.height
+         FROM map_place_photo pp JOIN map_photo p ON p.sha256 = pp.sha256
+         WHERE pp.place_id IN (${placeholders})
+         ORDER BY pp.position`,
+      )
+      .all(...chunk) as Array<{
+      place_id: string;
+      sha256: string;
+      caption: string | null;
+      content_type: PhotoType;
+      width: number;
+      height: number;
+    }>;
+    for (const row of rows) {
+      photosById.get(row.place_id)?.push({
+        sha256: row.sha256,
+        contentType: row.content_type,
+        width: row.width,
+        height: row.height,
+        caption: row.caption,
+      });
+    }
+  }
+  return photosById;
+}
+
 function mapRows(db: Database, rows: MapPlaceRow[]): StoredMapPlace[] {
-  const supportsById = loadSupportsByPlaceId(
-    db,
-    rows.map((row) => row.id),
-  );
+  const ids = rows.map((row) => row.id);
+  const supportsById = loadSupportsByPlaceId(db, ids);
+  const photosById = loadPhotosByPlaceId(db, ids);
   return rows.map((row) => {
     const supports = supportsById.get(row.id);
     if (supports === undefined) {
       throw new Error('map place supports missing');
     }
-    return mapRow(row, supports);
+    return mapRow(row, supports, photosById.get(row.id) ?? []);
   });
+}
+
+function dropUnusedPhotos(db: Database): void {
+  db.query('DELETE FROM map_photo WHERE sha256 NOT IN (SELECT sha256 FROM map_place_photo)').run();
 }
 
 function mapOne(db: Database, row: MapPlaceRow): StoredMapPlace {
@@ -458,6 +507,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
             blockchain: item.blockchain,
             asset: item.asset,
           })),
+          photos: [],
           nostrPubkey: key ?? null,
           lastTransactionAt: null,
           activity: 'none',
@@ -735,8 +785,82 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
       const result = this.#db
         .query('DELETE FROM map_place WHERE origin = ? AND external_id = ?')
         .run(origin, externalId);
+      dropUnusedPhotos(this.#db);
       return { ok: true, deleted: result.changes > 0 };
     })();
+  }
+
+  /**
+   * Replace every photo of the stored place with this key and origin, listed or
+   * not, in one transaction. Files no place uses any more are deleted.
+   *
+   * @param origin - Origin that registered the place.
+   * @param nostrPubkey - The place's key.
+   * @param photos - Prepared photos in display order.
+   * @param revision - Request revision (R8), when sent; it shares the place's counter.
+   * @returns The stored photo list, `Place not found`, or `Stale revision`.
+   */
+  replacePhotos(
+    origin: string,
+    nostrPubkey: string,
+    photos: PreparedPhoto[],
+    revision?: number,
+  ): MapPhotoWriteResult {
+    return this.#db.transaction((): MapPhotoWriteResult => {
+      const row = this.#db
+        .query('SELECT id, external_id FROM map_place WHERE nostr_pubkey = ? AND origin = ?')
+        .get(nostrPubkey, origin) as { id: string; external_id: string } | null;
+      if (row === null) {
+        return { ok: false, error: 'Place not found' };
+      }
+      const stored = this.#storedRevision(origin, row.external_id);
+      if (stored !== undefined && (revision === undefined || revision <= stored)) {
+        return { ok: false, error: 'Stale revision' };
+      }
+      this.#storeRevision(origin, row.external_id, revision);
+      this.#db.query('DELETE FROM map_place_photo WHERE place_id = ?').run(row.id);
+      const insertFile = this.#db.query(
+        `INSERT OR IGNORE INTO map_photo (sha256, content_type, width, height, data)
+         VALUES (?, ?, ?, ?, ?)`,
+      );
+      const insertRef = this.#db.query(
+        'INSERT INTO map_place_photo (place_id, position, sha256, caption) VALUES (?, ?, ?, ?)',
+      );
+      for (const [position, photo] of photos.entries()) {
+        insertFile.run(photo.sha256, photo.contentType, photo.width, photo.height, photo.data);
+        insertRef.run(row.id, position, photo.sha256, photo.caption);
+      }
+      dropUnusedPhotos(this.#db);
+      return {
+        ok: true,
+        photos: photos.map((photo) => ({
+          sha256: photo.sha256,
+          contentType: photo.contentType,
+          width: photo.width,
+          height: photo.height,
+          caption: photo.caption,
+        })),
+      };
+    })();
+  }
+
+  /**
+   * A photo file that a complete place uses.
+   *
+   * @param sha256 - Hash of the stripped bytes.
+   * @returns The file, or undefined when no complete place shows it.
+   */
+  findPublicPhoto(sha256: string): MapPhotoFile | undefined {
+    const row = this.#db
+      .query(
+        `SELECT content_type, data FROM map_photo
+         WHERE sha256 = ? AND sha256 IN (
+           SELECT sha256 FROM map_place_photo
+           WHERE place_id IN (SELECT id FROM map_place WHERE ${COMPLETE_PLACE_SQL})
+         )`,
+      )
+      .get(sha256) as { content_type: PhotoType; data: Uint8Array } | null;
+    return row === null ? undefined : { contentType: row.content_type, data: row.data };
   }
 
   /**
