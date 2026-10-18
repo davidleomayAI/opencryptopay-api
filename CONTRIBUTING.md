@@ -31,7 +31,7 @@ Before a change is ready, run the same commands CI runs. Bun is pinned to `1.3.1
 - `bun run test:schema` — `docs/database/` matches the schema `SqliteMapPlaceStore` creates at boot (regenerate with `bun run db:docs`)
 - `node --test scripts/db-change-notice.test.mjs` — tests of the database change notice script
 - `bun run build`
-- `bun run e2e` — HTTP checks against `GET /`, `GET /healthz`, `/map/places`, and `/admin/places`
+- `bun run e2e` — HTTP checks against `GET /`, `GET /healthz`, `/map/places`, `/map/photos`, and `/admin/places`
 
 Do not lower a coverage threshold to land a change. A genuinely unreachable branch needs a `v8 ignore` comment that says why.
 
