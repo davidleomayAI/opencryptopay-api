@@ -32,7 +32,8 @@ export type AppDeps = {
  * `/admin` maintains places with a per-device signature. It answers 503 when
  * admin keys or the admin host are missing.
  *
- * @param deps - Store, ingest token, admin keys and host, the BTC Map environment, and an optional clock.
+ * @param deps - Store, ingest token, admin keys and host, the BTC Map environment, the public
+ * base URL of photo URLs, and an optional clock.
  * @returns The application.
  */
 export function createApp(deps: AppDeps): Hono {

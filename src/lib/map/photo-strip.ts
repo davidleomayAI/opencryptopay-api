@@ -486,7 +486,7 @@ function stripWebp(bytes: Uint8Array): StripResult {
       cleared.set([byte(data, 0) & VP8X_ALPHA, 0, 0, 0]);
       parts.push(webpChunk(bytes.subarray(pos, pos + 4), cleared));
     } else if (type === 'ALPH') {
-      // One ALPH, only in the extended format before the frame; it is written with a VP8 frame only.
+      // One ALPH, only after VP8X and before the frame; it is written with a VP8 frame only.
       if (canvas !== null && frame === null && alpha === null) {
         alpha = webpChunk(bytes.subarray(pos, pos + 4), data);
       }
@@ -560,21 +560,19 @@ export function photoTypeOf(bytes: Uint8Array): PhotoType | null {
 }
 
 /**
- * Remove metadata from a photo by allow-list and read its displayed size.
- * JPEG keeps the first plain JFIF header without thumbnail, the first 12-byte Adobe segment,
- * a minimal EXIF orientation when the original held 2 to 8, and the image
- * markers (SOFn, DHT, DAC, SOS with its scan data, DQT, DNL, DRI) up to the
- * main image's EOI; every other marker, and TEM or RSTn outside a scan, is
- * dropped. PNG keeps the listed
- * rendering chunks up to IEND, each rebuilt with a fresh CRC; an ancillary
- * chunk or PLTE is kept once and only before the first IDAT, PLTE only for an
- * indexed image, one of a length the format does not allow is dropped, and IEND is written empty. WebP
- * keeps `VP8X` (first and exactly 10 bytes), one `ALPH` before a `VP8 ` frame
- * and the first `VP8 ` or `VP8L` frame up to the RIFF end, each rebuilt from its declared size with a zero pad byte, keeps only
- * the alpha flag of `VP8X` with its reserved bytes zeroed and rewrites the
- * RIFF size. Every byte after the end of the image is cut. No metadata segment
- * or chunk survives; bytes inside a kept segment, such as DQT or DHT tables,
- * are copied as they are.
+ * Remove metadata from a photo by allow-list and read its displayed size. JPEG keeps the first
+ * plain JFIF header without thumbnail, the first 12-byte Adobe segment, a minimal EXIF orientation
+ * when the original held 2 to 8, and the image markers (SOFn, DHT, DAC, SOS with its scan data,
+ * DQT, DNL, DRI) up to the main image's EOI; every other marker, and TEM or RSTn outside a scan, is
+ * dropped. PNG keeps the listed rendering chunks up to IEND, each rebuilt with a fresh CRC; an
+ * ancillary chunk or PLTE is kept once and only before the first IDAT, PLTE only for an indexed
+ * image, a chunk of a length the format does not allow or an indexed bKGD that names no palette
+ * entry is dropped, and IEND is written empty. WebP keeps `VP8X` (first and exactly 10 bytes), one
+ * `ALPH` after `VP8X` and before a `VP8 ` frame, and the first `VP8 ` or `VP8L` frame up to the
+ * RIFF end, each rebuilt from its declared size with a zero pad byte, keeps only the alpha flag of
+ * `VP8X` with its reserved bytes zeroed and rewrites the RIFF size. Every byte after the end of the
+ * image is cut. No metadata segment or chunk survives; bytes inside a kept segment, such as DQT or
+ * DHT tables, are copied as they are.
  *
  * @param type - The file type read from the magic bytes.
  * @param bytes - Decoded photo file.
