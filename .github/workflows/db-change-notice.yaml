@@ -56,6 +56,18 @@ jobs:
         with:
           script: |
             const { existsSync, readFileSync } = require('node:fs');
+            // Pull request files are data: a symbolic link, anything that is not a regular file, a path
+            // that resolves outside the workspace, or a file over 1 MB is not read; the patch rules decide.
+            const { lstatSync, realpathSync } = require('node:fs');
+            const workspace = realpathSync(process.env.GITHUB_WORKSPACE);
+            const isReadableSource = (name) => {
+              try {
+                const stat = lstatSync(name);
+                return stat.isFile() && stat.size <= 1_000_000 && realpathSync(name).startsWith(`${workspace}/`);
+              } catch {
+                return false;
+              }
+            };
             const { pathToFileURL } = require('node:url');
             const basePath = `${process.env.GITHUB_WORKSPACE}/notice-base/scripts/db-change-notice.mjs`;
             // Only the base copy is ever imported: this job runs with the base repository's token, so
@@ -95,7 +107,7 @@ jobs:
               try {
                 // Head and base text together: removing the only database import changes access too.
                 const texts = [headFile, baseFile]
-                  .filter((name) => existsSync(name))
+                  .filter((name) => isReadableSource(name))
                   .map((name) => readFileSync(name, 'utf8'));
                 if (texts.length > 0) file.content = texts.join('\n');
               } catch {
