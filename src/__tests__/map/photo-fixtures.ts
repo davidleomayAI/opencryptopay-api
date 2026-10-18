@@ -96,13 +96,24 @@ export function simpleJpeg(width = 2, height = 1): Uint8Array {
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
-/** One PNG chunk; the CRC is a fixed placeholder because nothing checks it. */
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const value of bytes) {
+    crc ^= value;
+    for (let k = 0; k < 8; k += 1) {
+      crc = (crc & 1) === 1 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1;
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+/** One PNG chunk with its CRC. */
 export function pngChunk(
   type: string,
   data: Uint8Array | readonly number[] | string = [],
 ): Uint8Array {
-  const body = bytesOf(data);
-  return bytesOf(be32(body.length), type, body, [1, 2, 3, 4]);
+  const typed = bytesOf(type, data);
+  return bytesOf(be32(typed.length - 4), typed, be32(crc32(typed)));
 }
 
 /** IHDR data for an 8-bit RGB image. */

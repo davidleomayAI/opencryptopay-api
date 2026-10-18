@@ -29,7 +29,48 @@ const PNG_KEEP: ReadonlySet<string> = new Set([
   'pHYs',
   'bKGD',
 ]);
+/**
+ * Allowed data lengths of the kept PNG chunks whose size the format fixes. A
+ * kept ancillary chunk with another length is dropped, so no chunk can carry
+ * extra bytes.
+ */
+const PNG_LENGTHS: ReadonlyMap<string, readonly number[]> = new Map([
+  ['gAMA', [4]],
+  ['cHRM', [32]],
+  ['sRGB', [1]],
+  ['cICP', [4]],
+  ['pHYs', [9]],
+  ['sBIT', [1, 2, 3, 4]],
+  ['bKGD', [1, 2, 6]],
+]);
 const WEBP_KEEP: ReadonlySet<string> = new Set(['VP8 ', 'VP8L', 'VP8X', 'ALPH']);
+
+/** CRC-32 table (polynomial 0xEDB88320), as PNG uses it. */
+const CRC_TABLE: readonly number[] = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k += 1) {
+    c = (c & 1) === 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  }
+  return c >>> 0;
+});
+
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const value of bytes) {
+    crc = (CRC_TABLE[(crc ^ value) & 0xff] as number) ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function be32Bytes(value: number): Uint8Array {
+  return new Uint8Array([value >>> 24, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff]);
+}
+
+/** A PNG chunk rebuilt from its type and data, with a freshly computed CRC. */
+function pngChunk(type: Uint8Array, data: Uint8Array): Uint8Array {
+  const typed = concat([type, data]);
+  return concat([be32Bytes(data.length), typed, be32Bytes(crc32(typed))]);
+}
 const VP8X_ANIMATION = 0x02;
 const VP8X_CLEAR = 0x20 | 0x08 | 0x04;
 const JFIF_ID = [0x4a, 0x46, 0x49, 0x46, 0x00];
@@ -194,6 +235,12 @@ function stripJpeg(bytes: Uint8Array): StripResult {
       parts.push(new Uint8Array([0xff, 0xd9]));
       break;
     }
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      // TEM and a stray RSTn stand alone, without a length.
+      parts.push(new Uint8Array([0xff, marker]));
+      pos += 2;
+      continue;
+    }
     if (pos + 4 > bytes.length) {
       return { ok: false, error: 'unreadable' };
     }
@@ -281,15 +328,36 @@ function stripPng(bytes: Uint8Array): StripResult {
     if (type === 'acTL') {
       return { ok: false, error: 'animated' };
     }
-    if (PNG_KEEP.has(type)) {
-      parts.push(bytes.slice(pos, end));
+    if (type === 'PLTE' && (length < 3 || length > 768 || length % 3 !== 0)) {
+      return { ok: false, error: 'unreadable' };
     }
-    pos = end;
     if (type === 'IEND') {
+      parts.push(pngChunk(bytes.subarray(pos + 4, pos + 8), new Uint8Array(0)));
       break;
     }
+    const lengths = PNG_LENGTHS.get(type);
+    const fits =
+      lengths === undefined ? type !== 'tRNS' || length <= 256 : lengths.includes(length);
+    if (PNG_KEEP.has(type) && fits) {
+      parts.push(
+        pngChunk(bytes.subarray(pos + 4, pos + 8), bytes.subarray(pos + 8, pos + 8 + length)),
+      );
+    }
+    pos = end;
   }
   return { ok: true, bytes: concat(parts), width, height };
+}
+
+/** A WebP chunk rebuilt from its type and declared data, with a zero pad byte when odd. */
+function webpChunk(type: Uint8Array, data: Uint8Array): Uint8Array {
+  const size = data.length;
+  const header = new Uint8Array([
+    size & 0xff,
+    (size >>> 8) & 0xff,
+    (size >>> 16) & 0xff,
+    size >>> 24,
+  ]);
+  return concat([type, header, data, new Uint8Array(size % 2)]);
 }
 
 function stripWebp(bytes: Uint8Array): StripResult {
@@ -319,16 +387,16 @@ function stripWebp(bytes: Uint8Array): StripResult {
       return { ok: false, error: 'animated' };
     }
     if (type === 'VP8X') {
-      if (size < 10) {
+      if (size !== 10) {
         return { ok: false, error: 'unreadable' };
       }
       if ((byte(data, 0) & VP8X_ANIMATION) !== 0) {
         return { ok: false, error: 'animated' };
       }
       canvas = { width: le24(data, 4) + 1, height: le24(data, 7) + 1 };
-      const chunk = bytes.slice(pos, end);
-      chunk[8] = byte(chunk, 8) & ~VP8X_CLEAR;
-      parts.push(chunk);
+      const cleared = data.slice();
+      cleared[0] = byte(cleared, 0) & ~VP8X_CLEAR;
+      parts.push(webpChunk(bytes.subarray(pos, pos + 4), cleared));
     } else if (WEBP_KEEP.has(type)) {
       if (type === 'VP8 ' && frame === null) {
         if (size < 10 || !startsWith(data, 3, [0x9d, 0x01, 0x2a])) {
@@ -342,7 +410,7 @@ function stripWebp(bytes: Uint8Array): StripResult {
         const bits = le32(data, 1);
         frame = { width: (bits & 0x3fff) + 1, height: ((bits >>> 14) & 0x3fff) + 1 };
       }
-      parts.push(bytes.slice(pos, end));
+      parts.push(webpChunk(bytes.subarray(pos, pos + 4), data));
     }
     pos = end;
   }
@@ -399,9 +467,12 @@ export function photoTypeOf(bytes: Uint8Array): PhotoType | null {
  * JPEG keeps a plain JFIF header without thumbnail, a 12-byte Adobe segment,
  * a minimal EXIF orientation when the original held 2 to 8, and every non-APP,
  * non-comment marker up to the main image's EOI. PNG keeps the listed
- * rendering chunks up to IEND. WebP keeps `VP8 `, `VP8L`, `VP8X` and `ALPH`
- * up to the RIFF end, clears the ICC, EXIF and XMP flags and rewrites the
- * RIFF size. Every byte after the end of the image is cut.
+ * rendering chunks up to IEND, each rebuilt with a fresh CRC; a fixed-size
+ * ancillary chunk of another length is dropped and IEND is written empty. WebP
+ * keeps `VP8 `, `VP8L`, `VP8X` (exactly 10 bytes) and `ALPH` up to the RIFF
+ * end, each rebuilt from its declared size with a zero pad byte, clears the
+ * ICC, EXIF and XMP flags and rewrites the RIFF size. Every byte after the end
+ * of the image is cut, so no byte outside the image data survives.
  *
  * @param type - The file type read from the magic bytes.
  * @param bytes - Decoded photo file.

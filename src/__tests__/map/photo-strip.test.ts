@@ -210,6 +210,15 @@ describe('stripPhotoMetadata JPEG', () => {
     expect(contains(result.bytes, [0xff, 0xd3, 0x56])).toBe(true);
   });
 
+  it('keeps TEM and a stray restart marker as two-byte markers', () => {
+    const result = stripped(
+      'image/jpeg',
+      jpeg([DQT, new Uint8Array([0xff, 0x01]), new Uint8Array([0xff, 0xd4]), sof(4, 3), scan()]),
+    );
+    expect(result).toMatchObject({ width: 4, height: 3 });
+    expect(contains(result.bytes, [0xff, 0x01, 0xff, 0xd4, 0xff, 0xc0])).toBe(true);
+  });
+
   it('rejects a broken marker walk', () => {
     const cases = [
       new Uint8Array([0xff, 0xd8]),
@@ -257,6 +266,61 @@ describe('stripPhotoMetadata PNG', () => {
     }
   });
 
+  it('rebuilds every kept chunk with a fresh CRC and writes IEND empty', () => {
+    const signature = simplePng().subarray(0, 8);
+    const result = stripped(
+      'image/png',
+      bytesOf(
+        signature,
+        ihdr(2, 2),
+        bytesOf([0, 0, 0, 1], 'sRGB', [0], 'XXXX'),
+        pngChunk('IDAT', [1, 2, 3]),
+        pngChunk('IEND', 'hidden payload'),
+      ),
+    );
+    expect(contains(result.bytes, bytesOf([0, 0, 0, 1], 'sRGB', [0, 0xae, 0xce, 0x1c, 0xe9]))).toBe(
+      true,
+    );
+    expect(result.bytes.slice(-12)).toEqual(
+      bytesOf([0, 0, 0, 0], 'IEND', [0xae, 0x42, 0x60, 0x82]),
+    );
+    expect(contains(result.bytes, 'hidden')).toBe(false);
+    expect(contains(result.bytes, 'XXXX')).toBe(false);
+    expect(stripped('image/png', simplePng()).bytes).toEqual(simplePng());
+  });
+
+  it('drops a fixed-size chunk of another length and an oversized tRNS', () => {
+    const result = stripped(
+      'image/png',
+      png([
+        ihdr(2, 2),
+        pngChunk('gAMA', 'hide!'),
+        pngChunk('sBIT', 'hidden'),
+        pngChunk('tRNS', new Uint8Array(257).fill(0x41)),
+        pngChunk('bKGD', [0, 1]),
+        pngChunk('IDAT', [1, 2, 3]),
+      ]),
+    );
+    for (const dropped of ['gAMA', 'hide', 'sBIT', 'tRNS']) {
+      expect(contains(result.bytes, dropped)).toBe(false);
+    }
+    expect(contains(result.bytes, 'bKGD')).toBe(true);
+  });
+
+  it('keeps a palette and a short tRNS, and rejects a malformed palette', () => {
+    const result = stripped(
+      'image/png',
+      png([ihdr(2, 2), pngChunk('PLTE', [1, 2, 3]), pngChunk('tRNS', [0]), pngChunk('IDAT', [1])]),
+    );
+    expect(contains(result.bytes, 'PLTE')).toBe(true);
+    expect(contains(result.bytes, 'tRNS')).toBe(true);
+    for (const palette of [[1, 2], [1, 2, 3, 4], new Uint8Array(771)]) {
+      expect(
+        strip('image/png', png([ihdr(2, 2), pngChunk('PLTE', palette), pngChunk('IDAT', [1])])),
+      ).toEqual({ ok: false, error: 'unreadable' });
+    }
+  });
+
   it('skips an animated PNG', () => {
     expect(strip('image/png', png([ihdr(2, 2), pngChunk('acTL', new Uint8Array(8))]))).toEqual({
       ok: false,
@@ -290,6 +354,16 @@ describe('stripPhotoMetadata WebP', () => {
     const result = stripped('image/webp', webp([webpChunk('VP8L', vp8l(33, 17))]));
     expect(result).toMatchObject({ width: 33, height: 17 });
     expect(result.bytes.length % 2).toBe(0);
+  });
+
+  it('writes the pad byte of an odd-sized chunk as zero', () => {
+    const body = vp8l(33, 17);
+    const result = stripped(
+      'image/webp',
+      webp([bytesOf('VP8L', [body.length, 0, 0, 0], body, [0x41])]),
+    );
+    expect(result.bytes[result.bytes.length - 1]).toBe(0);
+    expect(contains(result.bytes, [0x41])).toBe(false);
   });
 
   it('drops EXIF, XMP and ICCP, clears their VP8X flags and takes the canvas size', () => {
@@ -339,6 +413,7 @@ describe('stripPhotoMetadata WebP', () => {
       bytesOf('RIFF', [8, 0, 0, 0], 'WEBP', 'VP8 '),
       webp([bytesOf('VP8 ', [40, 0, 0, 0], vp8Body)]),
       webp([webpChunk('VP8X', new Uint8Array(6))]),
+      webp([webpChunk('VP8X', bytesOf(vp8x(0, 10, 10), 'hidden')), webpChunk('VP8 ', vp8Body)]),
       webp([webpChunk('VP8 ', new Uint8Array(10))]),
       webp([webpChunk('VP8 ', [0, 0, 0, 0x9d, 0x01, 0x2a])]),
       webp([webpChunk('VP8L', [0x2f, 0, 0])]),
