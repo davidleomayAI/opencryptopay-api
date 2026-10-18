@@ -52,6 +52,8 @@ export type SqliteIndex = {
   origin: string;
   partial: boolean;
   columns: string[];
+  /** A term is an expression or the rowid; `columns` then shows a label in its place. */
+  unnamedTerm: boolean;
 };
 
 /**
@@ -434,7 +436,9 @@ function columnSetUnique(
     candidate.length === columns.length && columns.every((column) => candidate.includes(column));
   return (
     sameSet(primaryKey) ||
-    indexes.some((index) => index.unique && !index.partial && sameSet(index.columns))
+    indexes.some(
+      (index) => index.unique && !index.partial && !index.unnamedTerm && sameSet(index.columns),
+    )
   );
 }
 
@@ -473,7 +477,12 @@ function buildTableModel(
   const columns = visibleColumns(table);
   const keyColumns = primaryKeyColumns(columns);
   const soleKey = keyColumns.length === 1 ? keyColumns[0] : undefined;
-  const autoIncrement = soleKey !== undefined && soleKey.type.trim().toUpperCase() === 'INTEGER';
+  // Only a rowid table's `INTEGER PRIMARY KEY` aliases the rowid; `INTEGER PRIMARY KEY DESC` and a
+  // `WITHOUT ROWID` table keep a primary-key index instead.
+  const autoIncrement =
+    soleKey !== undefined &&
+    soleKey.type.trim().toUpperCase() === 'INTEGER' &&
+    !table.indexes.some((index) => index.origin === 'pk');
   // A sole `INTEGER PRIMARY KEY` is the rowid: it never holds NULL, although `notnull` reads 0.
   const rowidAlias = autoIncrement ? soleKey.name : undefined;
   const foreignKeys = [...table.foreignKeys].sort(
@@ -980,16 +989,18 @@ export function readRawSchema(db: Database): RawTable[] {
         (left: { seqno: number }, right: { seqno: number }): number => left.seqno - right.seqno,
       );
       // An unnamed term is an expression (cid -2) or the rowid (cid -1). It stays in the list, so the
-      // index is documented in full and never matches the column set of a foreign key.
+      // index is documented in full, and the flag keeps the index from matching a foreign key.
       const indexColumns = ordered.map(
         (part) => part.name ?? (part.cid === -1 ? 'rowid' : '(expression)'),
       );
+      const unnamedTerm = ordered.some((part) => part.name === null);
       return {
         name: indexRow.name,
         unique: indexRow.unique === 1,
         origin: indexRow.origin,
         partial: indexRow.partial === 1,
         columns: indexColumns,
+        unnamedTerm,
       };
     });
 

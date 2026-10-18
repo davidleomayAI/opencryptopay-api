@@ -454,6 +454,36 @@ describe('readRawSchema', () => {
     expect(pages.get('docs/database/README.md')).toContain('- Foreign keys: 4');
   });
 
+  test('treats only a rowid table INTEGER PRIMARY KEY as the rowid', () => {
+    const db = openSchema(
+      [
+        'CREATE TABLE descending (id INTEGER PRIMARY KEY DESC, note TEXT);',
+        'CREATE TABLE no_rowid (id INTEGER PRIMARY KEY, note TEXT) WITHOUT ROWID;',
+        'CREATE TABLE rowid_alias (id INTEGER PRIMARY KEY, note TEXT);',
+      ].join('\n'),
+    );
+    const model = modelOf(readRawSchema(db), new Map());
+    db.close();
+    const key = (name: string) =>
+      tableModel(model, name).columns.find((column) => column.name === 'id');
+    expect(key('rowid_alias')?.kind).toContain('auto-increment');
+    expect(key('rowid_alias')?.nullable).toBe(false);
+    expect(key('descending')?.kind).not.toContain('auto-increment');
+    expect(key('no_rowid')?.kind).not.toContain('auto-increment');
+  });
+
+  test('an index with an unnamed term never matches a column of the same label', () => {
+    const db = openSchema(
+      [
+        'CREATE TABLE quoted ("(expression)" TEXT REFERENCES parent (code));',
+        'CREATE UNIQUE INDEX quoted_lower ON quoted (lower("(expression)"));',
+      ].join('\n'),
+    );
+    const model = modelOf(readRawSchema(db), new Map());
+    db.close();
+    expect(tableModel(model, 'quoted').foreignKeys[0]?.unique).toBe(false);
+  });
+
   test('keeps an expression term in a unique index, so it does not make a foreign key unique', () => {
     const db = openSchema(
       [
