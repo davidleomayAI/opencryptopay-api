@@ -12,15 +12,18 @@ import { join } from 'node:path';
 const KEY_NAME = /^[A-Za-z0-9._@][A-Za-z0-9._@-]{0,63}$/u;
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 const ADMIN_PATH = '/admin/places';
+const REVISION = /^[1-9][0-9]{0,15}$/u;
 
 function usage() {
   process.stderr.write(`Usage:
   ocp-admin.mjs keygen <name>
   ocp-admin.mjs list --base <https://host> --key <name>
   ocp-admin.mjs put <file.json> --base <https://host> --key <name>
-  ocp-admin.mjs delete <origin> <externalId> --base <https://host> --key <name>
+  ocp-admin.mjs delete <origin> <externalId> --base <https://host> --key <name> [--revision <n>]
 
 <name> matches ^[A-Za-z0-9._@][A-Za-z0-9._@-]{0,63}$. The key file is ~/.ocp-admin/<name>.key.
+--revision is an integer from 1 to 9007199254740991, higher than the place's stored revision;
+the place's source decides the next one.
 Exit 2 when the arguments are wrong.
 `);
 }
@@ -30,12 +33,27 @@ function failUsage() {
   process.exit(2);
 }
 
-function parseArgs(argv) {
+function parseArgs(argv, allowRevision = false) {
   const positional = [];
   let base;
   let key;
+  let revision;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
+    if (arg === '--revision' && allowRevision) {
+      const value = argv[index + 1];
+      if (
+        revision !== undefined ||
+        value === undefined ||
+        !REVISION.test(value) ||
+        !Number.isSafeInteger(Number(value))
+      ) {
+        failUsage();
+      }
+      revision = Number(value);
+      index += 1;
+      continue;
+    }
     if (arg === '--base' || arg === '--key') {
       const value = argv[index + 1];
       if (value === undefined || value.startsWith('--')) {
@@ -59,7 +77,7 @@ function parseArgs(argv) {
     }
     positional.push(arg);
   }
-  return { positional, base, key };
+  return { positional, base, key, revision };
 }
 
 function keyPath(name) {
@@ -302,14 +320,18 @@ async function cmdPut(argv) {
 }
 
 async function cmdDelete(argv) {
-  const args = parseArgs(argv);
+  const args = parseArgs(argv, true);
   if (args.positional.length !== 2 || args.positional[0] === '' || args.positional[1] === '') {
     failUsage();
   }
   const origin = args.positional[0];
   const externalId = args.positional[1];
   const where = endpoint(args.base, args.key);
-  const body = Buffer.from(JSON.stringify({ origin, externalId }), 'utf8');
+  const payload =
+    args.revision === undefined
+      ? { origin, externalId }
+      : { origin, externalId, revision: args.revision };
+  const body = Buffer.from(JSON.stringify(payload), 'utf8');
   let response;
   try {
     response = await signedFetch('DELETE', where, ADMIN_PATH, body, loadPrivateKey(where.key));

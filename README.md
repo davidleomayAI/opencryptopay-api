@@ -49,9 +49,10 @@ node scripts/ocp-admin.mjs keygen desk
 node scripts/ocp-admin.mjs list --base https://api.example.test --key desk
 node scripts/ocp-admin.mjs put places.json --base https://api.example.test --key desk
 node scripts/ocp-admin.mjs delete fremd shop-1 --base https://api.example.test --key desk
+node scripts/ocp-admin.mjs delete fremd shop-2 --base https://api.example.test --key desk --revision 8
 ```
 
-`--key` is the key name, not a path. A CLI key name must not start with `-`. The signed host is the hostname of `--base`, which must equal `OCP_ADMIN_HOST`. `list` signs `GET /admin/places`. `put` reads a JSON array and signs one `PUT /admin/places` per element. `delete` signs `DELETE /admin/places` with `origin` and `externalId`. The CLI sends a fresh nonce with every request. `delete` prints `missing <externalId>` and exits with status 1 when no pin had that origin and external id.
+`--key` is the key name, not a path. A CLI key name must not start with `-`. The signed host is the hostname of `--base`, which must equal `OCP_ADMIN_HOST`. `list` signs `GET /admin/places`. `put` reads a JSON array and signs one `PUT /admin/places` per element. `delete` signs `DELETE /admin/places` with `origin` and `externalId`, plus `revision` when `--revision` is given. A place whose source writes with revisions (R8 in `docs/product/shop-identity.md`) can only be deleted with a revision higher than its stored one; without it the CLI prints `fail <externalId> 409 Stale revision`. `--revision` must be an integer from 1 to 9007199254740991 and is only accepted by `delete`. The CLI sends a fresh nonce with every request. `delete` prints `missing <externalId>` and exits with status 1 when no pin had that origin and external id.
 
 ## Branches
 

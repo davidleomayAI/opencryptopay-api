@@ -609,6 +609,13 @@ test('Function: ocp-admin CLI — list, put, and delete sign like the server', (
       placesFile,
       JSON.stringify([
         { ...fremd, origin: 'cli', externalId: 'cli-1', nostrPubkey: keyFor('cli/cli-1') },
+        {
+          ...fremd,
+          origin: 'cli',
+          externalId: 'cli-2',
+          nostrPubkey: keyFor('cli/cli-2'),
+          revision: 1,
+        },
       ]),
     );
 
@@ -620,6 +627,36 @@ test('Function: ocp-admin CLI — list, put, and delete sign like the server', (
       );
 
     expect(run('put', placesFile)).toContain('ok cli-1');
+
+    let staleDeleteError: unknown;
+    try {
+      run('delete', 'cli', 'cli-2');
+    } catch (error) {
+      staleDeleteError = error;
+    }
+    expect(
+      typeof staleDeleteError === 'object' &&
+        staleDeleteError !== null &&
+        'stdout' in staleDeleteError &&
+        typeof staleDeleteError.stdout === 'string'
+        ? staleDeleteError.stdout
+        : '',
+    ).toBe('fail cli-2 409 Stale revision\n');
+    expect(run('delete', 'cli', 'cli-2', '--revision', '2')).toBe('ok cli-2\n');
+
+    let badRevisionError: unknown;
+    try {
+      run('delete', 'cli', 'cli-2', '--revision', '0');
+    } catch (error) {
+      badRevisionError = error;
+    }
+    expect(
+      typeof badRevisionError === 'object' &&
+        badRevisionError !== null &&
+        'status' in badRevisionError
+        ? badRevisionError.status
+        : undefined,
+    ).toBe(2);
     expect(run('list')).toContain('"origin":"cli"');
     expect(run('delete', 'cli', 'cli-1')).toBe('ok cli-1\n');
 
