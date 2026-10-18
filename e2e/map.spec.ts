@@ -1251,7 +1251,9 @@ test('Function: photoExtension — GET /map/photos/:file answers 404 for a wrong
   expect((await request.get(path.replace('.png', '.webp'))).status()).toBe(404);
 });
 
-test('Function: photoTypeOf — a deleted shop no longer serves its photos', async ({ request }) => {
+test('Function: SqliteMapPlaceStore — a deleted shop no longer serves its photos', async ({
+  request,
+}) => {
   const key = await shopWithKey(request, 'e2e-photo-delete');
   const stored = (await (
     await request.put('/map/places/photos', {
@@ -1287,4 +1289,45 @@ test('Function: parsePublicBaseUrl — photo URLs use OCP_PUBLIC_BASE_URL, not t
     })
   ).json()) as { photos: Array<{ url: string }> };
   expect(stored.photos[0]?.url.startsWith('https://api.e2e.test/map/photos/')).toBe(true);
+});
+
+test('Function: photoTypeOf — a photo whose magic bytes name another type is skipped', async ({
+  request,
+}) => {
+  const key = await shopWithKey(request, 'e2e-photo-magic');
+  const stored = await request.put('/map/places/photos', {
+    headers: ingest,
+    data: {
+      origin: 'dfx',
+      nostrPubkey: key,
+      photos: [
+        { contentType: 'image/jpeg', data: base64(simplePng()) },
+        { contentType: 'image/webp', data: base64(simpleWebp()) },
+      ],
+    },
+  });
+  expect(stored.status()).toBe(200);
+  const json = (await stored.json()) as { photos: unknown[]; skipped: unknown[] };
+  expect(json.skipped).toEqual([{ index: 0, error: 'Photo 1 does not match its content type' }]);
+  expect(json.photos).toHaveLength(1);
+});
+
+test('Function: publicPhoto — the photo answer and the detail use the same URL', async ({
+  request,
+}) => {
+  const key = await shopWithKey(request, 'e2e-photo-url');
+  const stored = (await (
+    await request.put('/map/places/photos', {
+      headers: ingest,
+      data: {
+        origin: 'dfx',
+        nostrPubkey: key,
+        photos: [{ contentType: 'image/png', data: base64(simplePng(11, 5)) }],
+      },
+    })
+  ).json()) as { photos: Array<{ url: string }> };
+  const detail = (await (await request.get(`/map/places/${npubEncode(key)}`)).json()) as {
+    place: { photos: Array<{ url: string }> };
+  };
+  expect(detail.place.photos[0]?.url).toBe(stored.photos[0]?.url);
 });

@@ -1208,7 +1208,15 @@ export function normalizeMapPlaceFilter(
   return { ok: true, value };
 }
 
-function publicPhoto(photo: StoredPlacePhoto, baseUrl: string): PublicPhoto {
+/**
+ * A stored photo as the public API shows it.
+ *
+ * @param photo - Stored photo reference.
+ * @param baseUrl - `OCP_PUBLIC_BASE_URL`, the origin of the URL.
+ * @returns `{ url, width, height, caption }` with
+ * `url` = `<baseUrl>/map/photos/{sha256}.{jpg|png|webp}`.
+ */
+export function publicPhoto(photo: StoredPlacePhoto, baseUrl: string): PublicPhoto {
   return {
     url: `${baseUrl}/map/photos/${photo.sha256}.${photoExtension(photo.contentType)}`,
     width: photo.width,

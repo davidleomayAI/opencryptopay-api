@@ -18,6 +18,7 @@ import {
   normalizeMapPlaceFilter,
   normalizePlaceOrigin,
   normalizePlaceTransaction,
+  publicPhoto,
   toPublicMapPlace,
   toPublicMapPlaceDetail,
 } from '@/lib/map/place';
@@ -326,12 +327,7 @@ export function mapRoutes(deps: MapRouteDeps): Hono {
     if (!result.ok) {
       return c.json({ error: result.error }, result.error === 'Place not found' ? 404 : 409);
     }
-    const photos = result.photos.map((photo) => ({
-      url: `${deps.publicBaseUrl}/map/photos/${photo.sha256}.${photoExtension(photo.contentType)}`,
-      width: photo.width,
-      height: photo.height,
-      caption: photo.caption,
-    }));
+    const photos = result.photos.map((photo) => publicPhoto(photo, deps.publicBaseUrl));
     return c.json({ photos, skipped });
   });
 

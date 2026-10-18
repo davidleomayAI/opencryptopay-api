@@ -493,8 +493,9 @@ The steps are named by label, in this order:
   links. Until step 2 is live the page treats missing `coverPhoto` and
   `photos` as no photos.
 
-Steps 1a, 2 and 1b are each one pull request with handbook entries, e2e tests
-and the 100% coverage gate, as in [CONTRIBUTING.md](../../CONTRIBUTING.md).
+Steps 1a and 2 land together in one pull request, and step 1b in its own;
+each comes with handbook entries, e2e tests and the 100% coverage gate, as in
+[CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ## Not part of this
 
