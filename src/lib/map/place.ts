@@ -91,6 +91,7 @@ const SHOP_TYPE_ERROR = 'Place shop type is invalid';
 const DESCRIPTION_ERROR = 'Place description is invalid';
 const SUPPORT_ERROR = 'Place support is invalid';
 const TRANSACTION_TIME_ERROR = 'Place transaction time is invalid';
+const FOUR_DIGIT_YEAR = /^\d{4}-/u;
 
 const ALLOWED_PLACE_KEYS: ReadonlySet<string> = new Set([
   'origin',
@@ -1012,12 +1013,17 @@ export function normalizePlaceTransaction(
   if (!Number.isFinite(parsed) || parsed > nowMs + 120_000) {
     return { ok: false, error: TRANSACTION_TIME_ERROR };
   }
+  const occurredAt = new Date(parsed).toISOString();
+  // SQLite julianday() only reads four-digit years, so a negative year would hide the pin.
+  if (!FOUR_DIGIT_YEAR.test(occurredAt)) {
+    return { ok: false, error: TRANSACTION_TIME_ERROR };
+  }
   return {
     ok: true,
     value: {
       origin: key.value.origin,
       externalId: key.value.externalId,
-      occurredAt: new Date(parsed).toISOString(),
+      occurredAt,
     },
   };
 }
