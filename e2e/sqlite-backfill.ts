@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { placeActivity } from '../src/lib/map/place';
 import type { MapPlaceInput } from '../src/lib/map/place';
 import { SqliteMapPlaceStore } from '../src/lib/map/sqlite';
+import { placeProblems } from '../src/lib/map/store';
 
 const DESCRIPTION =
   'SPAR supermarket in Triesen. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
@@ -302,6 +303,17 @@ if (schemaOk) {
     const all = listStore.listAll();
     const publicRows = listStore.list(1000);
     const bulk = all.filter((row) => row.externalId.startsWith('bulk-'));
+    const clock = new Database(listFile);
+    try {
+      clock
+        .query('UPDATE map_place SET last_transaction_at = ? WHERE external_id = ?')
+        .run('-000001-01-01T00:00:00.000Z', 'complete');
+    } finally {
+      clock.close();
+    }
+    const negativeYear = listStore.listAll().find((row) => row.externalId === 'complete');
+    const negativeYearProblems = negativeYear === undefined ? [] : placeProblems(negativeYear);
+    const negativeYearHidden = listStore.list(1000).every((row) => row.externalId !== 'complete');
     if (
       complete.created &&
       incomplete.created &&
@@ -320,7 +332,10 @@ if (schemaOk) {
           row.supports.length === 1 &&
           row.supports[0]?.blockchain === 'Bitcoin' &&
           row.supports[0]?.asset === `BTC-${row.externalId.slice('bulk-'.length)}`,
-      )
+      ) &&
+      negativeYearHidden &&
+      negativeYearProblems.length === 1 &&
+      negativeYearProblems[0] === 'lastTransactionAt is not a valid instant'
     ) {
       listAllOk = true;
     } else {
@@ -334,6 +349,8 @@ if (schemaOk) {
           publicIncomplete: publicRows.some((row) => row.externalId === 'incomplete'),
           bulk: bulk.length,
           bulkWithSupports: bulk.filter((row) => row.supports.length === 1).length,
+          negativeYearHidden,
+          negativeYearProblems,
         })}\n`,
       );
       process.exitCode = 1;

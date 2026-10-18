@@ -113,7 +113,7 @@ function copyStoredPlace(place: StoredMapPlace): StoredMapPlace {
  * A row is complete when name, description, street, house number, postal code,
  * city, and country are non-empty, shop type is SPAR or Others, and
  * lastTransactionAt is null or a parseable instant with a four-digit year, which
- * is what SQLite `julianday()` reads.
+ * matches SQLite `julianday()` for the canonical ISO instants this service writes.
  *
  * @param place - Stored pin, including an incomplete row.
  * @returns The problems, in check order. No I/O.
