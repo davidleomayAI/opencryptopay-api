@@ -58,11 +58,13 @@ jobs:
             const { existsSync, readFileSync } = require('node:fs');
             const { pathToFileURL } = require('node:url');
             const basePath = `${process.env.GITHUB_WORKSPACE}/notice-base/scripts/db-change-notice.mjs`;
-            const headPath = `${process.env.GITHUB_WORKSPACE}/notice-head/scripts/db-change-notice.mjs`;
-            const bootstrap = !existsSync(basePath);
-            const { evaluate, MARKER } = await import(
-              pathToFileURL(bootstrap ? headPath : basePath).href
-            );
+            // Only the base copy is ever imported: this job runs with the base repository's token, so
+            // pull request code must not run in it. Without a base copy there is nothing to decide with.
+            if (!existsSync(basePath)) {
+              core.setFailed('The base branch has no scripts/db-change-notice.mjs.');
+              return;
+            }
+            const { evaluate, MARKER } = await import(pathToFileURL(basePath).href);
             const body = context.payload.pull_request.body ?? '';
             const files = await github.paginate(github.rest.pulls.listFiles, {
               owner: context.repo.owner,
@@ -91,7 +93,11 @@ jobs:
               const baseName = file.previous_filename ?? file.filename;
               const baseFile = `${process.env.GITHUB_WORKSPACE}/notice-base/${baseName}`;
               try {
-                file.content = readFileSync(existsSync(headFile) ? headFile : baseFile, 'utf8');
+                // Head and base text together: removing the only database import changes access too.
+                const texts = [headFile, baseFile]
+                  .filter((name) => existsSync(name))
+                  .map((name) => readFileSync(name, 'utf8'));
+                if (texts.length > 0) file.content = texts.join('\n');
               } catch {
                 // Leave content unset so the existing patch rules decide, including fail-closed.
               }
@@ -104,7 +110,7 @@ jobs:
             core.summary
               .addHeading('Database change notice')
               .addRaw(
-                `Required: ${required ? 'yes' : 'no'}\n\nRules from: ${bootstrap ? 'this pull request (base has no script yet)' : 'base branch'}\n\nTrigger files:\n\n${triggerList}\n`,
+                `Required: ${required ? 'yes' : 'no'}\n\nRules from: base branch\n\nTrigger files:\n\n${triggerList}\n`,
               );
             await core.summary.write();
             if (required && !ok) {

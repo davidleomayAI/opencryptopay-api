@@ -567,3 +567,13 @@ describe('query receivers', () => {
     assert.deepEqual(result.triggers, ['src/lib/map/query.ts']);
   });
 });
+
+describe('markers inside HTML tags', () => {
+  it('hides a marker inside a multi-line tag attribute', () => {
+    assert.equal(isMarkerVisible(`<div title="\n${MARKER}\n">text</div>`), false);
+  });
+
+  it('keeps a marker wrapped in a formatting tag', () => {
+    assert.equal(isMarkerVisible(`<b>${MARKER}</b>`), true);
+  });
+});
