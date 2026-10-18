@@ -40,8 +40,17 @@ const PNG_LENGTHS: ReadonlyMap<string, readonly number[]> = new Map([
   ['sRGB', [1]],
   ['cICP', [4]],
   ['pHYs', [9]],
-  ['sBIT', [1, 2, 3, 4]],
-  ['bKGD', [1, 2, 6]],
+]);
+/**
+ * Data length of the kept PNG chunks whose size depends on the colour type
+ * (0 grey, 2 RGB, 3 indexed, 4 grey with alpha, 6 RGB with alpha). A missing
+ * colour type means the chunk is not allowed there; indexed `tRNS` is checked
+ * against the palette instead.
+ */
+const PNG_COLOUR_LENGTHS: ReadonlyMap<string, Readonly<Record<number, number>>> = new Map([
+  ['sBIT', { 0: 1, 2: 3, 3: 3, 4: 2, 6: 4 }],
+  ['bKGD', { 0: 2, 2: 6, 3: 1, 4: 2, 6: 6 }],
+  ['tRNS', { 0: 2, 2: 6 }],
 ]);
 const WEBP_FRAMES: ReadonlySet<string> = new Set(['VP8 ', 'VP8L']);
 
@@ -204,13 +213,21 @@ function isSof(marker: number): boolean {
 
 /**
  * Markers that carry image data or decoding tables: SOFn, DHT, DAC, SOS, DQT,
- * DNL, DRI, DHP and EXP. Every other marker with a length (JPG, JPGn,
+ * DNL and DRI. Every other marker with a length (JPG, JPGn, DHP, EXP,
  * reserved) is dropped.
  */
 function isImageMarker(marker: number): boolean {
   return (
-    (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc8) || (marker >= 0xda && marker <= 0xdf)
+    (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc8) || (marker >= 0xda && marker <= 0xdd)
   );
+}
+
+/** Whether a kept marker of fixed layout has its length: DNL and DRI 4, DAC pairs of bytes. */
+function hasMarkerLength(marker: number, length: number): boolean {
+  if (marker === 0xdc || marker === 0xdd) {
+    return length === 4;
+  }
+  return marker !== 0xcc || length % 2 === 0;
 }
 
 /** End of the entropy-coded data that starts at `at`: the next marker other than RSTn. */
@@ -235,6 +252,8 @@ function stripJpeg(bytes: Uint8Array): StripResult {
   let height = 0;
   let orientation = 1;
   let exifAt = -1;
+  let jfifKept = false;
+  let adobeKept = false;
   for (;;) {
     if (pos + 2 > bytes.length || byte(bytes, pos) !== 0xff) {
       return { ok: false, error: 'unreadable' };
@@ -248,8 +267,7 @@ function stripJpeg(bytes: Uint8Array): StripResult {
       break;
     }
     if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
-      // TEM and a stray RSTn stand alone, without a length.
-      parts.push(new Uint8Array([0xff, marker]));
+      // TEM and a stray RSTn stand alone, without a length, and mean nothing outside a scan.
       pos += 2;
       continue;
     }
@@ -263,14 +281,16 @@ function stripJpeg(bytes: Uint8Array): StripResult {
     }
     const content = bytes.subarray(pos + 4, end);
     if (marker === 0xe0) {
-      if (startsWith(content, 0, JFIF_ID) && content.length >= 14) {
+      if (!jfifKept && startsWith(content, 0, JFIF_ID) && content.length >= 14) {
         const header = new Uint8Array(14);
         header.set(content.subarray(0, 12));
         parts.push(segment(0xe0, header));
+        jfifKept = true;
       }
     } else if (marker === 0xee) {
-      if (startsWith(content, 0, ADOBE_ID) && content.length >= 12) {
+      if (!adobeKept && startsWith(content, 0, ADOBE_ID) && content.length >= 12) {
         parts.push(segment(0xee, content.slice(0, 12)));
+        adobeKept = true;
       }
     } else if (marker === 0xe1) {
       if (exifAt === -1 && startsWith(content, 0, EXIF_ID)) {
@@ -280,6 +300,9 @@ function stripJpeg(bytes: Uint8Array): StripResult {
     } else if (!isImageMarker(marker)) {
       // Dropped: ICC, XMP, MPF, maker data, comments and every unknown marker.
     } else {
+      if (!hasMarkerLength(marker, length)) {
+        return { ok: false, error: 'unreadable' };
+      }
       if (isSof(marker) && width === 0) {
         if (length < 8) {
           return { ok: false, error: 'unreadable' };
@@ -321,6 +344,7 @@ function stripPng(bytes: Uint8Array): StripResult {
   let width = 0;
   let height = 0;
   let colourType = 0;
+  let bitDepth = 0;
   let paletteEntries = 0;
   let afterData = false;
   const seen = new Set<string>();
@@ -340,12 +364,19 @@ function stripPng(bytes: Uint8Array): StripResult {
     if (type === 'IHDR') {
       width = be32(bytes, pos + 8);
       height = be32(bytes, pos + 12);
+      bitDepth = byte(bytes, pos + 16);
       colourType = byte(bytes, pos + 17);
     }
     if (type === 'acTL') {
       return { ok: false, error: 'animated' };
     }
-    if (type === 'PLTE' && (length < 3 || length > 768 || length % 3 !== 0)) {
+    if (
+      type === 'PLTE' &&
+      (length < 3 ||
+        length > 768 ||
+        length % 3 !== 0 ||
+        (colourType === 3 && length / 3 > 2 ** bitDepth))
+    ) {
       return { ok: false, error: 'unreadable' };
     }
     if (type === 'IEND') {
@@ -359,7 +390,7 @@ function stripPng(bytes: Uint8Array): StripResult {
       (PNG_KEEP.has(type) &&
         !afterData &&
         !seen.has(type) &&
-        pngChunkFits(type, length, colourType, paletteEntries));
+        pngChunkFits(type, bytes.subarray(pos + 8, end - 4), colourType, paletteEntries));
     if (keep) {
       parts.push(
         pngChunk(bytes.subarray(pos + 4, pos + 8), bytes.subarray(pos + 8, pos + 8 + length)),
@@ -376,21 +407,32 @@ function stripPng(bytes: Uint8Array): StripResult {
 }
 
 /**
- * Whether a kept ancillary PNG chunk has a length the format allows: the fixed
- * size, and for `tRNS` 2 bytes for grey, 6 for RGB and up to one byte per
- * palette entry for an indexed image. Grey and RGB with alpha have no `tRNS`.
+ * Whether a kept PNG chunk fits the image: `PLTE` only for an indexed image,
+ * the fixed size, the size for the image's colour type, an indexed `tRNS` of 1
+ * byte up to one per palette entry, and an indexed `bKGD` naming a palette
+ * entry. Grey and RGB with alpha have no `tRNS`.
  */
 function pngChunkFits(
   type: string,
-  length: number,
+  data: Uint8Array,
   colourType: number,
   paletteEntries: number,
 ): boolean {
-  if (type === 'tRNS') {
-    const allowed = colourType === 0 ? 2 : colourType === 2 ? 6 : colourType === 3 ? -1 : 0;
-    return allowed === -1 ? length >= 1 && length <= paletteEntries : length === allowed;
+  if (type === 'PLTE') {
+    return colourType === 3;
   }
-  return PNG_LENGTHS.get(type)?.includes(length) ?? true;
+  if (type === 'tRNS' && colourType === 3) {
+    return data.length >= 1 && data.length <= paletteEntries;
+  }
+  if (type === 'bKGD' && colourType === 3 && byte(data, 0) >= paletteEntries) {
+    return false;
+  }
+  const byColour = PNG_COLOUR_LENGTHS.get(type);
+  if (byColour !== undefined) {
+    return byColour[colourType] === data.length;
+  }
+  // Every other kept ancillary chunk has a fixed size.
+  return (PNG_LENGTHS.get(type) as readonly number[]).includes(data.length);
 }
 
 /** A WebP chunk rebuilt from its type and declared data, with a zero pad byte when odd. */
@@ -417,7 +459,7 @@ function stripWebp(bytes: Uint8Array): StripResult {
   let pos = 12;
   let canvas: { width: number; height: number } | null = null;
   let frame: { width: number; height: number } | null = null;
-  let alpha = false;
+  let alpha: Uint8Array | null = null;
   while (pos < riffEnd) {
     if (pos + 8 > riffEnd) {
       return { ok: false, error: 'unreadable' };
@@ -444,10 +486,9 @@ function stripWebp(bytes: Uint8Array): StripResult {
       cleared.set([byte(data, 0) & VP8X_ALPHA, 0, 0, 0]);
       parts.push(webpChunk(bytes.subarray(pos, pos + 4), cleared));
     } else if (type === 'ALPH') {
-      // One ALPH, only in the extended format and before the frame.
-      if (canvas !== null && frame === null && !alpha) {
-        parts.push(webpChunk(bytes.subarray(pos, pos + 4), data));
-        alpha = true;
+      // One ALPH, only in the extended format before the frame; it is written with a VP8 frame only.
+      if (canvas !== null && frame === null && alpha === null) {
+        alpha = webpChunk(bytes.subarray(pos, pos + 4), data);
       }
     } else if (WEBP_FRAMES.has(type) && frame === null) {
       // Only the first frame chunk is kept; a later one is never shown.
@@ -456,6 +497,9 @@ function stripWebp(bytes: Uint8Array): StripResult {
           return { ok: false, error: 'unreadable' };
         }
         frame = { width: le16(data, 6) & 0x3fff, height: le16(data, 8) & 0x3fff };
+        if (alpha !== null) {
+          parts.push(alpha);
+        }
       } else {
         if (size < 5 || byte(data, 0) !== 0x2f) {
           return { ok: false, error: 'unreadable' };
@@ -517,14 +561,15 @@ export function photoTypeOf(bytes: Uint8Array): PhotoType | null {
 
 /**
  * Remove metadata from a photo by allow-list and read its displayed size.
- * JPEG keeps a plain JFIF header without thumbnail, a 12-byte Adobe segment,
+ * JPEG keeps the first plain JFIF header without thumbnail, the first 12-byte Adobe segment,
  * a minimal EXIF orientation when the original held 2 to 8, and the image
- * markers (SOFn, DHT, DAC, SOS with its scan data, DQT, DNL, DRI, DHP, EXP,
- * TEM, RSTn) up to the main image's EOI; every other marker is dropped. PNG keeps the listed
+ * markers (SOFn, DHT, DAC, SOS with its scan data, DQT, DNL, DRI) up to the
+ * main image's EOI; every other marker, and TEM or RSTn outside a scan, is
+ * dropped. PNG keeps the listed
  * rendering chunks up to IEND, each rebuilt with a fresh CRC; an ancillary
- * chunk or PLTE is kept once and only before the first IDAT, one of a length
- * the format does not allow is dropped, and IEND is written empty. WebP
- * keeps `VP8X` (first and exactly 10 bytes), one `ALPH` before the frame
+ * chunk or PLTE is kept once and only before the first IDAT, PLTE only for an
+ * indexed image, one of a length the format does not allow is dropped, and IEND is written empty. WebP
+ * keeps `VP8X` (first and exactly 10 bytes), one `ALPH` before a `VP8 ` frame
  * and the first `VP8 ` or `VP8L` frame up to the RIFF end, each rebuilt from its declared size with a zero pad byte, keeps only
  * the alpha flag of `VP8X` with its reserved bytes zeroed and rewrites the
  * RIFF size. Every byte after the end of the image is cut. No metadata segment

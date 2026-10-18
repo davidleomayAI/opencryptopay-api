@@ -256,15 +256,15 @@ The API removes metadata before storing. It does not rely on the source
 having re-encoded the image, because a phone photo can carry its GPS position:
 
 - JPEG, by allow-list:
-  - keep `APP0` only as a plain JFIF header: an `APP0` that starts with
+  - keep the first `APP0` that is a plain JFIF header: an `APP0` that starts with
     `JFIF\0` is rewritten with a thumbnail size of 0×0 and no thumbnail
     bytes; a `JFXX`, any other `APP0`, or a JFIF `APP0` whose content is
-    shorter than 14 bytes is dropped. This removes embedded previews of the
+    shorter than 14 bytes is dropped, and so is every later JFIF `APP0`. This removes embedded previews of the
     original;
-  - keep `APP14` only when it starts with `Adobe` and its content is at
+  - keep the first `APP14` that starts with `Adobe` and whose content is at
     least 12 bytes (needed for the color transform), cut to those fixed 12
     bytes (`Adobe`, version, two flag words, transform); drop any other
-    `APP14`, including a shorter `Adobe` one;
+    `APP14`, including a shorter or a later `Adobe` one;
   - drop every other `APPn` segment, which removes EXIF, XMP, MPF, ICC
     profiles and maker data, and every `COM` segment;
   - when the dropped EXIF held an orientation from 2 to 8, write back a
@@ -272,30 +272,37 @@ having re-encoded the image, because a phone photo can carry its GPS position:
     entry, so portrait photos keep showing upright;
   - walk the markers through the whole image, also between the scans of a
     progressive JPEG. Keep only the image markers `SOI`, `SOFn`, `DHT`,
-    `DAC`, `DQT`, `DRI`, `DNL`, `DHP`, `EXP`, `SOS` with its entropy-coded
-    data, `TEM`, `RSTn` and `EOI`; `TEM` and `RSTn` have no length. Every
-    `APPn` and `COM` goes through the allow-list above; every other marker
-    (`JPG`, `JPGn`, reserved) is dropped. Cut every byte after the main image's
+    `DAC`, `DQT`, `DRI`, `DNL`, `SOS` with its entropy-coded data (including
+    its `RSTn`) and `EOI`. A `DRI` or `DNL` that is not 4 bytes long, or a
+    `DAC` of an odd length, could not be read. Every `APPn` and `COM` goes
+    through the allow-list above; every other marker (`JPG`, `JPGn`, `DHP`,
+    `EXP`, reserved, and the length-free `TEM` and `RSTn` outside a scan) is
+    dropped. Cut every byte after the main image's
     `EOI`; this removes appended previews, depth maps and motion-photo
     videos.
 - PNG, by allow-list: keep `IHDR`, `PLTE`, `IDAT`, `IEND`, `tRNS`, `gAMA`,
   `cHRM`, `sRGB`, `cICP`, `sBIT`, `pHYs` and `bKGD`; drop every other
   chunk, which removes `eXIf`, `iCCP`, text, time and C2PA chunks. Drop a
   kept chunk whose length the format fixes when it has another length
-  (`gAMA` 4, `cHRM` 32, `sRGB` 1, `cICP` 4, `pHYs` 9, `sBIT` 1 to 4, `bKGD`
-  1, 2 or 6), and a `tRNS` that does not fit the colour type (2 bytes for
-  grey, 6 for RGB, 1 byte per palette entry at most for indexed, none with
-  alpha). Keep every ancillary chunk and `PLTE` at most once and only before
-  the first `IDAT`. `IHDR` must come first, once, with 13 bytes, and `PLTE`
-  must hold 1 to 256 entries of 3 bytes, otherwise the photo could not be
-  read. Rebuild every kept chunk with a fresh CRC, write `IEND`
+  (`gAMA` 4, `cHRM` 32, `sRGB` 1, `cICP` 4, `pHYs` 9), and an `sBIT`,
+  `bKGD` or `tRNS` that does not fit the colour type (`sBIT` 1 for grey, 3
+  for RGB and indexed, 2 for grey with alpha, 4 for RGB with alpha; `bKGD` 2
+  for grey with or without alpha, 6 for RGB with or without alpha, 1 for
+  indexed; `tRNS` 2 for grey, 6 for RGB, 1 byte up to one per palette entry
+  for indexed, none with alpha), and an indexed `bKGD` that names no palette
+  entry. Keep `PLTE` only for an indexed image. Keep every ancillary chunk
+  and `PLTE` at most once and only before the first `IDAT`. `IHDR` must come
+  first, once, with 13 bytes, and `PLTE` must hold 1 to 256 entries of 3
+  bytes, for an indexed image at most 2 to the power of the bit depth,
+  otherwise the photo could not be read. Rebuild every kept chunk with a fresh CRC, write `IEND`
   empty, walk to `IEND` and cut every byte after it.
 - WebP, by allow-list: keep `VP8 `, `VP8L`, `VP8X` and `ALPH`; drop every
   other chunk, each together with its pad byte when the chunk size is odd,
   which removes `EXIF`, `XMP `, `ICCP` and C2PA chunks. Walk to byte 8 plus
   the RIFF size and cut every byte after it. `VP8X` must be the first chunk
   and exactly 10 bytes, otherwise the photo could not be read. Keep only the
-  first frame chunk, and one `ALPH` only after `VP8X` and before the frame. Rebuild every kept chunk
+  first frame chunk, and one `ALPH` only after `VP8X`, before the frame and
+  only with a `VP8 ` frame (a `VP8L` frame carries its own alpha). Rebuild every kept chunk
   from its declared size with a zero pad byte, keep only the alpha flag
   (`0x10`) of `VP8X`, which clears ICC (`0x20`), EXIF (`0x08`), XMP (`0x04`)
   and the reserved bits, zero its three reserved bytes, and rewrite the RIFF
