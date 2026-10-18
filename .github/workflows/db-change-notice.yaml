@@ -23,30 +23,34 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      # No pull request code runs in this job: the tests of the notice script run in ci.yaml, and
-      # the decision is made by the base branch's copy of db-change-notice.mjs, so a pull request
-      # cannot turn its own check green by editing the script. The pull request's copy is used only
-      # while the base does not have the script yet.
+      # No pull request code runs in this job: source files are only read as text, the tests of the
+      # notice script run in ci.yaml, and the decision is made by the base branch's copy of
+      # db-change-notice.mjs, so a pull request cannot turn its own check green by editing the
+      # script. The pull request's copy is used only while the base does not have the script yet.
       - name: Checkout base
         uses: actions/checkout@v4
         with:
           persist-credentials: false
           ref: ${{ github.event.pull_request.base.sha }}
           path: notice-base
-          sparse-checkout: scripts
+          sparse-checkout: |
+            scripts
+            src
 
       - name: Checkout pull request
         uses: actions/checkout@v4
         with:
           persist-credentials: false
           path: notice-head
-          sparse-checkout: scripts
+          sparse-checkout: |
+            scripts
+            src
 
       - name: Evaluate database change notice
         uses: actions/github-script@v7
         with:
           script: |
-            const { existsSync } = require('node:fs');
+            const { existsSync, readFileSync } = require('node:fs');
             const { pathToFileURL } = require('node:url');
             const basePath = `${process.env.GITHUB_WORKSPACE}/notice-base/scripts/db-change-notice.mjs`;
             const headPath = `${process.env.GITHUB_WORKSPACE}/notice-head/scripts/db-change-notice.mjs`;
@@ -69,6 +73,24 @@ jobs:
             const listed = truncated
               ? [...files, { filename: 'src/(file list truncated by the GitHub API).ts' }]
               : files;
+            const isSourceTypeScript = (name) =>
+              typeof name === 'string' && name.startsWith('src/') && name.endsWith('.ts');
+            for (const file of listed) {
+              if (
+                !isSourceTypeScript(file.filename) &&
+                !isSourceTypeScript(file.previous_filename)
+              ) {
+                continue;
+              }
+              const headFile = `${process.env.GITHUB_WORKSPACE}/notice-head/${file.filename}`;
+              const baseName = file.previous_filename ?? file.filename;
+              const baseFile = `${process.env.GITHUB_WORKSPACE}/notice-base/${baseName}`;
+              try {
+                file.content = readFileSync(existsSync(headFile) ? headFile : baseFile, 'utf8');
+              } catch {
+                // Leave content unset so the existing patch rules decide, including fail-closed.
+              }
+            }
             const { required, ok, triggers } = evaluate({ body, files: listed });
             const triggerList =
               triggers.length === 0

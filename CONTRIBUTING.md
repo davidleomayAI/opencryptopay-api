@@ -25,6 +25,7 @@ Before a change is ready, run the same commands CI runs. Bun is pinned to `1.3.1
 
 - `bun run typecheck`
 - `bun run lint` (ESLint and Prettier)
+- `node --test scripts/db-change-notice.test.mjs`
 - `bun run handbook:check` — every exported function and every HTTP route has a handbook section
 - `bun run e2e:check` — every exported function and every HTTP route has an end-to-end title or request
 - `bun run test:coverage` — 100 percent lines, branches, functions, and statements under `src`, except `src/index.ts`
@@ -37,7 +38,7 @@ Do not lower a coverage threshold to land a change. A genuinely unreachable bran
 ## Database
 
 - **Schema reference.** `docs/database/` is generated from the schema `SqliteMapPlaceStore` creates at boot: every table and column with kind, SQLite type, nullable, default, foreign key, and indexes. Regenerate it with `bun run db:docs` in the same pull request as any schema change. The CI step "Database schema reference" (`bun run test:schema`) fails when the committed pages differ. A new table also needs an entry in `TABLE_TYPES` in `integration/db-schema-reference.ts` (a TypeScript type, or `null`). Do not edit `docs/database/` by hand. `docs/schema/map-place.sql` stays the hand-written DDL.
-- **Database change notice.** A pull request into `develop` that changes the database or database access must contain the exact line `⚠️ 🗄️ Attention: database change` in the visible part of its description (not inside `<details>`, an HTML comment, or a code fence). The check "Database change notice" fails otherwise and runs again when the pull request text is edited. It triggers on changes under `docs/schema/`, `docs/database/`, `integration/`, on `src/lib/map/sqlite.ts` and `src/lib/map/store.ts`, and on non-test `src/**/*.ts` diffs that add or remove SQL or database calls (`_SCHEMA_SQL`, `.exec(`, `.query(`, `.prepare(`, `.run(`, `new Database(`, `PRAGMA`, `SELECT … FROM`, `INSERT INTO`, `UPDATE … SET`, `DELETE FROM`, `CREATE`/`ALTER`/`DROP`, `ON CONFLICT`).
+- **Database change notice.** A pull request into `develop` that changes the database or database access must contain the exact line `⚠️ 🗄️ Attention: database change` in the visible part of its description (not inside `<details>`, an HTML comment, or a code fence). The check "Database change notice" fails otherwise and runs again when the pull request text is edited. It triggers on changes under `docs/schema/`, `docs/database/`, `integration/`, on `src/lib/map/sqlite.ts` and `src/lib/map/store.ts`, and on non-test `src/**/*.ts` diffs that add or remove SQL or database calls (`_SCHEMA_SQL`, `.exec(`, `.query(`, `.prepare(`, `.run(`, `new Database(`, `PRAGMA`, `SELECT … FROM`, `INSERT INTO`, `UPDATE … SET`, `DELETE FROM`, `CREATE`/`ALTER`/`DROP`, `ON CONFLICT`). It also checks the complete contents of changed non-test `src/**/*.ts` files and triggers when a file imports `bun:sqlite` or contains `SqliteMapPlaceStore`, `PLACE_DB`, or `_SCHEMA_SQL`. This check is a safety net and does not replace the author's own judgement about whether the notice is required.
 
 ## CI / CD
 

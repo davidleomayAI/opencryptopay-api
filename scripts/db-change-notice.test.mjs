@@ -12,12 +12,14 @@ const PLAIN_MARKER = MARKER.replaceAll('\uFE0F', '');
  * Build a one-file pull-request list.
  * @param {string} filename
  * @param {string | undefined} patch Omit the patch when `patch` is `undefined`.
- * @returns {Array<{ filename: string, status: string, patch?: string }>}
+ * @param {string | undefined} content Omit the content when `content` is `undefined`.
+ * @returns {Array<{ filename: string, status: string, patch?: string, content?: string }>}
  */
-function files(filename, patch) {
-  /** @type {{ filename: string, status: string, patch?: string }} */
+function files(filename, patch, content) {
+  /** @type {{ filename: string, status: string, patch?: string, content?: string }} */
   const entry = { filename, status: 'modified' };
   if (patch !== undefined) entry.patch = patch;
+  if (content !== undefined) entry.content = content;
   return [entry];
 }
 
@@ -132,6 +134,64 @@ describe('patch triggers under src', () => {
       const result = evaluate({ body: '', files: files('src/lib/map/place.ts', patch) });
       assert.deepEqual(result.triggers, ['src/lib/map/place.ts']);
       assert.equal(result.ok, false);
+    }
+  });
+});
+
+describe('file content triggers under src', () => {
+  it('triggers when the file imports bun:sqlite but the patch line is plain text', () => {
+    const result = evaluate({
+      body: '',
+      files: files(
+        'src/lib/map/place.ts',
+        diffWith('+export const description = "changed";'),
+        "import Database from 'bun:sqlite';\nexport const description = 'changed';\n",
+      ),
+    });
+    assert.deepEqual(result.triggers, ['src/lib/map/place.ts']);
+    assert.equal(result.required, true);
+    assert.equal(result.ok, false);
+  });
+
+  it('does not trigger when the file and patch have no database access', () => {
+    const result = evaluate({
+      body: '',
+      files: files(
+        'src/lib/map/place.ts',
+        diffWith('+export const description = "changed";'),
+        "export const description = 'changed';\n",
+      ),
+    });
+    assert.deepEqual(result, { required: false, ok: true, triggers: [] });
+  });
+
+  it('counts database access in removed-file content from the base', () => {
+    const result = evaluate({
+      body: '',
+      files: [
+        {
+          filename: 'src/lib/map/legacy.ts',
+          status: 'removed',
+          patch: diffWith('-export const description = "old";'),
+          content: "import Database from 'bun:sqlite';\nexport const description = 'old';\n",
+        },
+      ],
+    });
+    assert.deepEqual(result.triggers, ['src/lib/map/legacy.ts']);
+    assert.equal(result.required, true);
+  });
+
+  it('recognizes OpenCryptoPay database identifiers in complete files', () => {
+    for (const content of [
+      'const store = new SqliteMapPlaceStore(path);',
+      'const path = PLACE_DB;',
+      'const schema = MAP_PLACE_SCHEMA_SQL;',
+    ]) {
+      const result = evaluate({
+        body: '',
+        files: files('src/lib/map/place.ts', diffWith('+export const n = 1;'), content),
+      });
+      assert.deepEqual(result.triggers, ['src/lib/map/place.ts']);
     }
   });
 });
@@ -257,6 +317,12 @@ describe('marker visibility', () => {
   it('a marker after a properly closed fence is visible', () => {
     const body = `\`\`\`md\nsample\n\`\`\`\n${MARKER}\n`;
     assert.equal(isMarkerVisible(body), true);
+  });
+
+  it('hides a marker inside inline code that spans lines in one paragraph', () => {
+    const body = `\`\n${MARKER}\n\``;
+    assert.equal(isMarkerVisible(body), false);
+    assert.equal(visibleBody(body).includes(PLAIN_MARKER), false);
   });
 
   it('hides a marker inside a list-item fence', () => {

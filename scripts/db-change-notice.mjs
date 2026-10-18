@@ -59,6 +59,17 @@ const DATABASE_ANCHOR_PATTERNS = [
 ];
 
 /**
+ * Patterns that mark a complete source file as accessing the database.
+ * @type {RegExp[]}
+ */
+const DATABASE_FILE_PATTERNS = [
+  /\b(?:from|import)\s*(?:\(\s*)?['"]bun:sqlite['"]/,
+  /\bSqliteMapPlaceStore\b/,
+  /\bPLACE_DB\b/,
+  /_SCHEMA_SQL/,
+];
+
+/**
  * Drop U+FE0F so a marker with or without emoji variation selectors compares equal.
  * @param {string} text
  * @returns {string}
@@ -104,28 +115,28 @@ function stripFencedCode(text) {
   return kept.join('\n');
 }
 
-// A run of N backticks opens a span and closes at the next run of exactly N on
-// the same line. An unmatched run stays. The span, backticks included, is removed.
-function stripInlineCode(line) {
+// A run of N backticks opens a span and closes at the next run of exactly N in
+// the same paragraph. An unmatched run stays. The span, backticks included, is removed.
+function stripInlineCode(text) {
   let kept = '';
   let index = 0;
-  while (index < line.length) {
-    if (line[index] !== '`') {
-      kept += line[index];
+  while (index < text.length) {
+    if (text[index] !== '`') {
+      kept += text[index];
       index += 1;
       continue;
     }
     let length = 0;
-    while (index + length < line.length && line[index + length] === '`') length += 1;
+    while (index + length < text.length && text[index + length] === '`') length += 1;
     let cursor = index + length;
     let close = -1;
-    while (cursor < line.length) {
-      if (line[cursor] !== '`') {
+    while (cursor < text.length) {
+      if (text[cursor] !== '`') {
         cursor += 1;
         continue;
       }
       let run = 0;
-      while (cursor + run < line.length && line[cursor + run] === '`') run += 1;
+      while (cursor + run < text.length && text[cursor + run] === '`') run += 1;
       if (run === length) {
         close = cursor;
         break;
@@ -133,7 +144,7 @@ function stripInlineCode(line) {
       cursor += run;
     }
     if (close === -1) {
-      kept += line.slice(index, index + length);
+      kept += text.slice(index, index + length);
       index += length;
       continue;
     }
@@ -159,11 +170,28 @@ function stripCode(input) {
       afterIndentedCode = true;
       continue;
     }
-    kept.push(stripInlineCode(line));
+    kept.push(line);
     afterBlank = blank;
     afterIndentedCode = false;
   }
-  return kept.join('\n');
+
+  const stripped = [];
+  let paragraph = [];
+  const flushParagraph = () => {
+    if (paragraph.length === 0) return;
+    stripped.push(stripInlineCode(paragraph.join('\n')));
+    paragraph = [];
+  };
+  for (const line of kept) {
+    if (line.trim() === '') {
+      flushParagraph();
+      stripped.push(line);
+      continue;
+    }
+    paragraph.push(line);
+  }
+  flushParagraph();
+  return stripped.join('\n');
 }
 
 /**
@@ -354,11 +382,20 @@ function patchTouchesDatabase(patch) {
 }
 
 /**
+ * Whether a complete source file accesses the database.
+ * @param {string} content
+ * @returns {boolean}
+ */
+function fileContentTouchesDatabase(content) {
+  return DATABASE_FILE_PATTERNS.some((pattern) => pattern.test(content));
+}
+
+/**
  * Whether one pull-request file requires the database-change marker.
  * A rename also triggers when `previous_filename` is a path trigger.
  * A rename scans the patch when either path is an inspected source. An absent patch stays
  * fail-closed.
- * @param {{ filename: string, previous_filename?: string, patch?: string }} file
+ * @param {{ filename: string, previous_filename?: string, patch?: string, content?: string }} file
  * @returns {boolean}
  */
 function fileTriggers(file) {
@@ -370,6 +407,7 @@ function fileTriggers(file) {
     isInspectedSource(file.filename) ||
     (typeof file.previous_filename === 'string' && isInspectedSource(file.previous_filename));
   if (!inspected) return false;
+  if (typeof file.content === 'string' && fileContentTouchesDatabase(file.content)) return true;
   return patchTouchesDatabase(file.patch);
 }
 
@@ -383,6 +421,7 @@ function fileTriggers(file) {
  *     previous_filename?: string,
  *     status?: string,
  *     patch?: string,
+ *     content?: string,
  *   }>,
  * }} input
  * @returns {{ required: boolean, ok: boolean, triggers: string[] }}
