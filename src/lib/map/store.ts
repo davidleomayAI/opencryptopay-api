@@ -4,6 +4,7 @@ import {
   type MapPlaceInput,
   type MapPlaceQueryFilter,
   type MapPlaceSupport,
+  type PlaceActivity,
   type StoredMapPlace,
 } from '@/lib/map/place';
 
@@ -235,12 +236,31 @@ function storedPaymentDays(days: Set<string> | undefined): string[] {
   return [...days];
 }
 
+/** How `replaceById` treats the stored activity token and its refresh deadline. */
+export type AdminActivityWrite =
+  { kind: 'keep' } | { kind: 'set'; activity: PlaceActivity } | { kind: 'recompute' };
+
+/** One public-id replace. The id is the address and is not a column this write changes. */
+export type ReplaceByIdInput = {
+  id: string;
+  content: MapPlaceInput;
+  createdAt: string;
+  lastTransactionAt: string | null;
+  activity: AdminActivityWrite;
+  nowMs: number;
+};
+
+/** Result of `replaceById`. `missing` and `conflict` write nothing. */
+export type ReplaceByIdResult =
+  { status: 'updated'; place: StoredMapPlace } | { status: 'missing' } | { status: 'conflict' };
+
 /**
  * Store for map pins. The SQLite driver is `sqlite.ts`. Tests use the memory store.
  */
 export interface MapPlaceStore {
   insertIfNew(input: MapPlaceInput): { created: boolean; place: StoredMapPlace };
   upsert(input: MapPlaceInput): { created: boolean; place: StoredMapPlace };
+  replaceById(input: ReplaceByIdInput): ReplaceByIdResult;
   recordTransaction(
     origin: string,
     externalId: string,
@@ -249,6 +269,8 @@ export interface MapPlaceStore {
   ): StoredMapPlace | undefined;
   refreshActivity(nowMs: number): void;
   deleteByKey(origin: string, externalId: string): boolean;
+  getById(id: string): StoredMapPlace | undefined;
+  deleteById(id: string): boolean;
   list(limit: number, filter?: MapPlaceListFilter): StoredMapPlace[];
   listAll(): StoredMapPlace[];
   filters(blockchain?: string | undefined): {
@@ -260,7 +282,7 @@ export interface MapPlaceStore {
 }
 
 /**
- * Process-local map store. Same insert-once, upsert, and delete rules as SQLite.
+ * Process-local map store. Same insert-once, upsert, replace-by-id, and delete rules as SQLite.
  */
 export class MemoryMapPlaceStore implements MapPlaceStore {
   readonly #rows: StoredMapPlace[] = [];
@@ -321,6 +343,67 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
     existing.country = input.country;
     existing.supports = storedSupports(input.supports);
     return { created: false, place: copyStoredPlace(existing) };
+  }
+
+  /**
+   * Replace every stored fact of one public id except the id.
+   * A missing id writes nothing. Another row with this origin and caller id writes nothing.
+   * `keep` does not change activity, the refresh deadline, or payment days.
+   * `set` stores that token, clears the refresh deadline, and leaves payment days.
+   * `recompute` leaves payment days and classifies from the written instant.
+   *
+   * @param input - Id, validated pin, timestamps, activity write, and clock.
+   * @returns A copy when updated, otherwise missing or conflict.
+   */
+  replaceById(input: ReplaceByIdInput): ReplaceByIdResult {
+    const existing = this.#rows.find((row) => row.id === input.id);
+    if (existing === undefined) {
+      return { status: 'missing' };
+    }
+    const conflict = this.#rows.find(
+      (row) =>
+        row.id !== existing.id &&
+        row.origin === input.content.origin &&
+        row.externalId === input.content.externalId,
+    );
+    if (conflict !== undefined) {
+      return { status: 'conflict' };
+    }
+    existing.origin = input.content.origin;
+    existing.externalId = input.content.externalId;
+    existing.name = input.content.name;
+    existing.description = input.content.description;
+    existing.lat = input.content.lat;
+    existing.lon = input.content.lon;
+    existing.category = input.content.category;
+    existing.paymentMethods = input.content.paymentMethods;
+    existing.techProvider = input.content.techProvider ?? DEFAULT_TECH_PROVIDER;
+    existing.shopType = input.content.shopType;
+    existing.street = input.content.street;
+    existing.houseNumber = input.content.houseNumber;
+    existing.postalCode = input.content.postalCode;
+    existing.city = input.content.city;
+    existing.country = input.content.country;
+    existing.supports = storedSupports(input.content.supports);
+    existing.createdAt = input.createdAt;
+    existing.lastTransactionAt = input.lastTransactionAt;
+    if (input.activity.kind === 'set') {
+      existing.activity = input.activity.activity;
+      this.#activityUntil.delete(existing.id);
+    } else if (input.activity.kind === 'recompute') {
+      const classified = placeActivity(
+        input.lastTransactionAt,
+        storedPaymentDays(this.#paymentDays.get(existing.id)),
+        input.nowMs,
+      );
+      existing.activity = classified.activity;
+      if (classified.until === null) {
+        this.#activityUntil.delete(existing.id);
+      } else {
+        this.#activityUntil.set(existing.id, classified.until);
+      }
+    }
+    return { status: 'updated', place: copyStoredPlace(existing) };
   }
 
   /**
@@ -434,6 +517,35 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
     this.#activityUntil.delete(existing.id);
     this.#rows.splice(this.#rows.indexOf(existing), 1);
     return true;
+  }
+
+  /**
+   * Read one pin by its public id.
+   *
+   * @param id - Public id, compared exactly.
+   * @returns A copy of the row, or undefined when the id is missing.
+   */
+  getById(id: string): StoredMapPlace | undefined {
+    const existing = this.#rows.find((row) => row.id === id);
+    if (existing === undefined) {
+      return undefined;
+    }
+    return copyStoredPlace(existing);
+  }
+
+  /**
+   * Remove the pin with this public id.
+   * Resolves the row and then calls deleteByKey.
+   *
+   * @param id - Public id, compared exactly.
+   * @returns Whether a row was removed. False when the id is missing.
+   */
+  deleteById(id: string): boolean {
+    const existing = this.#rows.find((row) => row.id === id);
+    if (existing === undefined) {
+      return false;
+    }
+    return this.deleteByKey(existing.origin, existing.externalId);
   }
 
   /**

@@ -608,6 +608,70 @@ describe('map routes', () => {
     expect(calls).toHaveLength(1);
   });
 
+  it('rejects id on PUT and POST and inserts nothing', async () => {
+    const api = app({ token: 'secret' });
+    const posted = await api.request('/map/places', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify({ ...body, id: 'pin-1' }),
+    });
+    expect(posted.status).toBe(400);
+    expect(await posted.json()).toEqual({ error: 'Place field is not allowed: id' });
+    const put = await api.request('/map/places', {
+      method: 'PUT',
+      headers: jsonHeaders,
+      body: JSON.stringify({ ...body, id: 'pin-1' }),
+    });
+    expect(put.status).toBe(400);
+    expect(await put.json()).toEqual({ error: 'Place field is not allowed: id' });
+    const list = (await (await api.request('/map/places')).json()) as { places: unknown[] };
+    expect(list.places).toEqual([]);
+  });
+
+  it('rejects id on DELETE and deletes nothing', async () => {
+    const api = app({ token: 'secret' });
+    const created = await api.request('/map/places', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify(body),
+    });
+    expect(created.status).toBe(201);
+    const deleted = await api.request('/map/places', {
+      method: 'DELETE',
+      headers: jsonHeaders,
+      body: JSON.stringify({ origin: 'dfx', externalId: 'store-1', id: 'pin-1' }),
+    });
+    expect(deleted.status).toBe(400);
+    expect(await deleted.json()).toEqual({ error: 'Place field is not allowed: id' });
+    const onlyId = await api.request('/map/places', {
+      method: 'DELETE',
+      headers: jsonHeaders,
+      body: JSON.stringify({ id: null }),
+    });
+    expect(onlyId.status).toBe(400);
+    expect(await onlyId.json()).toEqual({ error: 'Place field is not allowed: id' });
+    const list = (await (await api.request('/map/places')).json()) as { places: unknown[] };
+    expect(list.places).toHaveLength(1);
+  });
+
+  it('hides the caller id and payment methods on the public list', async () => {
+    const api = app({ token: 'secret' });
+    const created = await api.request('/map/places', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify(body),
+    });
+    expect(created.status).toBe(201);
+    const createdBody = (await created.json()) as { id: string };
+    const list = (await (await api.request('/map/places')).json()) as {
+      places: Array<Record<string, unknown>>;
+    };
+    expect(list.places).toHaveLength(1);
+    expect(list.places[0]).not.toHaveProperty('externalId');
+    expect(list.places[0]).not.toHaveProperty('paymentMethods');
+    expect(list.places[0]).toEqual({ id: createdBody.id, ...publicPin });
+  });
+
   it('filters GET /map/places by shop type, shop name alias, country, blockchain, and asset', async () => {
     const api = app({ token: 'secret' });
     const match = await api.request('/map/places', {

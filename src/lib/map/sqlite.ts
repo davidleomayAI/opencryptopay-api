@@ -1,4 +1,4 @@
-import { Database } from 'bun:sqlite';
+import { Database, SQLiteError } from 'bun:sqlite';
 import { unstatedPaymentSql } from '@/lib/map/filter-catalog';
 import {
   placeActivity,
@@ -8,7 +8,13 @@ import {
   type ShopType,
   type StoredMapPlace,
 } from '@/lib/map/place';
-import { MAP_PLACE_SCHEMA_SQL, type MapPlaceListFilter, type MapPlaceStore } from '@/lib/map/store';
+import {
+  MAP_PLACE_SCHEMA_SQL,
+  type MapPlaceListFilter,
+  type MapPlaceStore,
+  type ReplaceByIdInput,
+  type ReplaceByIdResult,
+} from '@/lib/map/store';
 
 const MAP_PLACE_COLUMNS =
   'id, origin, external_id, name, description, lat, lon, category, payment_methods, created_at, tech_provider, country, street, house_number, postal_code, city, shop_type, last_transaction_at, activity';
@@ -229,8 +235,8 @@ function replaceSupportRows(db: Database, placeId: string, supports: MapPlaceSup
 
 /**
  * SQLite {@link MapPlaceStore}. Opened by the process entrypoint.
- * Insert, list, delete, and a full-replace upsert are exercised by the HTTP
- * end-to-end run.
+ * Insert, list, delete, a full-replace upsert, and replace-by-id are exercised
+ * by the HTTP end-to-end run.
  * Opening an old-schema file (shop_name present, description and shop_type
  * missing) and hiding incomplete rows is exercised by e2e/sqlite-backfill.ts.
  * It also checks that listAll returns incomplete rows, and that supports load in
@@ -450,6 +456,100 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
   }
 
   /**
+   * Replace every stored fact of one public id except the id.
+   * Runs in one transaction. A missing id writes nothing.
+   * Another row with this origin and caller id writes nothing.
+   * A UNIQUE failure rolls back, including support rows, and returns conflict.
+   * `activity_until` is updated here even though it is not in `MAP_PLACE_COLUMNS`.
+   *
+   * @param input - Id, validated pin, timestamps, activity write, and clock.
+   * @returns The stored row when updated, otherwise missing or conflict.
+   */
+  replaceById(input: ReplaceByIdInput): ReplaceByIdResult {
+    const techProvider = input.content.techProvider ?? 'DFX.swiss';
+    const supports = storedSupports(input.content.supports);
+    const apply = this.#db.transaction((): ReplaceByIdResult => {
+      const existing = this.#db
+        .query(
+          `SELECT ${MAP_PLACE_COLUMNS}
+           FROM map_place WHERE id = ?`,
+        )
+        .get(input.id) as MapPlaceRow | null;
+      if (existing === null) {
+        return { status: 'missing' };
+      }
+      const other = this.#db
+        .query('SELECT id FROM map_place WHERE origin = ? AND external_id = ? AND id != ?')
+        .get(input.content.origin, input.content.externalId, input.id) as { id: string } | null;
+      if (other !== null) {
+        return { status: 'conflict' };
+      }
+      // activity_until is not selected with MAP_PLACE_COLUMNS. keep leaves it.
+      const activitySql =
+        input.activity.kind === 'keep' ? '' : ', activity = ?, activity_until = ?';
+      const params: Array<string | number | null> = [
+        input.content.origin,
+        input.content.externalId,
+        input.content.name,
+        input.content.description,
+        input.content.lat,
+        input.content.lon,
+        input.content.category,
+        input.content.paymentMethods,
+        techProvider,
+        input.content.country,
+        input.content.street,
+        input.content.houseNumber,
+        input.content.postalCode,
+        input.content.city,
+        input.content.shopType,
+        input.createdAt,
+        input.lastTransactionAt,
+      ];
+      if (input.activity.kind === 'set') {
+        params.push(input.activity.activity, null);
+      } else if (input.activity.kind === 'recompute') {
+        const classified = placeActivity(
+          input.lastTransactionAt,
+          loadPaymentDays(this.#db, existing.id),
+          input.nowMs,
+        );
+        params.push(classified.activity, classified.until);
+      }
+      params.push(input.id);
+      this.#db
+        .query(
+          `UPDATE map_place
+           SET origin = ?, external_id = ?, name = ?, description = ?, lat = ?, lon = ?,
+               category = ?, payment_methods = ?, tech_provider = ?, country = ?, street = ?,
+               house_number = ?, postal_code = ?, city = ?, shop_type = ?, created_at = ?,
+               last_transaction_at = ?${activitySql}
+           WHERE id = ?`,
+        )
+        .run(...params);
+      replaceSupportRows(this.#db, existing.id, supports);
+      const updated = this.#db
+        .query(
+          `SELECT ${MAP_PLACE_COLUMNS}
+           FROM map_place WHERE id = ?`,
+        )
+        .get(input.id) as MapPlaceRow | null;
+      if (updated === null) {
+        throw new Error('map place replace missing row');
+      }
+      return { status: 'updated', place: mapOne(this.#db, updated) };
+    });
+    try {
+      return apply();
+    } catch (error: unknown) {
+      if (error instanceof SQLiteError && error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+        return { status: 'conflict' };
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Store a newer transaction instant for an existing pin and refresh its activity.
    *
    * @param origin - Pin origin.
@@ -558,6 +658,42 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
       .query('DELETE FROM map_place WHERE origin = ? AND external_id = ?')
       .run(origin, externalId);
     return result.changes > 0;
+  }
+
+  /**
+   * Read one pin by its public id.
+   *
+   * @param id - Public id, compared exactly.
+   * @returns A copy of the row, or undefined when the id is missing.
+   */
+  getById(id: string): StoredMapPlace | undefined {
+    const row = this.#db
+      .query(
+        `SELECT ${MAP_PLACE_COLUMNS}
+         FROM map_place WHERE id = ?`,
+      )
+      .get(id) as MapPlaceRow | null;
+    if (row === null) {
+      return undefined;
+    }
+    return mapOne(this.#db, row);
+  }
+
+  /**
+   * Remove the pin with this public id.
+   * Resolves the row and then calls deleteByKey.
+   *
+   * @param id - Public id, compared exactly.
+   * @returns Whether a row was removed. False when the id is missing.
+   */
+  deleteById(id: string): boolean {
+    const existing = this.#db
+      .query('SELECT origin, external_id FROM map_place WHERE id = ?')
+      .get(id) as { origin: string; external_id: string } | null;
+    if (existing === null) {
+      return false;
+    }
+    return this.deleteByKey(existing.origin, existing.external_id);
   }
 
   /**

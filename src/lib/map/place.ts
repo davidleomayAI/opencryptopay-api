@@ -478,6 +478,25 @@ function uniqueSortedSupports(items: MapPlaceSupport[]): MapPlaceSupport[] {
 }
 
 /**
+ * Validate a caller id.
+ *
+ * @param raw - JSON value.
+ * @returns The trimmed caller id, or a fixed error message.
+ */
+export function normalizeExternalId(
+  raw: unknown,
+): { ok: true; value: string } | { ok: false; error: string } {
+  if (typeof raw !== 'string') {
+    return { ok: false, error: EXTERNAL_ID_ERROR };
+  }
+  const externalId = raw.trim();
+  if (externalId.length < 1 || externalId.length > 80 || !hasNoControls(externalId)) {
+    return { ok: false, error: EXTERNAL_ID_ERROR };
+  }
+  return { ok: true, value: externalId };
+}
+
+/**
  * Validate a pin origin.
  *
  * @param raw - Query string or JSON value.
@@ -490,19 +509,6 @@ export function normalizePlaceOrigin(
     return { ok: false, error: ORIGIN_ERROR };
   }
   return { ok: true, value: raw.trim() };
-}
-
-function normalizeExternalId(
-  raw: unknown,
-): { ok: true; value: string } | { ok: false; error: string } {
-  if (typeof raw !== 'string') {
-    return { ok: false, error: EXTERNAL_ID_ERROR };
-  }
-  const externalId = raw.trim();
-  if (externalId.length < 1 || externalId.length > 80 || !hasNoControls(externalId)) {
-    return { ok: false, error: EXTERNAL_ID_ERROR };
-  }
-  return { ok: true, value: externalId };
 }
 
 function normalizeTechProvider(
@@ -875,6 +881,7 @@ export function normalizeMapPlace(
 
 /**
  * Validate origin and external id for a pin delete.
+ * An own property `id` is rejected. Other extra fields are ignored.
  *
  * @param input - Request JSON.
  * @returns The key, or a fixed error message.
@@ -886,6 +893,9 @@ export function normalizeMapPlaceKey(
     return { ok: false, error: ORIGIN_ERROR };
   }
   const rec = input as Record<string, unknown>;
+  if (Object.hasOwn(rec, 'id')) {
+    return { ok: false, error: 'Place field is not allowed: id' };
+  }
   const origin = normalizePlaceOrigin(rec['origin']);
   if (!origin.ok) {
     return origin;

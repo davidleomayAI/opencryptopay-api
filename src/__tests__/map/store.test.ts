@@ -657,6 +657,298 @@ describe('MemoryMapPlaceStore', () => {
     store.refreshActivity(nowMs + 1);
     expect(store.list(1)[0]?.activity).toBe('olderThan30Days');
   });
+
+  it('reads a copy by id and deletes only that row', () => {
+    const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const created = store.insertIfNew({
+      ...input,
+      supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
+    });
+    const other = store.insertIfNew({ ...input, externalId: 'store-2' });
+    store.recordTransaction('dfx', 'store-1', '2026-10-08T12:00:00.000Z', nowMs);
+    store.recordTransaction('dfx', 'store-2', '2026-10-08T12:00:00.000Z', nowMs);
+    expect(store.getById('store-1')).toBeUndefined();
+    expect(store.getById('missing')).toBeUndefined();
+    const found = store.getById(created.place.id);
+    expect(found).toEqual(store.list(10).find((row) => row.id === created.place.id));
+    if (found === undefined) {
+      throw new Error('missing stored place');
+    }
+    found.name = 'mutated';
+    found.supports.push({ blockchain: 'Bitcoin', asset: 'BTC' });
+    expect(store.getById(created.place.id)?.name).toBe('SPAR Triesen');
+    expect(store.getById(created.place.id)?.supports).toEqual([
+      { blockchain: 'Ethereum', asset: 'ZCHF' },
+    ]);
+    expect(store.deleteById('missing')).toBe(false);
+    expect(store.deleteById(created.place.id)).toBe(true);
+    expect(store.getById(created.place.id)).toBeUndefined();
+    expect(store.deleteByKey('dfx', 'store-1')).toBe(false);
+    expect(store.getById(other.place.id)?.activity).toBe('within7Days');
+    const again = store.insertIfNew(input);
+    expect(again.created).toBe(true);
+    expect(again.place.activity).toBe('none');
+    expect(again.place.lastTransactionAt).toBeNull();
+    expect(again.place.id).not.toBe(created.place.id);
+  });
+
+  it('returns missing and writes nothing when the id is unknown', () => {
+    const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const created = store.insertIfNew(input);
+    const before = store.listAll();
+    const result = store.replaceById({
+      id: 'missing-id',
+      content: { ...input, name: 'Should Not Insert', externalId: 'brand-new' },
+      createdAt: '2020-01-01T00:00:00.000Z',
+      lastTransactionAt: '2020-01-02T00:00:00.000Z',
+      activity: { kind: 'set', activity: 'daily' },
+      nowMs,
+    });
+    expect(result).toEqual({ status: 'missing' });
+    expect(store.listAll()).toEqual(before);
+    expect(store.getById(created.place.id)?.externalId).toBe('store-1');
+    expect(store.listAll().some((row) => row.externalId === 'brand-new')).toBe(false);
+  });
+
+  it('returns conflict and leaves both rows unchanged', () => {
+    const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const first = store.insertIfNew({
+      ...input,
+      supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
+    });
+    const second = store.insertIfNew({
+      ...input,
+      origin: 'fremd',
+      externalId: 'store-2',
+      name: 'Second Shop',
+    });
+    const last = '2026-10-08T12:00:00.000Z';
+    store.recordTransaction('dfx', 'store-1', last, nowMs);
+    const beforeFirst = store.getById(first.place.id);
+    const beforeSecond = store.getById(second.place.id);
+    const result = store.replaceById({
+      id: first.place.id,
+      content: {
+        ...input,
+        origin: 'fremd',
+        externalId: 'store-2',
+        name: 'Hijack',
+        supports: [{ blockchain: 'Bitcoin', asset: 'BTC' }],
+      },
+      createdAt: '2020-01-01T00:00:00.000Z',
+      lastTransactionAt: null,
+      activity: { kind: 'set', activity: 'daily' },
+      nowMs,
+    });
+    expect(result).toEqual({ status: 'conflict' });
+    expect(store.listAll()).toHaveLength(2);
+    expect(store.getById(first.place.id)).toEqual(beforeFirst);
+    expect(store.getById(second.place.id)).toEqual(beforeSecond);
+    const until = Date.parse(last) + 7 * 24 * 60 * 60 * 1000 + 1;
+    store.refreshActivity(until - 1);
+    expect(store.getById(first.place.id)?.activity).toBe('within7Days');
+    store.refreshActivity(until);
+    expect(store.getById(first.place.id)?.activity).toBe('within30Days');
+    expect(store.getById(first.place.id)?.lastTransactionAt).toBe(last);
+    expect(store.getById(second.place.id)?.activity).toBe('none');
+  });
+
+  it('keeps activity and the refresh deadline while writing the other columns', () => {
+    const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const created = store.insertIfNew(input);
+    const last = '2026-10-08T12:00:00.000Z';
+    store.recordTransaction('dfx', 'store-1', last, nowMs);
+    const sameOrigin = store.insertIfNew({ ...input, externalId: 'store-2', name: 'Same Origin' });
+    const otherOrigin = store.insertIfNew({
+      ...input,
+      origin: 'fremd',
+      externalId: 'store-3',
+      name: 'Other Origin',
+    });
+    const until = Date.parse(last) + 7 * 24 * 60 * 60 * 1000 + 1;
+    const updated = store.replaceById({
+      id: created.place.id,
+      content: {
+        ...input,
+        name: 'Kept Shop',
+        techProvider: '21.gifts',
+        supports: [
+          { blockchain: 'Ethereum', asset: 'ZCHF' },
+          { blockchain: 'Bitcoin', asset: 'BTC' },
+          { blockchain: 'Bitcoin', asset: 'BTC' },
+        ],
+      },
+      createdAt: '2024-01-01T00:00:00.000Z',
+      lastTransactionAt: null,
+      activity: { kind: 'keep' },
+      nowMs,
+    });
+    expect(updated.status).toBe('updated');
+    if (updated.status !== 'updated') {
+      throw new Error('expected update');
+    }
+    expect(updated.place).toMatchObject({
+      id: created.place.id,
+      origin: 'dfx',
+      externalId: 'store-1',
+      name: 'Kept Shop',
+      createdAt: '2024-01-01T00:00:00.000Z',
+      lastTransactionAt: null,
+      activity: 'within7Days',
+      techProvider: '21.gifts',
+      supports: [
+        { blockchain: 'Bitcoin', asset: 'BTC' },
+        { blockchain: 'Ethereum', asset: 'ZCHF' },
+      ],
+    });
+    updated.place.name = 'mutated';
+    updated.place.supports.push({ blockchain: 'Polygon', asset: 'ZCHF' });
+    expect(store.getById(created.place.id)?.name).toBe('Kept Shop');
+    expect(store.getById(created.place.id)?.supports).toEqual([
+      { blockchain: 'Bitcoin', asset: 'BTC' },
+      { blockchain: 'Ethereum', asset: 'ZCHF' },
+    ]);
+    expect(store.listAll()).toHaveLength(3);
+    expect(store.getById(sameOrigin.place.id)).toMatchObject({
+      name: 'Same Origin',
+      origin: 'dfx',
+      externalId: 'store-2',
+      activity: 'none',
+      lastTransactionAt: null,
+    });
+    expect(store.getById(otherOrigin.place.id)).toMatchObject({
+      name: 'Other Origin',
+      origin: 'fremd',
+      externalId: 'store-3',
+      activity: 'none',
+      lastTransactionAt: null,
+    });
+    store.refreshActivity(until - 1);
+    expect(store.getById(created.place.id)?.activity).toBe('within7Days');
+    store.refreshActivity(until);
+    expect(store.getById(created.place.id)?.activity).toBe('none');
+    expect(store.getById(created.place.id)?.lastTransactionAt).toBeNull();
+  });
+
+  it('sets an activity token, skips refresh, and keeps payment days', () => {
+    const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const created = store.insertIfNew(input);
+    const day = (value: string): string => `${value}T12:00:00.000Z`;
+    store.recordTransaction('dfx', 'store-1', day('2026-10-05'), nowMs);
+    store.recordTransaction('dfx', 'store-1', day('2026-10-06'), nowMs);
+    store.recordTransaction('dfx', 'store-1', day('2026-10-07'), nowMs);
+    store.recordTransaction('dfx', 'store-1', day('2026-10-08'), nowMs);
+    expect(store.getById(created.place.id)?.activity).toBe('within7Days');
+    const updated = store.replaceById({
+      id: created.place.id,
+      content: input,
+      createdAt: created.place.createdAt,
+      lastTransactionAt: day('2026-10-08'),
+      activity: { kind: 'set', activity: 'none' },
+      nowMs,
+    });
+    expect(updated).toMatchObject({
+      status: 'updated',
+      place: { activity: 'none', lastTransactionAt: day('2026-10-08') },
+    });
+    store.refreshActivity(nowMs + 40 * 24 * 60 * 60 * 1000);
+    expect(store.getById(created.place.id)?.activity).toBe('none');
+    const fifth = store.recordTransaction('dfx', 'store-1', day('2026-10-04'), nowMs);
+    expect(fifth?.activity).toBe('daily');
+    expect(fifth?.lastTransactionAt).toBe(day('2026-10-08'));
+  });
+
+  it('recomputes daily from five payment days when the last transaction is null', () => {
+    const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const created = store.insertIfNew(input);
+    const day = (value: string): string => `${value}T12:00:00.000Z`;
+    for (const value of ['2026-10-04', '2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08']) {
+      store.recordTransaction('dfx', 'store-1', day(value), nowMs);
+    }
+    expect(store.getById(created.place.id)?.activity).toBe('daily');
+    const cleared = store.replaceById({
+      id: created.place.id,
+      content: input,
+      createdAt: created.place.createdAt,
+      lastTransactionAt: day('2026-10-08'),
+      activity: { kind: 'set', activity: 'none' },
+      nowMs,
+    });
+    expect(cleared).toMatchObject({ status: 'updated', place: { activity: 'none' } });
+    const updated = store.replaceById({
+      id: created.place.id,
+      content: { ...input, name: 'Daily Again' },
+      createdAt: created.place.createdAt,
+      lastTransactionAt: null,
+      activity: { kind: 'recompute' },
+      nowMs,
+    });
+    expect(updated).toMatchObject({
+      status: 'updated',
+      place: {
+        id: created.place.id,
+        name: 'Daily Again',
+        lastTransactionAt: null,
+        activity: 'daily',
+      },
+    });
+    const until = Date.parse('2026-10-11T00:00:00.000Z');
+    store.refreshActivity(until - 1);
+    expect(store.getById(created.place.id)?.activity).toBe('daily');
+    store.refreshActivity(until);
+    expect(store.getById(created.place.id)?.activity).toBe('none');
+    expect(store.getById(created.place.id)?.lastTransactionAt).toBeNull();
+  });
+
+  it('recomputes none when a null last transaction has no five payment days', () => {
+    const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const created = store.insertIfNew({ ...input, techProvider: '21.gifts' });
+    store.recordTransaction('dfx', 'store-1', '2026-10-08T12:00:00.000Z', nowMs);
+    const updated = store.replaceById({
+      id: created.place.id,
+      content: { ...input, name: 'No Days' },
+      createdAt: '2024-02-02T00:00:00.000Z',
+      lastTransactionAt: null,
+      activity: { kind: 'recompute' },
+      nowMs,
+    });
+    expect(updated).toMatchObject({
+      status: 'updated',
+      place: {
+        name: 'No Days',
+        techProvider: 'DFX.swiss',
+        createdAt: '2024-02-02T00:00:00.000Z',
+        lastTransactionAt: null,
+        activity: 'none',
+      },
+    });
+    store.refreshActivity(nowMs + 40 * 24 * 60 * 60 * 1000);
+    expect(store.getById(created.place.id)?.activity).toBe('none');
+
+    const fresh = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const inserted = fresh.insertIfNew(input);
+    const none = fresh.replaceById({
+      id: inserted.place.id,
+      content: input,
+      createdAt: inserted.place.createdAt,
+      lastTransactionAt: null,
+      activity: { kind: 'recompute' },
+      nowMs,
+    });
+    expect(none).toMatchObject({
+      status: 'updated',
+      place: { lastTransactionAt: null, activity: 'none', techProvider: 'DFX.swiss' },
+    });
+    fresh.refreshActivity(nowMs + 40 * 24 * 60 * 60 * 1000);
+    expect(fresh.getById(inserted.place.id)?.activity).toBe('none');
+  });
 });
 
 describe('placeProblems', () => {

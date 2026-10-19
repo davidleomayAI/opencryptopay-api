@@ -923,6 +923,27 @@ describe('normalizeMapPlaceKey', () => {
       value: { origin: 'dfx', externalId: 'store-1' },
     });
   });
+
+  it('rejects an own id and still ignores other extra fields', () => {
+    expect(normalizeMapPlaceKey({ id: 'pin-1' })).toEqual({
+      ok: false,
+      error: 'Place field is not allowed: id',
+    });
+    expect(normalizeMapPlaceKey({ origin: 'dfx', externalId: 'store-1', id: null })).toEqual({
+      ok: false,
+      error: 'Place field is not allowed: id',
+    });
+    expect(
+      normalizeMapPlaceKey({
+        origin: ' dfx ',
+        externalId: ' store-1 ',
+        name: 'ignored',
+      }),
+    ).toEqual({
+      ok: true,
+      value: { origin: 'dfx', externalId: 'store-1' },
+    });
+  });
 });
 
 describe('placeActivity', () => {
@@ -1175,6 +1196,9 @@ describe('toPublicMapPlace', () => {
       supports: [],
       activity: 'none',
     });
+    const hidden = toPublicMapPlace(stored);
+    expect(hidden).not.toHaveProperty('externalId');
+    expect(hidden).not.toHaveProperty('paymentMethods');
   });
 
   it('returns SPAR shopName when shopType is SPAR and copies supports', () => {
