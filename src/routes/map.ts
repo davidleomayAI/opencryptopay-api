@@ -45,6 +45,7 @@ function checkIngest(
 /**
  * Full replace of one map pin, or insert it when the origin and external id are new.
  * Same validation, store write, and BTC Map call as `PUT /map/places`.
+ * An own property `id` is rejected and nothing is written.
  *
  * @param deps - Store, BTC Map environment, and fetch.
  * @param raw - Request JSON, or null when the body is not JSON.
@@ -76,6 +77,7 @@ export async function putPlace(
 /**
  * Remove one map pin by origin and external id.
  * Same validation as `DELETE /map/places`. A missing pair is `{ deleted: false }`.
+ * An own property `id` is rejected and nothing is deleted. Other extra fields are ignored.
  *
  * @param deps - Store.
  * @param raw - Request JSON, or null when the body is not JSON.

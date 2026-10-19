@@ -249,6 +249,8 @@ export interface MapPlaceStore {
   ): StoredMapPlace | undefined;
   refreshActivity(nowMs: number): void;
   deleteByKey(origin: string, externalId: string): boolean;
+  getById(id: string): StoredMapPlace | undefined;
+  deleteById(id: string): boolean;
   list(limit: number, filter?: MapPlaceListFilter): StoredMapPlace[];
   listAll(): StoredMapPlace[];
   filters(blockchain?: string | undefined): {
@@ -434,6 +436,35 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
     this.#activityUntil.delete(existing.id);
     this.#rows.splice(this.#rows.indexOf(existing), 1);
     return true;
+  }
+
+  /**
+   * Read one pin by its public id.
+   *
+   * @param id - Public id, compared exactly.
+   * @returns A copy of the row, or undefined when the id is missing.
+   */
+  getById(id: string): StoredMapPlace | undefined {
+    const existing = this.#rows.find((row) => row.id === id);
+    if (existing === undefined) {
+      return undefined;
+    }
+    return copyStoredPlace(existing);
+  }
+
+  /**
+   * Remove the pin with this public id.
+   * Resolves the row and then calls deleteByKey.
+   *
+   * @param id - Public id, compared exactly.
+   * @returns Whether a row was removed. False when the id is missing.
+   */
+  deleteById(id: string): boolean {
+    const existing = this.#rows.find((row) => row.id === id);
+    if (existing === undefined) {
+      return false;
+    }
+    return this.deleteByKey(existing.origin, existing.externalId);
   }
 
   /**

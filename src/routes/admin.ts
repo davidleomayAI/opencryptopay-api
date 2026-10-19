@@ -3,7 +3,13 @@ import { bodyLimit } from 'hono/body-limit';
 import type { AdminPublicKey } from '@/lib/admin/keys';
 import { verifyAdminRequest, type AdminReplayCache } from '@/lib/admin/signature';
 import type { FetchLike } from '@/lib/map/btcmap';
-import { toPublicMapPlace } from '@/lib/map/place';
+import {
+  normalizeExternalId,
+  normalizeMapPlace,
+  normalizePlaceOrigin,
+  toPublicMapPlace,
+  type StoredMapPlace,
+} from '@/lib/map/place';
 import { placeProblems, type MapPlaceStore } from '@/lib/map/store';
 import { deletePlace, putPlace } from '@/routes/map';
 
@@ -42,11 +48,92 @@ function parseJsonBody(bytes: Uint8Array): unknown {
   }
 }
 
+type ParsedPlaceId =
+  | { kind: 'absent' }
+  | { kind: 'invalid' }
+  | { kind: 'id'; id: string; body: Record<string, unknown> };
+
+/**
+ * Read an own property `id` without trimming a non-empty value.
+ * A non-object has no id. A blank or non-string id is invalid.
+ *
+ * @param raw - Parsed JSON.
+ * @returns Whether `id` is absent, invalid, or a public id.
+ */
+function parsePlaceId(raw: unknown): ParsedPlaceId {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return { kind: 'absent' };
+  }
+  const body = raw as Record<string, unknown>;
+  if (!Object.hasOwn(body, 'id')) {
+    return { kind: 'absent' };
+  }
+  const id = body['id'];
+  if (typeof id !== 'string' || id.trim() === '') {
+    return { kind: 'invalid' };
+  }
+  return { kind: 'id', id, body };
+}
+
+/**
+ * Check a present origin, then a present external id, against the stored row.
+ * Omitted fields stay stored.
+ *
+ * @param body - JSON object that includes `id`.
+ * @param stored - The row addressed by that id.
+ * @returns The first error, or undefined when both present fields name this row.
+ */
+function storedIdentityError(
+  body: Record<string, unknown>,
+  stored: StoredMapPlace,
+): string | undefined {
+  if (Object.hasOwn(body, 'origin')) {
+    const origin = normalizePlaceOrigin(body['origin']);
+    if (!origin.ok) {
+      return origin.error;
+    }
+    if (origin.value !== stored.origin) {
+      return 'Place origin does not match';
+    }
+  }
+  if (Object.hasOwn(body, 'externalId')) {
+    const externalId = normalizeExternalId(body['externalId']);
+    if (!externalId.ok) {
+      return externalId.error;
+    }
+    if (externalId.value !== stored.externalId) {
+      return 'Place external id does not match';
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Copy a place body for `normalizeMapPlace`: drop `id` and force the stored key.
+ *
+ * @param body - JSON object that includes `id`.
+ * @param stored - The row addressed by that id.
+ * @returns The body the place validator accepts.
+ */
+function bodyWithStoredIdentity(
+  body: Record<string, unknown>,
+  stored: StoredMapPlace,
+): Record<string, unknown> {
+  const copy: Record<string, unknown> = { ...body };
+  delete copy['id'];
+  copy['origin'] = stored.origin;
+  copy['externalId'] = stored.externalId;
+  return copy;
+}
+
 /**
  * Signed admin maintenance for any origin. Mounted at `/admin`.
  * The signature uses the configured host, never the request Host header.
  * The body is read once and then parsed as JSON for PUT and DELETE.
  * Bodies above 64 KiB answer 413 before the signature is checked.
+ * GET adds the caller id and payment methods beside the public place.
+ * A JSON object with an own property `id` addresses that public id.
+ * Without `id`, PUT and DELETE keep the origin and external id paths.
  *
  * @param deps - Store, BTC Map environment, allowed keys, configured host, and an optional clock.
  * @returns The admin route group.
@@ -102,22 +189,62 @@ export function adminRoutes(deps: AdminRouteDeps): Hono<AdminEnv> {
         ...toPublicMapPlace(place),
         complete: problems.length === 0,
         problems,
+        externalId: place.externalId,
+        paymentMethods: place.paymentMethods,
       };
     });
     return c.json({ places });
   });
 
   app.put('/places', async (c) => {
-    const result = await putPlace(
-      { store: deps.store, env: deps.env, fetchImpl: deps.fetchImpl },
-      parseJsonBody(c.get('rawBody')),
-    );
-    return c.json(result.body, result.status);
+    const raw = parseJsonBody(c.get('rawBody'));
+    const parsedId = parsePlaceId(raw);
+    if (parsedId.kind === 'invalid') {
+      return c.json({ error: 'Place id is required' }, 400);
+    }
+    if (parsedId.kind === 'absent') {
+      const result = await putPlace(
+        { store: deps.store, env: deps.env, fetchImpl: deps.fetchImpl },
+        raw,
+      );
+      return c.json(result.body, result.status);
+    }
+    const stored = deps.store.getById(parsedId.id);
+    if (stored === undefined) {
+      return c.json({ error: 'Place not found' }, 404);
+    }
+    const identityError = storedIdentityError(parsedId.body, stored);
+    if (identityError !== undefined) {
+      return c.json({ error: identityError }, 400);
+    }
+    const parsed = normalizeMapPlace(bodyWithStoredIdentity(parsedId.body, stored));
+    if (!parsed.ok) {
+      return c.json({ error: parsed.error }, 400);
+    }
+    deps.store.upsert(parsed.value);
+    return c.json({ created: false, id: stored.id, btcmap: 'skipped' }, 200);
   });
 
   app.delete('/places', (c) => {
-    const result = deletePlace({ store: deps.store }, parseJsonBody(c.get('rawBody')));
-    return c.json(result.body, result.status);
+    const raw = parseJsonBody(c.get('rawBody'));
+    const parsedId = parsePlaceId(raw);
+    if (parsedId.kind === 'invalid') {
+      return c.json({ error: 'Place id is required' }, 400);
+    }
+    if (parsedId.kind === 'absent') {
+      const result = deletePlace({ store: deps.store }, raw);
+      return c.json(result.body, result.status);
+    }
+    const stored = deps.store.getById(parsedId.id);
+    if (stored === undefined) {
+      return c.json({ deleted: false }, 200);
+    }
+    const identityError = storedIdentityError(parsedId.body, stored);
+    if (identityError !== undefined) {
+      return c.json({ error: identityError }, 400);
+    }
+    const deleted = deps.store.deleteById(parsedId.id);
+    return c.json({ deleted }, 200);
   });
 
   return app;

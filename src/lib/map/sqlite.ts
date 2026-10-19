@@ -561,6 +561,42 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
   }
 
   /**
+   * Read one pin by its public id.
+   *
+   * @param id - Public id, compared exactly.
+   * @returns A copy of the row, or undefined when the id is missing.
+   */
+  getById(id: string): StoredMapPlace | undefined {
+    const row = this.#db
+      .query(
+        `SELECT ${MAP_PLACE_COLUMNS}
+         FROM map_place WHERE id = ?`,
+      )
+      .get(id) as MapPlaceRow | null;
+    if (row === null) {
+      return undefined;
+    }
+    return mapOne(this.#db, row);
+  }
+
+  /**
+   * Remove the pin with this public id.
+   * Resolves the row and then calls deleteByKey.
+   *
+   * @param id - Public id, compared exactly.
+   * @returns Whether a row was removed. False when the id is missing.
+   */
+  deleteById(id: string): boolean {
+    const existing = this.#db
+      .query('SELECT origin, external_id FROM map_place WHERE id = ?')
+      .get(id) as { origin: string; external_id: string } | null;
+    if (existing === null) {
+      return false;
+    }
+    return this.deleteByKey(existing.origin, existing.external_id);
+  }
+
+  /**
    * Newest complete pins first, then id descending.
    *
    * @param limit - Maximum rows.

@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { expect, test } from '@playwright/test';
+import { expect, test, type APIRequestContext } from '@playwright/test';
 import { canonicalString, signAdminRequest } from '../src/lib/admin/signature';
 
 const DESCRIPTION =
@@ -46,6 +46,30 @@ function privateKey(): KeyObject {
     throw new Error('OCP_E2E_ADMIN_PRIVATE_KEY is missing');
   }
   return createPrivateKey({ key: pem, format: 'pem', type: 'pkcs8' });
+}
+
+type AdminListedPlace = {
+  id: string;
+  origin: string;
+  name: string;
+  externalId: string;
+  paymentMethods: string | null;
+};
+
+async function listedPlace(
+  request: APIRequestContext,
+  externalId: string,
+): Promise<AdminListedPlace> {
+  const res = await request.get('/admin/places', {
+    headers: signedHeaders('GET', PATH, new Uint8Array()),
+  });
+  expect(res.status()).toBe(200);
+  const json = (await res.json()) as { places: AdminListedPlace[] };
+  const row = json.places.find((place) => place.externalId === externalId);
+  if (row === undefined) {
+    throw new Error(`missing admin place ${externalId}`);
+  }
+  return row;
 }
 
 function signedHeaders(
@@ -164,6 +188,112 @@ test('Function: verifyAdminRequest — a fresh signature is accepted', async ({ 
   expect(json.places.some((place) => place.complete === true && place.problems.length === 0)).toBe(
     true,
   );
+});
+
+test('Function: adminRoutes — GET /admin/places includes caller id and payment methods', async ({
+  request,
+}) => {
+  const row = await listedPlace(request, fremd.externalId);
+  expect(row.externalId).toBe(fremd.externalId);
+  expect(row.paymentMethods).toBe('lightning');
+  expect(row.name).toBe(fremd.name);
+});
+
+test('Function: adminRoutes — PUT /admin/places replaces a pin by its public id', async ({
+  request,
+}) => {
+  const row = await listedPlace(request, fremd.externalId);
+  const body = JSON.stringify({
+    ...fremd,
+    id: row.id,
+    name: 'Fremde Filiale Nord',
+    paymentMethods: 'onchain',
+  });
+  const res = await request.put('/admin/places', {
+    headers: signedHeaders('PUT', PATH, Buffer.from(body)),
+    data: body,
+  });
+  expect(res.status()).toBe(200);
+  expect(await res.json()).toEqual({ created: false, id: row.id, btcmap: 'skipped' });
+  const updated = await listedPlace(request, fremd.externalId);
+  expect(updated.id).toBe(row.id);
+  expect(updated.name).toBe('Fremde Filiale Nord');
+  expect(updated.paymentMethods).toBe('onchain');
+});
+
+test('Function: adminRoutes — PUT /admin/places with an unknown id inserts nothing', async ({
+  request,
+}) => {
+  const body = JSON.stringify({
+    ...fremd,
+    id: 'missing-public-id',
+    name: 'Nope',
+  });
+  const res = await request.put('/admin/places', {
+    headers: signedHeaders('PUT', PATH, Buffer.from(body)),
+    data: body,
+  });
+  expect(res.status()).toBe(404);
+  expect(await res.json()).toEqual({ error: 'Place not found' });
+});
+
+test('Function: adminRoutes — DELETE /admin/places with an unknown id deletes nothing', async ({
+  request,
+}) => {
+  const body = JSON.stringify({ id: 'missing-public-id', origin: 'NOT AN ORIGIN' });
+  const res = await request.delete('/admin/places', {
+    headers: signedHeaders('DELETE', PATH, Buffer.from(body)),
+    data: body,
+  });
+  expect(res.status()).toBe(200);
+  expect(await res.json()).toEqual({ deleted: false });
+  const row = await listedPlace(request, fremd.externalId);
+  expect(row.origin).toBe(fremd.origin);
+});
+
+test('Function: adminRoutes — DELETE /admin/places removes one pin by its public id', async ({
+  request,
+}) => {
+  const created = {
+    ...fremd,
+    externalId: 'e2e-admin-by-id',
+    name: 'By Id Shop',
+  };
+  const createBody = JSON.stringify(created);
+  const createdRes = await request.put('/admin/places', {
+    headers: signedHeaders('PUT', PATH, Buffer.from(createBody)),
+    data: createBody,
+  });
+  expect(createdRes.status()).toBe(201);
+  const row = await listedPlace(request, created.externalId);
+  const body = JSON.stringify({
+    id: row.id,
+    origin: created.origin,
+    externalId: created.externalId,
+  });
+  const res = await request.delete('/admin/places', {
+    headers: signedHeaders('DELETE', PATH, Buffer.from(body)),
+    data: body,
+  });
+  expect(res.status()).toBe(200);
+  expect(await res.json()).toEqual({ deleted: true });
+  const kept = await listedPlace(request, fremd.externalId);
+  expect(kept.id).not.toBe(row.id);
+});
+
+test('Function: normalizeExternalId — a blank caller id on delete is rejected', async ({
+  request,
+}) => {
+  const row = await listedPlace(request, fremd.externalId);
+  const body = JSON.stringify({ id: row.id, externalId: '   ' });
+  const res = await request.delete('/admin/places', {
+    headers: signedHeaders('DELETE', PATH, Buffer.from(body)),
+    data: body,
+  });
+  expect(res.status()).toBe(400);
+  expect(await res.json()).toEqual({ error: 'Place external id is required' });
+  const kept = await listedPlace(request, fremd.externalId);
+  expect(kept.id).toBe(row.id);
 });
 
 test('Function: deletePlace — DELETE /admin/places removes the pin', async ({ request }) => {

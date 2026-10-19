@@ -657,6 +657,41 @@ describe('MemoryMapPlaceStore', () => {
     store.refreshActivity(nowMs + 1);
     expect(store.list(1)[0]?.activity).toBe('olderThan30Days');
   });
+
+  it('reads a copy by id and deletes only that row', () => {
+    const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const created = store.insertIfNew({
+      ...input,
+      supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
+    });
+    const other = store.insertIfNew({ ...input, externalId: 'store-2' });
+    store.recordTransaction('dfx', 'store-1', '2026-10-08T12:00:00.000Z', nowMs);
+    store.recordTransaction('dfx', 'store-2', '2026-10-08T12:00:00.000Z', nowMs);
+    expect(store.getById('store-1')).toBeUndefined();
+    expect(store.getById('missing')).toBeUndefined();
+    const found = store.getById(created.place.id);
+    expect(found).toEqual(store.list(10).find((row) => row.id === created.place.id));
+    if (found === undefined) {
+      throw new Error('missing stored place');
+    }
+    found.name = 'mutated';
+    found.supports.push({ blockchain: 'Bitcoin', asset: 'BTC' });
+    expect(store.getById(created.place.id)?.name).toBe('SPAR Triesen');
+    expect(store.getById(created.place.id)?.supports).toEqual([
+      { blockchain: 'Ethereum', asset: 'ZCHF' },
+    ]);
+    expect(store.deleteById('missing')).toBe(false);
+    expect(store.deleteById(created.place.id)).toBe(true);
+    expect(store.getById(created.place.id)).toBeUndefined();
+    expect(store.deleteByKey('dfx', 'store-1')).toBe(false);
+    expect(store.getById(other.place.id)?.activity).toBe('within7Days');
+    const again = store.insertIfNew(input);
+    expect(again.created).toBe(true);
+    expect(again.place.activity).toBe('none');
+    expect(again.place.lastTransactionAt).toBeNull();
+    expect(again.place.id).not.toBe(created.place.id);
+  });
 });
 
 describe('placeProblems', () => {
