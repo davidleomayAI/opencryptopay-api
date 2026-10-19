@@ -108,12 +108,13 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
 
 ## R4 Name and description
 
-- **Target:** a short descriptive name without the address, and a longer
-  description; both required.
-- **Code:** met. `name` is required, 1 to 80 characters. The name must not
-  contain the street as a whole word. It must not contain the postal code as a
-  standalone token. `description` is required, 20 to 1000 characters, longer
-  than the name and not equal to it, and is stored and returned.
+- **Target:** a short name may include the street and must not include the
+  postal code as a standalone token, and a longer description is still
+  required.
+- **Code:** met. `name` is required, 1 to 80 characters. The name may contain
+  the street. It must not contain the postal code as a standalone token.
+  `description` is required, 20 to 1000 characters, longer than the name and
+  not equal to it, and is stored and returned.
 - **Data:** all 170 SPAR names are `SPAR` plus the full address. 21.gifts names
   are the pin label, the author name, or `Shop`, cut to 80 characters.
 - **Sources:** neither sends a description. 21.gifts has the shop post text,

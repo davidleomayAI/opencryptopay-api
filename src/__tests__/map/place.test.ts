@@ -173,15 +173,7 @@ describe('normalizeMapPlace', () => {
     expect(normalizeMapPlace({ ...valid, category: '' }).ok).toBe(false);
   });
 
-  it('rejects a name that contains the street or a standalone postal code', () => {
-    expect(normalizeMapPlace({ ...valid, name: 'SPAR Maschlinastrasse' })).toEqual({
-      ok: false,
-      error: 'Place name must not contain the address',
-    });
-    expect(normalizeMapPlace({ ...valid, name: 'near maschlinastrasse' })).toEqual({
-      ok: false,
-      error: 'Place name must not contain the address',
-    });
+  it('rejects a name that contains a standalone postal code', () => {
     expect(normalizeMapPlace({ ...valid, name: 'SPAR 9495' })).toEqual({
       ok: false,
       error: 'Place name must not contain the address',
@@ -190,10 +182,23 @@ describe('normalizeMapPlace', () => {
       ok: false,
       error: 'Place name must not contain the address',
     });
-    expect(normalizeMapPlace({ ...valid, name: 'SPAR Dorf 3', street: 'Dorf' })).toEqual({
-      ok: false,
-      error: 'Place name must not contain the address',
+  });
+
+  it('accepts a name that contains the street', () => {
+    const fullStreet = normalizeMapPlace({ ...valid, name: 'SPAR Maschlinastrasse' });
+    expect(fullStreet.ok && fullStreet.value.name).toBe('SPAR Maschlinastrasse');
+    const lowerStreet = normalizeMapPlace({ ...valid, name: 'near maschlinastrasse' });
+    expect(lowerStreet.ok && lowerStreet.value.name).toBe('near maschlinastrasse');
+    const shortStreet = normalizeMapPlace({ ...valid, name: 'SPAR Dorf 3', street: 'Dorf' });
+    expect(shortStreet.ok && shortStreet.value.name).toBe('SPAR Dorf 3');
+    const zurich = normalizeMapPlace({
+      ...valid,
+      name: 'SPAR Zürich Schaffhauserstrasse',
+      street: 'Schaffhauserstrasse',
+      city: 'Zürich',
+      postalCode: '8057',
     });
+    expect(zurich.ok && zurich.value.name).toBe('SPAR Zürich Schaffhauserstrasse');
   });
 
   it('accepts a name that only shares a street prefix or a longer postal code', () => {

@@ -64,8 +64,9 @@ Every shop must state its GPS coordinates:
 Every shop must have both:
 
 - **Name:** a short, concise name that says what the shop is, for example
-  `SPAR Triesen`. It is required. It is not the address, and it does not repeat
-  the street or postal code.
+  `SPAR Zürich Schaffhauserstrasse`. It is required. It may repeat the street.
+  It must not contain the postal code as a standalone token. It is not a
+  substitute for the address fields.
 - **Description:** a longer text that describes the shop in more detail than
   the name. It is required and is never empty or null.
 
