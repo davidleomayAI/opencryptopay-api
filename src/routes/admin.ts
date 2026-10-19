@@ -8,9 +8,10 @@ import {
   normalizeMapPlace,
   normalizePlaceOrigin,
   toPublicMapPlace,
+  type PlaceActivity,
   type StoredMapPlace,
 } from '@/lib/map/place';
-import { placeProblems, type MapPlaceStore } from '@/lib/map/store';
+import { placeProblems, type AdminActivityWrite, type MapPlaceStore } from '@/lib/map/store';
 import { deletePlace, putPlace } from '@/routes/map';
 
 export type AdminRouteDeps = {
@@ -31,6 +32,14 @@ type AdminEnv = {
 };
 
 const MAX_ADMIN_BODY_BYTES = 64 * 1024;
+const FOUR_DIGIT_YEAR = /^\d{4}-/u;
+const PLACE_ACTIVITIES: ReadonlySet<string> = new Set([
+  'daily',
+  'within7Days',
+  'within30Days',
+  'olderThan30Days',
+  'none',
+]);
 
 function pathWithQuery(requestUrl: string): string {
   const url = new URL(requestUrl);
@@ -109,20 +118,88 @@ function storedIdentityError(
 }
 
 /**
- * Copy a place body for `normalizeMapPlace`: drop `id` and force the stored key.
+ * Resolve origin, then external id, for a public-id replace.
+ * A present field is normalized. A different valid value is kept. An omitted field stays stored.
  *
  * @param body - JSON object that includes `id`.
  * @param stored - The row addressed by that id.
- * @returns The body the place validator accepts.
+ * @returns The pair to write, or the first normalizer error.
  */
-function bodyWithStoredIdentity(
+function resolveAdminPlaceIdentity(
   body: Record<string, unknown>,
   stored: StoredMapPlace,
+): { ok: true; origin: string; externalId: string } | { ok: false; error: string } {
+  let origin = stored.origin;
+  if (Object.hasOwn(body, 'origin')) {
+    const parsed = normalizePlaceOrigin(body['origin']);
+    if (!parsed.ok) {
+      return parsed;
+    }
+    origin = parsed.value;
+  }
+  let externalId = stored.externalId;
+  if (Object.hasOwn(body, 'externalId')) {
+    const parsed = normalizeExternalId(body['externalId']);
+    if (!parsed.ok) {
+      return parsed;
+    }
+    externalId = parsed.value;
+  }
+  return { ok: true, origin, externalId };
+}
+
+/**
+ * Canonical ISO instant with a four-digit year.
+ *
+ * @param raw - JSON value.
+ * @returns The canonical instant, or undefined when the value is not one.
+ */
+function canonicalAdminInstant(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') {
+    return undefined;
+  }
+  const parsed = Date.parse(raw);
+  if (!Number.isFinite(parsed)) {
+    return undefined;
+  }
+  const canonical = new Date(parsed).toISOString();
+  if (!FOUR_DIGIT_YEAR.test(canonical)) {
+    return undefined;
+  }
+  return canonical;
+}
+
+/**
+ * Accept only an exact activity token. Surrounding space is rejected.
+ *
+ * @param raw - JSON value.
+ * @returns Whether `raw` is a stored activity token.
+ */
+function isPlaceActivity(raw: unknown): raw is PlaceActivity {
+  return typeof raw === 'string' && PLACE_ACTIVITIES.has(raw);
+}
+
+/**
+ * Copy a place body for `normalizeMapPlace`.
+ * Drops the public id and the admin-only fields, then sets the resolved pair.
+ *
+ * @param body - JSON object that includes `id`.
+ * @param origin - Normalized origin to store.
+ * @param externalId - Normalized caller id to store.
+ * @returns The body the place validator accepts.
+ */
+function adminReplaceBody(
+  body: Record<string, unknown>,
+  origin: string,
+  externalId: string,
 ): Record<string, unknown> {
   const copy: Record<string, unknown> = { ...body };
   delete copy['id'];
-  copy['origin'] = stored.origin;
-  copy['externalId'] = stored.externalId;
+  delete copy['createdAt'];
+  delete copy['lastTransactionAt'];
+  delete copy['activity'];
+  copy['origin'] = origin;
+  copy['externalId'] = externalId;
   return copy;
 }
 
@@ -131,8 +208,11 @@ function bodyWithStoredIdentity(
  * The signature uses the configured host, never the request Host header.
  * The body is read once and then parsed as JSON for PUT and DELETE.
  * Bodies above 64 KiB answer 413 before the signature is checked.
- * GET adds the caller id and payment methods beside the public place.
+ * GET adds the caller id, payment methods, created time, and last transaction
+ * time beside the public place. It does not add the refresh deadline or payment days.
  * A JSON object with an own property `id` addresses that public id.
+ * PUT with `id` replaces that row, including a new origin and caller id, and does not call BTC Map.
+ * DELETE with `id` still rejects a different origin or caller id.
  * Without `id`, PUT and DELETE keep the origin and external id paths.
  *
  * @param deps - Store, BTC Map environment, allowed keys, configured host, and an optional clock.
@@ -191,6 +271,8 @@ export function adminRoutes(deps: AdminRouteDeps): Hono<AdminEnv> {
         problems,
         externalId: place.externalId,
         paymentMethods: place.paymentMethods,
+        createdAt: place.createdAt,
+        lastTransactionAt: place.lastTransactionAt,
       };
     });
     return c.json({ places });
@@ -213,16 +295,66 @@ export function adminRoutes(deps: AdminRouteDeps): Hono<AdminEnv> {
     if (stored === undefined) {
       return c.json({ error: 'Place not found' }, 404);
     }
-    const identityError = storedIdentityError(parsedId.body, stored);
-    if (identityError !== undefined) {
-      return c.json({ error: identityError }, 400);
+    const identity = resolveAdminPlaceIdentity(parsedId.body, stored);
+    if (!identity.ok) {
+      return c.json({ error: identity.error }, 400);
     }
-    const parsed = normalizeMapPlace(bodyWithStoredIdentity(parsedId.body, stored));
+    let createdAt = stored.createdAt;
+    if (Object.hasOwn(parsedId.body, 'createdAt')) {
+      const canonical = canonicalAdminInstant(parsedId.body['createdAt']);
+      if (canonical === undefined) {
+        return c.json({ error: 'Place created time is invalid' }, 400);
+      }
+      createdAt = canonical;
+    }
+    let lastTransactionAt = stored.lastTransactionAt;
+    const lastTransactionPresent = Object.hasOwn(parsedId.body, 'lastTransactionAt');
+    if (lastTransactionPresent) {
+      const rawLast = parsedId.body['lastTransactionAt'];
+      if (rawLast === null) {
+        lastTransactionAt = null;
+      } else {
+        const canonical = canonicalAdminInstant(rawLast);
+        if (canonical === undefined) {
+          return c.json({ error: 'Place transaction time is invalid' }, 400);
+        }
+        lastTransactionAt = canonical;
+      }
+    }
+    const activityPresent = Object.hasOwn(parsedId.body, 'activity');
+    let activityWrite: AdminActivityWrite;
+    if (activityPresent) {
+      const activity = parsedId.body['activity'];
+      if (!isPlaceActivity(activity)) {
+        return c.json({ error: 'Place activity is invalid' }, 400);
+      }
+      activityWrite = { kind: 'set', activity };
+    } else if (lastTransactionPresent) {
+      activityWrite = { kind: 'recompute' };
+    } else {
+      activityWrite = { kind: 'keep' };
+    }
+    const parsed = normalizeMapPlace(
+      adminReplaceBody(parsedId.body, identity.origin, identity.externalId),
+    );
     if (!parsed.ok) {
       return c.json({ error: parsed.error }, 400);
     }
-    deps.store.upsert(parsed.value);
-    return c.json({ created: false, id: stored.id, btcmap: 'skipped' }, 200);
+    const replaced = deps.store.replaceById({
+      id: parsedId.id,
+      content: parsed.value,
+      createdAt,
+      lastTransactionAt,
+      activity: activityWrite,
+      nowMs: now(),
+    });
+    if (replaced.status === 'missing') {
+      return c.json({ error: 'Place not found' }, 404);
+    }
+    if (replaced.status === 'conflict') {
+      return c.json({ error: 'Place already exists' }, 409);
+    }
+    return c.json({ created: false, id: replaced.place.id, btcmap: 'skipped' }, 200);
   });
 
   app.delete('/places', (c) => {

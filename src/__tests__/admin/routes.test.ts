@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { AdminPublicKey } from '@/lib/admin/keys';
 import { signAdminRequest } from '@/lib/admin/signature';
 import type { MapPlaceInput } from '@/lib/map/place';
-import { MemoryMapPlaceStore } from '@/lib/map/store';
+import { MemoryMapPlaceStore, type ReplaceByIdInput } from '@/lib/map/store';
 import { createApp } from '@/server';
 
 const DESCRIPTION =
@@ -37,6 +37,12 @@ const pin: MapPlaceInput = {
 };
 
 const fremd: MapPlaceInput = { ...pin, origin: 'fremd', externalId: 'shop-9' };
+
+class MissingOnReplace extends MemoryMapPlaceStore {
+  override replaceById(_input: ReplaceByIdInput): { status: 'missing' } {
+    return { status: 'missing' };
+  }
+}
 
 type Over = {
   host?: string;
@@ -284,6 +290,8 @@ describe('admin routes', () => {
       problems: [],
       externalId: 'store-1',
       paymentMethods: 'lightning',
+      createdAt: new Date(NOW_MS).toISOString(),
+      lastTransactionAt: null,
     });
     if (complete === undefined) {
       throw new Error('missing complete place');
@@ -295,10 +303,12 @@ describe('admin routes', () => {
         'city',
         'complete',
         'country',
+        'createdAt',
         'description',
         'externalId',
         'houseNumber',
         'id',
+        'lastTransactionAt',
         'lat',
         'lon',
         'name',
@@ -313,7 +323,7 @@ describe('admin routes', () => {
         'techProvider',
       ].sort(),
     );
-    expect(complete).not.toHaveProperty('lastTransactionAt');
+    expect(complete).not.toHaveProperty('activityUntil');
     expect(incomplete?.complete).toBe(false);
     expect(incomplete?.problems.length).toBeGreaterThan(0);
     expect(incomplete).toMatchObject({ externalId: 'blank', paymentMethods: 'lightning' });
@@ -470,15 +480,17 @@ describe('admin routes', () => {
     expect(store.listAll().some((row) => row.externalId === 'brand-new')).toBe(false);
   });
 
-  it('rejects a public id whose origin or caller id does not match and writes nothing', async () => {
+  it('rejects an invalid origin or caller id and moves a free pair onto the same id', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
     const created = store.insertIfNew(pin);
     const { calls, signed } = adminWithMap(store);
     const cases: Array<{ body: Record<string, unknown>; error: string }> = [
-      { body: { origin: 'fremd', externalId: 'other' }, error: 'Place origin does not match' },
-      { body: { origin: 'BAD', externalId: 'other' }, error: 'Place origin is invalid' },
-      { body: { origin: 'dfx', externalId: 'other' }, error: 'Place external id does not match' },
-      { body: { externalId: '' }, error: 'Place external id is required' },
+      {
+        body: { origin: 'BAD', externalId: 'bad\nid', createdAt: null },
+        error: 'Place origin is invalid',
+      },
+      { body: { externalId: '', createdAt: 1 }, error: 'Place external id is required' },
+      { body: { externalId: '   ' }, error: 'Place external id is required' },
       { body: { origin: 'dfx', externalId: 'bad\nid' }, error: 'Place external id is required' },
     ];
     for (const item of cases) {
@@ -490,8 +502,39 @@ describe('admin routes', () => {
       expect(response.status).toBe(400);
       expect(await response.json()).toEqual({ error: item.error });
     }
-    expect(calls).toEqual([]);
     expect(store.getById(created.place.id)?.name).toBe(pin.name);
+    const moved = await signed(
+      'PUT',
+      '/admin/places',
+      jsonBytes({
+        ...pin,
+        id: created.place.id,
+        origin: ' fremd ',
+        externalId: ' moved-1 ',
+        name: 'Moved Shop',
+        createdAt: '2020-05-01T00:00:00Z',
+      }),
+    );
+    expect(moved.status).toBe(200);
+    expect(await moved.json()).toEqual({
+      created: false,
+      id: created.place.id,
+      btcmap: 'skipped',
+    });
+    expect(calls).toEqual([]);
+    expect(store.listAll()).toHaveLength(1);
+    expect(
+      store.listAll().some((row) => row.origin === 'dfx' && row.externalId === 'store-1'),
+    ).toBe(false);
+    expect(store.getById(created.place.id)).toMatchObject({
+      id: created.place.id,
+      origin: 'fremd',
+      externalId: 'moved-1',
+      name: 'Moved Shop',
+      createdAt: '2020-05-01T00:00:00.000Z',
+      lastTransactionAt: null,
+      activity: 'none',
+    });
   });
 
   it('does not write when the public id body fails place validation', async () => {
@@ -505,13 +548,20 @@ describe('admin routes', () => {
     );
     expect(badLat.status).toBe(400);
     expect(await badLat.json()).toEqual({ error: 'Place must be a latitude and longitude' });
-    const activity = await signed(
+    const activityUntil = await signed(
       'PUT',
       '/admin/places',
-      jsonBytes({ ...pin, id: created.place.id, activity: 'daily', name: 'Should Not Stick' }),
+      jsonBytes({
+        ...pin,
+        id: created.place.id,
+        activityUntil: '2026-10-01T00:00:00.000Z',
+        name: 'Should Not Stick',
+      }),
     );
-    expect(activity.status).toBe(400);
-    expect(await activity.json()).toEqual({ error: 'Place field is not allowed: activity' });
+    expect(activityUntil.status).toBe(400);
+    expect(await activityUntil.json()).toEqual({
+      error: 'Place field is not allowed: activityUntil',
+    });
     expect(calls).toEqual([]);
     expect(store.getById(created.place.id)?.name).toBe(pin.name);
     expect(store.getById(created.place.id)?.activity).toBe('none');
@@ -602,8 +652,10 @@ describe('admin routes', () => {
       paymentMethods: 'onchain,lightning',
       origin: 'dfx',
       activity: 'within7Days',
+      createdAt: before.createdAt,
+      lastTransactionAt: before.lastTransactionAt,
     });
-    expect(item).not.toHaveProperty('lastTransactionAt');
+    expect(item).not.toHaveProperty('activityUntil');
     const fifth = store.recordTransaction('dfx', 'store-1', day('2026-10-04'), nowMs);
     expect(fifth?.activity).toBe('daily');
     expect(fifth?.lastTransactionAt).toBe(day('2026-10-08'));
@@ -617,7 +669,6 @@ describe('admin routes', () => {
         lat: 46.5,
         lon: 7.5,
         category: 'cafe',
-        paymentMethods: 'lightning',
         shopType: 'Others',
         street: 'Bahnhofstrasse',
         houseNumber: '12',
@@ -640,7 +691,7 @@ describe('admin routes', () => {
       lastTransactionAt: day('2026-10-08'),
       activity: 'daily',
       techProvider: 'DFX.swiss',
-      paymentMethods: 'lightning',
+      paymentMethods: null,
       supports: [],
     });
     const still = store.recordTransaction('dfx', 'store-1', day('2026-10-08'), nowMs);
@@ -685,6 +736,262 @@ describe('admin routes', () => {
     store.refreshActivity(until);
     expect(store.getById(created.place.id)?.activity).toBe('within30Days');
     expect(store.getById(created.place.id)?.lastTransactionAt).toBe(last);
+  });
+
+  it('rejects an invalid createdAt and writes nothing', async () => {
+    const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
+    const created = store.insertIfNew(pin);
+    const { calls, signed } = adminWithMap(store);
+    const cases: unknown[] = [null, 1, '', '   ', 'not-a-date', '-000001-01-01T00:00:00.000Z'];
+    for (const createdAt of cases) {
+      const response = await signed(
+        'PUT',
+        '/admin/places',
+        jsonBytes({
+          ...pin,
+          id: created.place.id,
+          createdAt,
+          ...(createdAt === null ? { activity: 'nope' } : {}),
+          name: 'Should Not Stick',
+        }),
+      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: 'Place created time is invalid' });
+    }
+    expect(calls).toEqual([]);
+    expect(store.getById(created.place.id)).toMatchObject({
+      name: pin.name,
+      createdAt: created.place.createdAt,
+      lastTransactionAt: null,
+      activity: 'none',
+    });
+  });
+
+  it('rejects an invalid lastTransactionAt and writes an older instant', async () => {
+    const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
+    const created = store.insertIfNew(pin);
+    const recent = new Date(NOW_MS).toISOString();
+    store.recordTransaction(pin.origin, pin.externalId, recent, NOW_MS);
+    const { calls, signed } = adminWithMap(store);
+    const cases: unknown[] = [1, '', '   ', 'not-a-date', '-000001-01-01T00:00:00.000Z', false, {}];
+    for (const lastTransactionAt of cases) {
+      const response = await signed(
+        'PUT',
+        '/admin/places',
+        jsonBytes({
+          ...pin,
+          id: created.place.id,
+          lastTransactionAt,
+          ...(lastTransactionAt === 1 ? { activity: 'nope' } : {}),
+          name: 'Should Not Stick',
+        }),
+      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: 'Place transaction time is invalid' });
+    }
+    expect(store.getById(created.place.id)?.lastTransactionAt).toBe(recent);
+    expect(store.getById(created.place.id)?.name).toBe(pin.name);
+    const older = new Date(NOW_MS - 40 * 24 * 60 * 60 * 1000).toISOString();
+    const written = await signed(
+      'PUT',
+      '/admin/places',
+      jsonBytes({ ...pin, id: created.place.id, lastTransactionAt: older, name: 'Older Instant' }),
+    );
+    expect(written.status).toBe(200);
+    expect(await written.json()).toEqual({
+      created: false,
+      id: created.place.id,
+      btcmap: 'skipped',
+    });
+    expect(calls).toEqual([]);
+    expect(store.getById(created.place.id)).toMatchObject({
+      name: 'Older Instant',
+      lastTransactionAt: older,
+      activity: 'olderThan30Days',
+      createdAt: created.place.createdAt,
+    });
+  });
+
+  it('clears lastTransactionAt when the JSON value is null and recomputes activity', async () => {
+    const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
+    const created = store.insertIfNew(pin);
+    const recent = new Date(NOW_MS).toISOString();
+    store.recordTransaction(pin.origin, pin.externalId, recent, NOW_MS);
+    expect(store.getById(created.place.id)?.activity).toBe('within7Days');
+    const { calls, signed } = adminWithMap(store);
+    const response = await signed(
+      'PUT',
+      '/admin/places',
+      jsonBytes({ ...pin, id: created.place.id, lastTransactionAt: null, name: 'Cleared' }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      created: false,
+      id: created.place.id,
+      btcmap: 'skipped',
+    });
+    expect(calls).toEqual([]);
+    expect(store.getById(created.place.id)).toMatchObject({
+      name: 'Cleared',
+      lastTransactionAt: null,
+      activity: 'none',
+      createdAt: created.place.createdAt,
+    });
+    store.refreshActivity(NOW_MS + 8 * 24 * 60 * 60 * 1000);
+    expect(store.getById(created.place.id)?.activity).toBe('none');
+  });
+
+  it('rejects an activity token that is not exact and writes nothing', async () => {
+    const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
+    const created = store.insertIfNew(pin);
+    const { calls, signed } = adminWithMap(store);
+    for (const activity of [' daily', 'daily ', 'Daily', 'none ', '', 'nope', null, 1, true]) {
+      const response = await signed(
+        'PUT',
+        '/admin/places',
+        jsonBytes({
+          ...pin,
+          id: created.place.id,
+          createdAt: '2020-01-01T00:00:00.000Z',
+          activity,
+          name: 'Should Not Stick',
+        }),
+      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: 'Place activity is invalid' });
+    }
+    expect(calls).toEqual([]);
+    expect(store.getById(created.place.id)).toMatchObject({
+      name: pin.name,
+      createdAt: created.place.createdAt,
+      activity: 'none',
+    });
+  });
+
+  it('stores an exact activity token, keeps it across refresh, and leaves payment days', async () => {
+    const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
+    const created = store.insertIfNew(pin);
+    const day = (value: string): string => `${value}T12:00:00.000Z`;
+    store.recordTransaction(pin.origin, pin.externalId, day('2023-11-11'), NOW_MS);
+    store.recordTransaction(pin.origin, pin.externalId, day('2023-11-12'), NOW_MS);
+    store.recordTransaction(pin.origin, pin.externalId, day('2023-11-13'), NOW_MS);
+    store.recordTransaction(pin.origin, pin.externalId, day('2023-11-14'), NOW_MS);
+    expect(store.getById(created.place.id)?.activity).toBe('within7Days');
+    const { calls, signed } = adminWithMap(store);
+    const set = await signed(
+      'PUT',
+      '/admin/places',
+      jsonBytes({ ...pin, id: created.place.id, activity: 'none' }),
+    );
+    expect(set.status).toBe(200);
+    expect(await set.json()).toEqual({
+      created: false,
+      id: created.place.id,
+      btcmap: 'skipped',
+    });
+    expect(store.getById(created.place.id)?.activity).toBe('none');
+    expect(store.getById(created.place.id)?.lastTransactionAt).toBe(day('2023-11-14'));
+    store.refreshActivity(NOW_MS + 40 * 24 * 60 * 60 * 1000);
+    expect(store.getById(created.place.id)?.activity).toBe('none');
+    const kept = await signed(
+      'PUT',
+      '/admin/places',
+      jsonBytes({ ...pin, id: created.place.id, name: 'Token Kept' }),
+    );
+    expect(kept.status).toBe(200);
+    expect(store.getById(created.place.id)).toMatchObject({
+      name: 'Token Kept',
+      activity: 'none',
+      lastTransactionAt: day('2023-11-14'),
+    });
+    const fifth = store.recordTransaction(pin.origin, pin.externalId, day('2023-11-10'), NOW_MS);
+    expect(fifth?.activity).toBe('daily');
+    expect(fifth?.lastTransactionAt).toBe(day('2023-11-14'));
+    expect(calls).toEqual([]);
+  });
+
+  it('returns 409 when the origin and caller id belong to another row', async () => {
+    const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
+    const first = store.insertIfNew(pin);
+    const second = store.insertIfNew({
+      ...pin,
+      origin: 'fremd',
+      externalId: 'store-2',
+      name: 'Second Shop',
+    });
+    const beforeFirst = store.getById(first.place.id);
+    const beforeSecond = store.getById(second.place.id);
+    const { calls, signed } = adminWithMap(store);
+    const response = await signed(
+      'PUT',
+      '/admin/places',
+      jsonBytes({
+        ...pin,
+        id: first.place.id,
+        origin: 'fremd',
+        externalId: 'store-2',
+        name: 'Should Not Stick',
+      }),
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'Place already exists' });
+    expect(calls).toEqual([]);
+    expect(store.listAll()).toHaveLength(2);
+    expect(store.getById(first.place.id)).toEqual(beforeFirst);
+    expect(store.getById(second.place.id)).toEqual(beforeSecond);
+  });
+
+  it('returns 404 when replaceById reports the id missing and writes nothing', async () => {
+    const store = new MissingOnReplace(() => new Date(NOW_MS));
+    const created = store.insertIfNew(pin);
+    const { calls, signed } = adminWithMap(store);
+    const response = await signed(
+      'PUT',
+      '/admin/places',
+      jsonBytes({ ...pin, id: created.place.id, name: 'Should Not Stick' }),
+    );
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: 'Place not found' });
+    expect(calls).toEqual([]);
+    expect(store.listAll()).toHaveLength(1);
+    expect(store.getById(created.place.id)?.name).toBe(pin.name);
+  });
+
+  it('rejects createdAt, lastTransactionAt, and activity on PUT without a public id', async () => {
+    const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
+    const created = store.insertIfNew(pin);
+    const api = build({ store, token: 'secret' });
+    const signed = bind(api);
+    const fields = [
+      ['createdAt', '2020-01-01T00:00:00.000Z'],
+      ['lastTransactionAt', '2020-01-02T00:00:00.000Z'],
+      ['activity', 'daily'],
+    ] as const;
+    for (const [field, value] of fields) {
+      const mapResponse = await api.request('/map/places', {
+        method: 'PUT',
+        headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...pin, [field]: value, name: 'Should Not Stick' }),
+      });
+      expect(mapResponse.status).toBe(400);
+      expect(await mapResponse.json()).toEqual({ error: `Place field is not allowed: ${field}` });
+      const adminResponse = await signed(
+        'PUT',
+        '/admin/places',
+        jsonBytes({ ...pin, [field]: value, name: 'Should Not Stick' }),
+      );
+      expect(adminResponse.status).toBe(400);
+      expect(await adminResponse.json()).toEqual({
+        error: `Place field is not allowed: ${field}`,
+      });
+    }
+    expect(store.listAll()).toHaveLength(1);
+    expect(store.getById(created.place.id)).toMatchObject({
+      name: pin.name,
+      createdAt: created.place.createdAt,
+      lastTransactionAt: null,
+      activity: 'none',
+    });
   });
 
   it('keeps the stored origin and caller id when they are omitted or match', async () => {

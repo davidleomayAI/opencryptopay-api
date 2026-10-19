@@ -54,6 +54,9 @@ type AdminListedPlace = {
   name: string;
   externalId: string;
   paymentMethods: string | null;
+  createdAt: string;
+  lastTransactionAt: string | null;
+  activity: string;
 };
 
 async function listedPlace(
@@ -294,6 +297,134 @@ test('Function: normalizeExternalId — a blank caller id on delete is rejected'
   expect(await res.json()).toEqual({ error: 'Place external id is required' });
   const kept = await listedPlace(request, fremd.externalId);
   expect(kept.id).toBe(row.id);
+});
+
+test('Function: adminRoutes — PUT /admin/places rewrites one public id and rejects a taken pair', async ({
+  request,
+}) => {
+  const fremdBefore = await listedPlace(request, fremd.externalId);
+  expect(fremdBefore.origin).toBe(fremd.origin);
+  expect(fremdBefore.externalId).toBe(fremd.externalId);
+
+  const dedicated = {
+    ...fremd,
+    origin: 'dfx',
+    externalId: 'e2e-admin-rewrite',
+    name: 'Rewrite Shop',
+  };
+  const other = {
+    ...fremd,
+    origin: 'spar',
+    externalId: 'e2e-admin-other',
+    name: 'Other Shop',
+  };
+  const createdAt = '2020-05-01T00:00:00.000Z';
+  try {
+    const createDedicated = JSON.stringify(dedicated);
+    const createdDedicated = await request.put('/admin/places', {
+      headers: signedHeaders('PUT', PATH, Buffer.from(createDedicated)),
+      data: createDedicated,
+    });
+    expect(createdDedicated.status()).toBe(201);
+    const createOther = JSON.stringify(other);
+    const createdOther = await request.put('/admin/places', {
+      headers: signedHeaders('PUT', PATH, Buffer.from(createOther)),
+      data: createOther,
+    });
+    expect(createdOther.status()).toBe(201);
+
+    const dedicatedRow = await listedPlace(request, dedicated.externalId);
+    const otherRow = await listedPlace(request, other.externalId);
+    const rewrite = JSON.stringify({
+      ...dedicated,
+      id: dedicatedRow.id,
+      origin: 'gifts',
+      externalId: 'e2e-admin-moved',
+      createdAt,
+      lastTransactionAt: null,
+      activity: 'within30Days',
+    });
+    const rewritten = await request.put('/admin/places', {
+      headers: signedHeaders('PUT', PATH, Buffer.from(rewrite)),
+      data: rewrite,
+    });
+    expect(rewritten.status()).toBe(200);
+    expect(await rewritten.json()).toEqual({
+      created: false,
+      id: dedicatedRow.id,
+      btcmap: 'skipped',
+    });
+    const moved = await listedPlace(request, 'e2e-admin-moved');
+    expect(moved.id).toBe(dedicatedRow.id);
+    expect(moved.origin).toBe('gifts');
+    expect(moved.externalId).toBe('e2e-admin-moved');
+    expect(moved.createdAt).toBe(createdAt);
+    expect(moved.lastTransactionAt).toBeNull();
+    expect(moved.activity).toBe('within30Days');
+    expect(moved.name).toBe(dedicated.name);
+
+    const collide = JSON.stringify({
+      ...dedicated,
+      id: dedicatedRow.id,
+      origin: other.origin,
+      externalId: other.externalId,
+      name: 'Should Not Collide',
+      createdAt,
+      lastTransactionAt: null,
+      activity: 'within30Days',
+    });
+    const conflict = await request.put('/admin/places', {
+      headers: signedHeaders('PUT', PATH, Buffer.from(collide)),
+      data: collide,
+    });
+    expect(conflict.status()).toBe(409);
+    expect(await conflict.json()).toEqual({ error: 'Place already exists' });
+
+    const stillMoved = await listedPlace(request, 'e2e-admin-moved');
+    expect(stillMoved.id).toBe(dedicatedRow.id);
+    expect(stillMoved.origin).toBe('gifts');
+    expect(stillMoved.externalId).toBe('e2e-admin-moved');
+    expect(stillMoved.name).toBe(dedicated.name);
+    expect(stillMoved.createdAt).toBe(createdAt);
+    expect(stillMoved.lastTransactionAt).toBeNull();
+    expect(stillMoved.activity).toBe('within30Days');
+    const stillOther = await listedPlace(request, other.externalId);
+    expect(stillOther.id).toBe(otherRow.id);
+    expect(stillOther.origin).toBe(other.origin);
+    expect(stillOther.externalId).toBe(other.externalId);
+    expect(stillOther.name).toBe(other.name);
+    const fremdAfter = await listedPlace(request, fremd.externalId);
+    expect(fremdAfter.id).toBe(fremdBefore.id);
+    expect(fremdAfter.origin).toBe(fremd.origin);
+    expect(fremdAfter.externalId).toBe(fremd.externalId);
+
+    const deleteDedicated = JSON.stringify({ id: dedicatedRow.id });
+    const deletedDedicated = await request.delete('/admin/places', {
+      headers: signedHeaders('DELETE', PATH, Buffer.from(deleteDedicated)),
+      data: deleteDedicated,
+    });
+    expect(deletedDedicated.status()).toBe(200);
+    expect(await deletedDedicated.json()).toEqual({ deleted: true });
+    const deleteOther = JSON.stringify({ id: otherRow.id });
+    const deletedOther = await request.delete('/admin/places', {
+      headers: signedHeaders('DELETE', PATH, Buffer.from(deleteOther)),
+      data: deleteOther,
+    });
+    expect(deletedOther.status()).toBe(200);
+    expect(await deletedOther.json()).toEqual({ deleted: true });
+  } finally {
+    for (const key of [
+      { origin: 'gifts', externalId: 'e2e-admin-moved' },
+      { origin: 'dfx', externalId: 'e2e-admin-rewrite' },
+      { origin: 'spar', externalId: 'e2e-admin-other' },
+    ]) {
+      const body = JSON.stringify(key);
+      await request.delete('/admin/places', {
+        headers: signedHeaders('DELETE', PATH, Buffer.from(body)),
+        data: body,
+      });
+    }
+  }
 });
 
 test('Function: deletePlace — DELETE /admin/places removes the pin', async ({ request }) => {
