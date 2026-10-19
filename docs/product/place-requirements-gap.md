@@ -108,12 +108,13 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
 
 ## R4 Name and description
 
-- **Target:** a short descriptive name without the address, and a longer
-  description; both required.
-- **Code:** met. `name` is required, 1 to 80 characters. The name must not
-  contain the street as a whole word. It must not contain the postal code as a
-  standalone token. `description` is required, 20 to 1000 characters, longer
-  than the name and not equal to it, and is stored and returned.
+- **Target:** a short name may include the street and must not include the
+  postal code as a standalone token, and a longer description is still
+  required.
+- **Code:** met. `name` is required, 1 to 80 characters. The name may contain
+  the street. It must not contain the postal code as a standalone token.
+  `description` is required, 20 to 1000 characters, longer than the name and
+  not equal to it, and is stored and returned.
 - **Data:** all 170 SPAR names are `SPAR` plus the full address. 21.gifts names
   are the pin label, the author name, or `Shop`, cut to 80 characters.
 - **Sources:** neither sends a description. 21.gifts has the shop post text,
@@ -157,12 +158,13 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
    coordinates; rejects a failed `POST` or `PUT /map/places` without storing;
    does not derive `country` or shop type; and leaves incomplete stored rows,
    including an unparseable transaction time, out of `GET /map/places`.
-2. DFX.swiss: send a short descriptive name without the address, a
-   description, the shop type, the full address, and coordinates for every
-   SPAR shop through `PUT /map/places`.
-3. 21.gifts: collect a descriptive name without the address, a structured
-   address, and a description for every shop, and send them with the shop
-   type.
+2. DFX.swiss: send a short name that may include the street and must not
+   contain the postal code as a standalone token, a description, the shop
+   type, the full address, and coordinates for every SPAR shop through
+   `PUT /map/places`.
+3. 21.gifts: collect a short name that may include the street and must not
+   contain the postal code as a standalone token, a structured address, and a
+   description for every shop, and send them with the shop type.
 4. Production: release `develop` so that R1 is served with all five levels.
    The release stores at most one payment date per shop: the UTC date of its
    latest transaction, and only if that date lies within the last seven.

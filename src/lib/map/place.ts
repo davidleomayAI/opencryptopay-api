@@ -442,8 +442,8 @@ function containsStandaloneToken(name: string, token: string): boolean {
   return pattern.test(name);
 }
 
-function nameContainsAddress(name: string, street: string, postalCode: string): boolean {
-  return containsStandaloneToken(name, street) || containsStandaloneToken(name, postalCode);
+function nameContainsPostalCode(name: string, postalCode: string): boolean {
+  return containsStandaloneToken(name, postalCode);
 }
 
 function compareSupport(a: MapPlaceSupport, b: MapPlaceSupport): number {
@@ -595,7 +595,6 @@ function normalizeCity(raw: unknown): { ok: true; value: string } | { ok: false;
 
 function normalizeName(
   raw: unknown,
-  street: string,
   postalCode: string,
 ): { ok: true; value: string } | { ok: false; error: string } {
   if (typeof raw !== 'string') {
@@ -605,7 +604,7 @@ function normalizeName(
   if (name.length < 1 || name.length > 80 || !hasNoControls(name)) {
     return { ok: false, error: NAME_ERROR };
   }
-  if (nameContainsAddress(name, street, postalCode)) {
+  if (nameContainsPostalCode(name, postalCode)) {
     return { ok: false, error: NAME_ADDRESS_ERROR };
   }
   return { ok: true, value: name };
@@ -836,7 +835,7 @@ export function normalizeMapPlace(
     return city;
   }
 
-  const name = normalizeName(rec['name'], street.value, postalCode.value);
+  const name = normalizeName(rec['name'], postalCode.value);
   if (!name.ok) {
     return name;
   }
