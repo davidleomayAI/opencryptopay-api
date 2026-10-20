@@ -47,10 +47,13 @@ jobs:
           path: notice-base
           sparse-checkout: src
 
+      # A fork's files are checked out only to be read as text; nothing from notice-head is
+      # imported or executed, so the checkout of fork code under pull_request_target is safe here.
       - name: Checkout pull request
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+          allow-unsafe-pr-checkout: true
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
           path: notice-head
