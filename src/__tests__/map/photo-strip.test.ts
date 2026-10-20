@@ -559,7 +559,7 @@ describe('stripPhotoMetadata WebP', () => {
     expect(contains(result.bytes, [0x41])).toBe(false);
   });
 
-  it('drops EXIF, XMP and ICCP, clears their VP8X flags and takes the canvas size', () => {
+  it('drops EXIF, XMP and ICCP, clears their VP8X flags and returns the frame size', () => {
     const result = stripped(
       'image/webp',
       webp([

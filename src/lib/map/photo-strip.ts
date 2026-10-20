@@ -599,7 +599,8 @@ export function photoTypeOf(bytes: Uint8Array): PhotoType | null {
  * and before a `VP8 ` frame, and the first `VP8 ` or `VP8L` frame up to the RIFF end, each rebuilt
  * from its declared size with a zero pad byte, keeps only the alpha flag of `VP8X` with its
  * reserved bytes zeroed and rewrites the RIFF size. A `VP8X` canvas that is not exactly the size
- * of the kept frame makes the file `unreadable`, so the returned size is always the frame's. Every byte after the end of the image is cut.
+ * of the kept frame makes the file `unreadable`, so the returned size is always the frame's.
+ * Every byte after the end of the image is cut.
  * No segment or chunk outside these lists survives, so EXIF other than the orientation, XMP, ICC,
  * comments and text chunks are gone; bytes inside a kept segment, such as DQT or DHT tables, are
  * copied as they are.
