@@ -212,19 +212,22 @@ function isSof(marker: number): boolean {
 }
 
 /**
- * Markers that carry image data or decoding tables: SOFn, DHT, DAC, SOS, DQT,
- * DNL and DRI. Every other marker with a length (JPG, JPGn, DHP, EXP,
- * reserved) is dropped.
+ * Markers that carry image data or decoding tables: SOFn, DHT, DAC, SOS, DQT
+ * and DRI. DNL is handled before (the file is unreadable), and every other
+ * marker with a length (JPG, JPGn, DHP, EXP, reserved) is dropped.
  */
 function isImageMarker(marker: number): boolean {
   return (
-    (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc8) || (marker >= 0xda && marker <= 0xdd)
+    (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc8) ||
+    marker === 0xda ||
+    marker === 0xdb ||
+    marker === 0xdd
   );
 }
 
-/** Whether a kept marker of fixed layout has its length: DNL and DRI 4, DAC pairs of bytes. */
+/** Whether a kept marker of fixed layout has its length: DRI 4, DAC pairs of bytes. */
 function hasMarkerLength(marker: number, length: number): boolean {
-  if (marker === 0xdc || marker === 0xdd) {
+  if (marker === 0xdd) {
     return length === 4;
   }
   return marker !== 0xcc || length % 2 === 0;
@@ -303,6 +306,11 @@ function stripJpeg(bytes: Uint8Array): StripResult {
       return { ok: false, error: 'unreadable' };
     }
     const content = bytes.subarray(pos + 4, end);
+    if (marker === 0xdc) {
+      // DNL can set the number of lines (T.81 B.2.5), so the SOF height would not be the
+      // height a decoder shows: a small SOF could hide an oversized image.
+      return { ok: false, error: 'unreadable' };
+    }
     if (marker === 0xe0) {
       if (!jfifKept && startsWith(content, 0, JFIF_ID) && content.length >= 14) {
         const header = new Uint8Array(14);
@@ -596,10 +604,11 @@ export function photoTypeOf(bytes: Uint8Array): PhotoType | null {
  * Remove metadata from a photo by allow-list and read its displayed size. JPEG keeps the first
  * plain JFIF header without thumbnail, the first 12-byte Adobe segment, a minimal EXIF orientation
  * when the original held 2 to 8, and the image markers (SOFn, DHT, DAC, SOS with its scan data,
- * where fill bytes before an RSTn or a stuffed zero become one FF, DQT, DNL, DRI) up to the main
+ * where fill bytes before an RSTn or a stuffed zero become one FF, DQT, DRI) up to the main
  * image's EOI; every other marker, and TEM or RSTn outside a scan, is dropped. A JPEG needs a SOF
- * and at least one SOS whose scan data ends at a marker; an SOI anywhere but at the start or a
- * second SOF makes it `unreadable`, so the size read from the one SOF is the size that is served.
+ * and at least one SOS whose scan data ends at a marker; an SOI anywhere but at the start, a
+ * second SOF or a DNL anywhere makes it `unreadable`, so the size read from the one SOF is the
+ * size that is served (a DNL could set another number of lines, T.81 B.2.5).
  * PNG needs an IDAT before IEND and keeps the listed rendering chunks up to IEND,
  * each rebuilt with a fresh CRC; an ancillary chunk or PLTE is kept once and only before the first
  * IDAT, PLTE only for an indexed image, and IEND is written empty. A PLTE of a length the format

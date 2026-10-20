@@ -223,17 +223,17 @@ describe('preparePhoto stored size and DNL', () => {
     expect(preparePhoto({ contentType: 'image/jpeg', data: base64(exact) }, 0).ok).toBe(true);
   });
 
-  it('skips a JPEG whose height is given only by DNL', () => {
-    const dnl = jpeg([
-      jpegSegment(0xdb, new Uint8Array(65)),
-      sof(2, 0),
-      scan(),
-      jpegSegment(0xdc, [0, 9]),
-    ]);
-    expect(preparePhoto({ contentType: 'image/jpeg', data: base64(dnl) }, 0)).toEqual({
-      ok: false,
-      error: 'Photo 1 must be 1 to 4096 pixels wide and high',
-    });
+  it('skips a JPEG with a DNL, whose number of lines could exceed the SOF height', () => {
+    const dqt = jpegSegment(0xdb, new Uint8Array(65));
+    for (const file of [
+      jpeg([dqt, sof(2, 1), scan(), jpegSegment(0xdc, [0xff, 0xff])]),
+      jpeg([dqt, sof(2, 0), scan(), jpegSegment(0xdc, [0, 9])]),
+    ]) {
+      expect(preparePhoto({ contentType: 'image/jpeg', data: base64(file) }, 0)).toEqual({
+        ok: false,
+        error: 'Photo 1 could not be read',
+      });
+    }
   });
 });
 

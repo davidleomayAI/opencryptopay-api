@@ -186,7 +186,7 @@ describe('stripPhotoMetadata JPEG', () => {
     }
   });
 
-  it('keeps the scans of a progressive JPEG, DNL and other markers, skips a fill byte between segments and cuts after EOI', () => {
+  it('keeps the scans of a progressive JPEG and other markers, skips a fill byte between segments and cuts after EOI', () => {
     const result = stripped(
       'image/jpeg',
       jpeg(
@@ -198,7 +198,6 @@ describe('stripPhotoMetadata JPEG', () => {
           new Uint8Array([0xff]),
           jpegSegment(0xc4, new Uint8Array(20)),
           scan(),
-          jpegSegment(0xdc, [0, 9]),
         ],
         [0xff, 0xd8, 0x99, 0x98],
       ),
@@ -273,7 +272,7 @@ describe('stripPhotoMetadata JPEG', () => {
     expect(contains(result.bytes, bytesOf(DQT, sof(4, 3)))).toBe(true);
   });
 
-  it('drops DHP and EXP and rejects a DNL, DRI or DAC of the wrong length', () => {
+  it('drops DHP and EXP and rejects a DRI or DAC of the wrong length', () => {
     const kept = stripped(
       'image/jpeg',
       jpeg([
@@ -287,15 +286,23 @@ describe('stripPhotoMetadata JPEG', () => {
     );
     expect(contains(kept.bytes, 'hidden')).toBe(false);
     expect(contains(kept.bytes, [0xff, 0xcc, 0, 4, 0, 1])).toBe(true);
-    for (const wrong of [
-      jpegSegment(0xdc, 'hidden payload'),
-      jpegSegment(0xdd, 'hidden payload'),
-      jpegSegment(0xcc, [0, 1, 2]),
-    ]) {
+    for (const wrong of [jpegSegment(0xdd, 'hidden payload'), jpegSegment(0xcc, [0, 1, 2])]) {
       expect(strip('image/jpeg', jpeg([DQT, wrong, sof(4, 3), scan()]))).toEqual({
         ok: false,
         error: 'unreadable',
       });
+    }
+  });
+
+  it('rejects a DNL anywhere, so a small SOF cannot hide a taller image', () => {
+    const dnl = jpegSegment(0xdc, [0xff, 0xff]);
+    for (const file of [
+      jpeg([DQT, sof(4, 3), scan(), dnl]),
+      jpeg([DQT, sof(4, 1), scan(), dnl, scan()]),
+      jpeg([DQT, dnl, sof(4, 3), scan()]),
+      jpeg([DQT, sof(4, 0), scan(), jpegSegment(0xdc, [0, 9])]),
+    ]) {
+      expect(strip('image/jpeg', file)).toEqual({ ok: false, error: 'unreadable' });
     }
   });
 

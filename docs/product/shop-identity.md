@@ -264,8 +264,10 @@ uploads, so the header rules here are stricter:
   skipped (`Photo N is animated`). A shop photo is a still
   picture, and this keeps the metadata walk to one level.
 - Width and height are read from the file header, which must parse. Each is
-  between 1 and 4096, so a JPEG whose height is only given by `DNL` (height
-  0 in its `SOF`) is skipped. The API returns the displayed size: for a JPEG whose
+  between 1 and 4096. A JPEG with a `DNL` segment is skipped
+  (`Photo N could not be read`), because `DNL` can set the number of lines
+  after the `SOF`, so the checked height would not be the height a decoder
+  shows. The API returns the displayed size: for a JPEG whose
   EXIF orientation is 5 to 8, width and height are swapped. Orientation
   values outside 2 to 8 count as 1.
 - `caption` is optional, 1–200 characters, no control characters.
@@ -295,11 +297,11 @@ having re-encoded the image, because a phone photo can carry its GPS position:
     entry, so portrait photos keep showing upright;
   - walk the markers through the whole image, also between the scans of a
     progressive JPEG. Keep only the image markers `SOI`, `SOFn`, `DHT`,
-    `DAC`, `DQT`, `DRI`, `DNL`, `SOS` with its entropy-coded data (including
+    `DAC`, `DQT`, `DRI`, `SOS` with its entropy-coded data (including
     its `RSTn`; fill bytes before an `RSTn` or a stuffed zero are written as
     one `FF`) and
-    `EOI`. A `DRI` or `DNL` that is not 4 bytes long, a
-    `DAC` of an odd length, or a second `SOFn` could not be read: a JPEG
+    `EOI`. A `DRI` that is not 4 bytes long, a `DAC` of an odd length, a
+    `DNL` anywhere, or a second `SOFn` could not be read: a JPEG
     has exactly one frame header, so the checked size is the size of the
     served file and a small first frame cannot hide an oversized second one. Every `APPn` and `COM` goes
     through the allow-list above; every other marker (`JPG`, `JPGn`, `DHP`,

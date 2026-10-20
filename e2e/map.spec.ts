@@ -1243,6 +1243,32 @@ test('Function: stripPhotoMetadata — a JPEG whose small first SOF hides an ove
   expect(json.photos[0]?.url.endsWith('.jpg')).toBe(true);
 });
 
+test('Function: stripPhotoMetadata — a JPEG whose small SOF hides a large DNL height is skipped', async ({
+  request,
+}) => {
+  const key = await shopWithKey(request, 'e2e-photo-jpeg-dnl');
+  const dqt = jpegSegment(0xdb, new Uint8Array(65));
+  const stored = await request.put('/map/places/photos', {
+    headers: ingest,
+    data: {
+      origin: 'dfx',
+      nostrPubkey: key,
+      photos: [
+        {
+          contentType: 'image/jpeg',
+          data: base64(jpeg([dqt, sof(6, 1), scan(), jpegSegment(0xdc, [0xff, 0xff])])),
+        },
+        { contentType: 'image/jpeg', data: base64(jpeg([dqt, sof(6, 5), scan()])) },
+      ],
+    },
+  });
+  expect(stored.status()).toBe(200);
+  const json = (await stored.json()) as { photos: Array<{ url: string }>; skipped: unknown[] };
+  expect(json.skipped).toEqual([{ index: 0, error: 'Photo 1 could not be read' }]);
+  expect(json.photos).toHaveLength(1);
+  expect(json.photos[0]?.url.endsWith('.jpg')).toBe(true);
+});
+
 test('Function: preparePhoto — a bad photo is skipped by index and the others are stored in order', async ({
   request,
 }) => {
