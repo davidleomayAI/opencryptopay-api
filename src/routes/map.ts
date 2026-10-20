@@ -352,7 +352,7 @@ export function mapRoutes(deps: MapRouteDeps): Hono {
     if (file === undefined || photoExtension(file.contentType) !== match[2]) {
       return notFound();
     }
-    return c.body(file.data.slice().buffer, 200, {
+    return c.body(new Uint8Array(file.data).buffer, 200, {
       'Content-Type': file.contentType,
       'X-Content-Type-Options': 'nosniff',
       'Cache-Control': PHOTO_CACHE,

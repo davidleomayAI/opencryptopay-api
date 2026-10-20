@@ -157,10 +157,11 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
 
 - **Target:** every shop has a NOSTR public key that is valid, unique over
   all sources and over time, fixed once stored, and its id everywhere; a
-  write without one is rejected.
+  source write without one is rejected.
 - **Code:** met with #26 (steps 1a and 1b of [shop-identity.md](shop-identity.md)).
   `POST` and `PUT /map/places` require and validate `nostrPubkey` (400 without
-  it), reserve it for its origin and external id, and refuse a changed key or
+  it; a signed admin `PUT` by internal id may leave it out and keeps the stored
+  key, 400 only when the row has none), reserve it for its origin and external id, and refuse a changed key or
   a key of another shop with 409. A row stored before step 1a has no key, is
   not complete, and stays out of `GET /map/places`, `GET /map/places/{npub}`
   and the countries of `GET /map/filters` until a write adds one.

@@ -528,8 +528,10 @@ The steps are named by label, in this order:
   `coverPhoto` and `photos`.
 - **Step 3, sources,** after steps 1a and 2: 21.gifts sends its keys and
   photos; DFX.swiss creates and sends keys for SPAR.
-- **Step 1b, R7 enforced:** a write without `nostrPubkey` is rejected with
-  **400**.
+- **Step 1b, R7 enforced:** a `POST` or `PUT /map/places` without
+  `nostrPubkey` is rejected with **400**. A signed admin `PUT` by internal id
+  may leave it out and keeps the stored key; it gets **400** only when the row
+  has no stored key.
 - **Step 4, website,** any time after step 1a: shop page, map and table
   links. Until step 2 is live the page treats missing `coverPhoto` and
   `photos` as no photos.
@@ -539,9 +541,8 @@ it rejects `nostrPubkey` as an unknown field, the sources can only send keys
 once it is live, and with step 1b it refuses their writes without a key: deploy
 it together with the step-3 changes of both sources (the 21.gifts outbox
 retries its writes; the SPAR import is run again), so that the gap between the
-deploys stays short;
-each comes with handbook entries, e2e tests and the 100% coverage gate, as in
-[CONTRIBUTING.md](../../CONTRIBUTING.md).
+deploys stays short. The pull request comes with handbook entries, e2e tests
+and the 100% coverage gate, as in [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ## Not part of this
 

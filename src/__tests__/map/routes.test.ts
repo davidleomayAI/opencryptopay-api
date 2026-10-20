@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { publicFilterResponse } from '@/lib/map/filter-catalog';
 import { npubEncode } from '@/lib/map/nostr-key';
 import { normalizeMapPlace, type MapPlaceInput } from '@/lib/map/place';
-import { MemoryMapPlaceStore } from '@/lib/map/store';
+import { MemoryMapPlaceStore, type MapPhotoFile } from '@/lib/map/store';
 import { createApp } from '@/server';
 import { keyFor } from './keys';
 import { base64, simpleJpeg, simplePng } from './photo-fixtures';
@@ -1429,5 +1429,22 @@ describe('map routes photos', () => {
     expect(failing.status).toBe(503);
     expect(failing.headers.get('cache-control')).toBe('no-store');
     expect(await failing.json()).toEqual({ error: 'Places are unavailable' });
+  });
+
+  it('serves only the bytes of a photo whose data is a view into a larger buffer', async () => {
+    const pool = new Uint8Array(pngBytes.length + 16).fill(0xaa);
+    pool.set(pngBytes, 8);
+    // A Node Buffer, whose slice() is another view on the same pool, not a copy.
+    const view = Buffer.from(pool.buffer, 8, pngBytes.length);
+    class ViewStore extends MemoryMapPlaceStore {
+      override findPublicPhoto(): MapPhotoFile {
+        return { contentType: 'image/png', data: view };
+      }
+    }
+    const served = await rawApp({ store: new ViewStore() }).request(
+      `/map/photos/${'0'.repeat(64)}.png`,
+    );
+    expect(served.status).toBe(200);
+    expect(new Uint8Array(await served.arrayBuffer())).toEqual(pngBytes);
   });
 });

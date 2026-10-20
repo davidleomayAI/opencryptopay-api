@@ -587,13 +587,17 @@ export function photoTypeOf(bytes: Uint8Array): PhotoType | null {
  * image's EOI; every other marker, and TEM or RSTn outside a scan, is dropped. PNG needs an IDAT
  * before IEND and keeps the listed rendering chunks up to IEND, each rebuilt with a fresh CRC; an
  * ancillary chunk or PLTE is kept once and only before the first IDAT, PLTE only for an indexed
- * image, a chunk of a length the format does not allow or an indexed bKGD that names no palette
- * entry is dropped, and IEND is written empty. WebP keeps `VP8X` (first and exactly 10 bytes), one
- * `ALPH` after `VP8X` and before a `VP8 ` frame, and the first `VP8 ` or `VP8L` frame up to the
- * RIFF end, each rebuilt from its declared size with a zero pad byte, keeps only the alpha flag of
- * `VP8X` with its reserved bytes zeroed and rewrites the RIFF size. Every byte after the end of the
- * image is cut. No metadata segment or chunk survives; bytes inside a kept segment, such as DQT or
- * DHT tables, are copied as they are.
+ * image, and IEND is written empty. A PLTE of a length the format does not allow (under 3, over
+ * 768, not a multiple of 3, or more entries than the bit depth allows) makes the file
+ * `unreadable`; an ancillary chunk of a length the format does not allow, an indexed bKGD that
+ * names no palette entry and an indexed tRNS longer than the palette (both also when no PLTE came
+ * before) are dropped. WebP keeps `VP8X` (first and exactly 10 bytes), one `ALPH` after `VP8X`
+ * and before a `VP8 ` frame, and the first `VP8 ` or `VP8L` frame up to the RIFF end, each rebuilt
+ * from its declared size with a zero pad byte, keeps only the alpha flag of `VP8X` with its
+ * reserved bytes zeroed and rewrites the RIFF size. Every byte after the end of the image is cut.
+ * No segment or chunk outside these lists survives, so EXIF other than the orientation, XMP, ICC,
+ * comments and text chunks are gone; bytes inside a kept segment, such as DQT or DHT tables, are
+ * copied as they are.
  *
  * @param type - The file type read from the magic bytes.
  * @param bytes - Decoded photo file.
