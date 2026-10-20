@@ -12,10 +12,7 @@
   "lifecycle": {
     "enabled": true,
     "auto_ready": true,
-    "required_workflows": [
-      ".github/workflows/ci.yaml",
-      ".github/workflows/db-change-notice.yaml"
-    ],
+    "required_workflows": [".github/workflows/ci.yaml", ".github/workflows/db-change-notice.yaml"],
     "ignored_workflows": [".github/workflows/a38-guard.yml"],
     "required_checks": {
       ".github/workflows/ci.yaml": [

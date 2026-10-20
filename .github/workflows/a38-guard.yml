@@ -25,7 +25,7 @@ on:
   workflow_run:
     # Completion of these workflows can change readiness.
     # Never include this guard workflow.
-    workflows: ["CI", "Database change notice"]
+    workflows: ['CI', 'Database change notice']
     types: [completed]
 
 concurrency:
