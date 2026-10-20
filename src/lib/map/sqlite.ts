@@ -581,8 +581,8 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Replace every stored fact of one internal id except the id, a stored key, the photos and
-   * the pair's revision.
+   * Replace every stored fact of one internal id except the id, a stored key, the photos, the
+   * payment days and the pair's revision.
    * Runs in one transaction. A missing id writes nothing.
    * Another row with this origin and caller id writes nothing.
    * A key follows R7 against the new pair, and the row's key reservation moves

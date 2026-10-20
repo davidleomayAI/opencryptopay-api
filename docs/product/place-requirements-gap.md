@@ -156,8 +156,9 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
 ## R7 NOSTR identity
 
 - **Target:** every shop has a NOSTR public key that is valid, unique over
-  all sources and over time, fixed once stored, and its id everywhere; a
-  source write without one is rejected.
+  all sources and over time, fixed once stored, and its public id in every
+  public answer (the signed admin interface keeps the internal id); a source
+  write without one is rejected.
 - **Code:** met with #26 (steps 1a and 1b of [shop-identity.md](shop-identity.md)).
   `POST` and `PUT /map/places` require and validate `nostrPubkey` (400 without
   it; a signed admin `PUT` by internal id may leave it out and keeps the stored

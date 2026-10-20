@@ -522,8 +522,8 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Replace every stored fact of one internal id except the id, a stored key, the photos and
-   * the pair's revision.
+   * Replace every stored fact of one internal id except the id, a stored key, the photos, the
+   * payment days and the pair's revision.
    * A missing id writes nothing. Another row with this origin and caller id writes nothing.
    * A key follows R7 as in a source write, checked against the new pair: a row
    * without a key stores the sent one unless it is reserved for another pair, and
