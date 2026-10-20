@@ -237,6 +237,34 @@ describe('preparePhoto stored size and DNL', () => {
   });
 });
 
+describe('preparePhoto JPEG frame', () => {
+  it('skips a small first SOF over an oversized second SOF', () => {
+    const hidden = jpeg([
+      jpegSegment(0xdb, new Uint8Array(65)),
+      sof(1, 1),
+      sof(65535, 65535),
+      scan(),
+    ]);
+    expect(preparePhoto({ contentType: 'image/jpeg', data: base64(hidden) }, 0)).toEqual({
+      ok: false,
+      error: 'Photo 1 could not be read',
+    });
+  });
+
+  it('skips a later SOF after a first SOF of width 0', () => {
+    const zero = jpeg([jpegSegment(0xdb, new Uint8Array(65)), sof(0, 1), sof(2, 1), scan()]);
+    expect(preparePhoto({ contentType: 'image/jpeg', data: base64(zero) }, 0)).toEqual({
+      ok: false,
+      error: 'Photo 1 could not be read',
+    });
+  });
+
+  it('stores a JPEG with a single SOF', () => {
+    const single = preparePhoto({ contentType: 'image/jpeg', data: base64(simpleJpeg(3, 2)) }, 0);
+    expect(single.ok && [single.photo.width, single.photo.height]).toEqual([3, 2]);
+  });
+});
+
 describe('preparePhoto extended WebP size', () => {
   function extended(frame: Uint8Array, width = 1, height = 1): string {
     return base64(webp([webpChunk('VP8X', vp8x(0, width, height)), frame]));

@@ -193,7 +193,6 @@ describe('stripPhotoMetadata JPEG', () => {
         [
           DQT,
           sof(7, 9, 0xc2),
-          sof(1, 1, 0xc0),
           jpegSegment(0xc4, new Uint8Array(20)),
           scan(),
           new Uint8Array([0xff]),
@@ -332,6 +331,25 @@ describe('stripPhotoMetadata JPEG', () => {
     ]) {
       expect(strip('image/jpeg', bytes)).toEqual({ ok: false, error: 'unreadable' });
     }
+  });
+
+  it('rejects a second SOF, whatever the first one declares', () => {
+    // A small first frame must not hide an oversized second one that would be served as it is.
+    for (const bytes of [
+      jpeg([DQT, sof(1, 1), sof(65535, 65535), scan()]),
+      jpeg([DQT, sof(1, 1, 0xc2), scan(), sof(65535, 65535, 0xc0), scan()]),
+      jpeg([DQT, sof(0, 1), sof(2, 1), scan()]),
+      jpeg([DQT, sof(2, 1), sof(2, 1), scan()]),
+    ]) {
+      expect(strip('image/jpeg', bytes)).toEqual({ ok: false, error: 'unreadable' });
+    }
+  });
+
+  it('reads the size of a JPEG with a single SOF', () => {
+    expect(stripped('image/jpeg', jpeg([DQT, sof(65535, 65535), scan()]))).toMatchObject({
+      width: 65535,
+      height: 65535,
+    });
   });
 });
 

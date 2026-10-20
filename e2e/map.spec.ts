@@ -1213,6 +1213,36 @@ test('Function: stripPhotoMetadata — a WebP whose VP8X canvas hides an oversiz
   expect(json.photos[0]?.url.endsWith('.webp')).toBe(true);
 });
 
+test('Function: stripPhotoMetadata — a JPEG whose small first SOF hides an oversized second SOF is skipped', async ({
+  request,
+}) => {
+  const key = await shopWithKey(request, 'e2e-photo-jpeg-sof');
+  const dqt = jpegSegment(0xdb, new Uint8Array(65));
+  const stored = await request.put('/map/places/photos', {
+    headers: ingest,
+    data: {
+      origin: 'dfx',
+      nostrPubkey: key,
+      photos: [
+        {
+          contentType: 'image/jpeg',
+          data: base64(jpeg([dqt, sof(1, 1), sof(65535, 65535), scan()])),
+        },
+        { contentType: 'image/jpeg', data: base64(jpeg([dqt, sof(0, 1), sof(2, 1), scan()])) },
+        { contentType: 'image/jpeg', data: base64(jpeg([dqt, sof(6, 5), scan()])) },
+      ],
+    },
+  });
+  expect(stored.status()).toBe(200);
+  const json = (await stored.json()) as { photos: Array<{ url: string }>; skipped: unknown[] };
+  expect(json.skipped).toEqual([
+    { index: 0, error: 'Photo 1 could not be read' },
+    { index: 1, error: 'Photo 2 could not be read' },
+  ]);
+  expect(json.photos).toHaveLength(1);
+  expect(json.photos[0]?.url.endsWith('.jpg')).toBe(true);
+});
+
 test('Function: preparePhoto — a bad photo is skipped by index and the others are stored in order', async ({
   request,
 }) => {

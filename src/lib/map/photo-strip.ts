@@ -272,6 +272,7 @@ function stripJpeg(bytes: Uint8Array): StripResult {
   let jfifKept = false;
   let adobeKept = false;
   let sawScan = false;
+  let sofSeen = false;
   for (;;) {
     if (pos + 2 > bytes.length || byte(bytes, pos) !== 0xff) {
       return { ok: false, error: 'unreadable' };
@@ -325,10 +326,12 @@ function stripJpeg(bytes: Uint8Array): StripResult {
       if (!hasMarkerLength(marker, length)) {
         return { ok: false, error: 'unreadable' };
       }
-      if (isSof(marker) && width === 0) {
-        if (length < 8) {
+      if (isSof(marker)) {
+        // One frame only: a later SOF would be served unchecked behind the size read here.
+        if (sofSeen || length < 8) {
           return { ok: false, error: 'unreadable' };
         }
+        sofSeen = true;
         height = be16(bytes, pos + 5);
         width = be16(bytes, pos + 7);
       }
@@ -595,8 +598,9 @@ export function photoTypeOf(bytes: Uint8Array): PhotoType | null {
  * when the original held 2 to 8, and the image markers (SOFn, DHT, DAC, SOS with its scan data,
  * where fill bytes before an RSTn or a stuffed zero become one FF, DQT, DNL, DRI) up to the main
  * image's EOI; every other marker, and TEM or RSTn outside a scan, is dropped. A JPEG needs a SOF
- * and at least one SOS whose scan data ends at a marker; an SOI anywhere but at the start makes it
- * `unreadable`. PNG needs an IDAT before IEND and keeps the listed rendering chunks up to IEND,
+ * and at least one SOS whose scan data ends at a marker; an SOI anywhere but at the start or a
+ * second SOF makes it `unreadable`, so the size read from the one SOF is the size that is served.
+ * PNG needs an IDAT before IEND and keeps the listed rendering chunks up to IEND,
  * each rebuilt with a fresh CRC; an ancillary chunk or PLTE is kept once and only before the first
  * IDAT, PLTE only for an indexed image, and IEND is written empty. A PLTE of a length the format
  * does not allow (under 3, over 768 or not a multiple of 3) makes the file `unreadable`, and so

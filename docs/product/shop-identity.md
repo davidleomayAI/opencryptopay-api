@@ -298,8 +298,10 @@ having re-encoded the image, because a phone photo can carry its GPS position:
     `DAC`, `DQT`, `DRI`, `DNL`, `SOS` with its entropy-coded data (including
     its `RSTn`; fill bytes before an `RSTn` or a stuffed zero are written as
     one `FF`) and
-    `EOI`. A `DRI` or `DNL` that is not 4 bytes long, or a
-    `DAC` of an odd length, could not be read. Every `APPn` and `COM` goes
+    `EOI`. A `DRI` or `DNL` that is not 4 bytes long, a
+    `DAC` of an odd length, or a second `SOFn` could not be read: a JPEG
+    has exactly one frame header, so the checked size is the size of the
+    served file and a small first frame cannot hide an oversized second one. Every `APPn` and `COM` goes
     through the allow-list above; every other marker (`JPG`, `JPGn`, `DHP`,
     `EXP`, reserved, and the length-free `TEM` and `RSTn` outside a scan) is
     dropped. Cut every byte after the main image's
