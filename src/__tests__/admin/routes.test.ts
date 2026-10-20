@@ -1183,7 +1183,7 @@ describe('admin routes', () => {
     expect(store.getById(created.place.id)).toEqual(created.place);
   });
 
-  it('answers 409 when an internal-id write breaks the key rules', async () => {
+  it('answers 400 for a missing key and 409 for a reserved or changed key on an internal-id write', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
     const keyless = store.insertIfNew(pin);
     const other = keyedStore(store).insertIfNew({ ...pin, externalId: 'store-2' });

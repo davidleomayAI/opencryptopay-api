@@ -1132,7 +1132,7 @@ test('Function: normalizePhotoUpload — PUT /map/places/photos rejects a malfor
   expect(unauthorized.status()).toBe(401);
 });
 
-test('Function: stripPhotoMetadata — a stored photo carries no EXIF, text or trailing bytes', async ({
+test('Function: stripPhotoMetadata — a stored photo keeps only the EXIF orientation and carries no GPS, text or trailing bytes', async ({
   request,
 }) => {
   const key = await shopWithKey(request, 'e2e-photo-strip');
