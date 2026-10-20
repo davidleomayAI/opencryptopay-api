@@ -186,7 +186,7 @@ describe('stripPhotoMetadata JPEG', () => {
     }
   });
 
-  it('keeps the scans of a progressive JPEG, fill bytes, DNL and other markers, and cuts after EOI', () => {
+  it('keeps the scans of a progressive JPEG, DNL and other markers, skips a fill byte between segments and cuts after EOI', () => {
     const result = stripped(
       'image/jpeg',
       jpeg(
@@ -207,6 +207,7 @@ describe('stripPhotoMetadata JPEG', () => {
     expect(result).toMatchObject({ width: 7, height: 9 });
     expect(result.bytes.slice(-2)).toEqual(new Uint8Array([0xff, 0xd9]));
     expect(contains(result.bytes, [0x99, 0x98])).toBe(false);
+    expect(contains(result.bytes, [0xff, 0xff])).toBe(false);
     expect(contains(result.bytes, [0xff, 0xd3, 0x56])).toBe(true);
   });
 
