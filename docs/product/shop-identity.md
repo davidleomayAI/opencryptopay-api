@@ -46,7 +46,9 @@ Every shop must state a NOSTR public key:
   stores the writes.
 - It is unique across all shops of all sources, also over time. Once a key
   has been stored for an `origin` + `externalId`, it stays reserved for that
-  pair, also after `DELETE /map/places`. A key reserved for another pair is
+  pair, also after `DELETE /map/places`. The one exception is a signed admin
+  `PUT /admin/places` by internal id that moves a place to another pair: the
+  place's own key moves with it (see below). A key reserved for another pair is
   rejected with **409** `{ "error": "nostrPubkey belongs to another place" }`.
   So an old shared `/{npub}` link can never lead to a different shop.
 - It is fixed once stored. A `POST` or `PUT` for the same `origin` +
@@ -88,7 +90,8 @@ uniqueness is a separate
 run after the column exists. SQLite allows several nulls under that index.
 
 The reservation lives in its own table, which a place `DELETE` does not
-touch and nothing ever deletes from:
+touch and nothing ever deletes from; only an admin move by internal id
+points a key's row at the place's new pair:
 
 ```sql
 CREATE TABLE IF NOT EXISTS map_pubkey_reservation (
@@ -235,7 +238,8 @@ New endpoint `PUT /map/places/photos`, same bearer as the other write routes
   `index` is the 0-based position in the request; the `error` sentence
   numbers photos from 1, so `index` 2 reads `Photo 3 …`. `caption` is `null`
   when unset. `skipped` is `[]` when nothing was skipped.
-- `DELETE /map/places` drops the photos with the place. A source that
+- `DELETE /map/places`, and `DELETE /admin/places` by pair or by internal id,
+  drop the photos with the place. A source that
   registers the place again sends its photos again.
 
 Rules per photo. 21.gifts checks only size and magic bytes on its own
@@ -290,7 +294,8 @@ having re-encoded the image, because a phone photo can carry its GPS position:
   - walk the markers through the whole image, also between the scans of a
     progressive JPEG. Keep only the image markers `SOI`, `SOFn`, `DHT`,
     `DAC`, `DQT`, `DRI`, `DNL`, `SOS` with its entropy-coded data (including
-    its `RSTn`; fill bytes before an `RSTn` are written as one `FF`) and
+    its `RSTn`; fill bytes before an `RSTn` or a stuffed zero are written as
+    one `FF`) and
     `EOI`. A `DRI` or `DNL` that is not 4 bytes long, or a
     `DAC` of an odd length, could not be read. Every `APPn` and `COM` goes
     through the allow-list above; every other marker (`JPG`, `JPGn`, `DHP`,
@@ -362,8 +367,10 @@ stored bytes are the stripped bytes.
   The second foreign key has no cascade, so a file that a shop still uses
   cannot be deleted.
 
-- `PUT /map/places` keeps the photos. `DELETE /map/places` removes them.
-- After `PUT /map/places/photos` and after `DELETE /map/places`, the same
+- `PUT /map/places` and `PUT /admin/places` keep the photos. `DELETE
+/map/places` and `DELETE /admin/places` (by pair or by internal id) remove
+  them.
+- After `PUT /map/places/photos` and after every place delete, the same
   transaction deletes every `map_photo` row that no `map_place_photo` row of
   any shop uses any more. The same file can belong to several shops, so the
   check runs across all shops.

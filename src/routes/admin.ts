@@ -125,7 +125,7 @@ function storedIdentityError(
 }
 
 /**
- * Resolve origin, then external id, for a public-id replace.
+ * Resolve origin, then external id, for an internal-id replace.
  * A present field is normalized. A different valid value is kept. An omitted field stays stored.
  *
  * @param body - JSON object that includes `id`.

@@ -442,7 +442,7 @@ describe('admin routes', () => {
     expect(calls).toHaveLength(1);
   });
 
-  it('rejects a blank or non-string public id and does not trim it', async () => {
+  it('rejects a blank or non-string internal id and does not trim it', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
     const created = keyedStore(store).insertIfNew(pin);
     const { calls, signed } = adminWithMap(store);
@@ -554,7 +554,7 @@ describe('admin routes', () => {
     });
   });
 
-  it('does not write when the public id body fails place validation', async () => {
+  it('does not write when the internal-id body fails place validation', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
     const created = keyedStore(store).insertIfNew(pin);
     const { calls, signed } = adminWithMap(store);
@@ -584,7 +584,7 @@ describe('admin routes', () => {
     expect(store.getById(created.place.id)?.activity).toBe('none');
   });
 
-  it('replaces operator columns by public id and leaves identity and activity state', async () => {
+  it('replaces operator columns by internal id and leaves identity and activity state', async () => {
     const otherDescription =
       'Neighbourhood grocery in Zürich. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
     const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
@@ -725,7 +725,7 @@ describe('admin routes', () => {
     expect(calls).toEqual([]);
   });
 
-  it('keeps activityUntil across a public id replace', async () => {
+  it('keeps activityUntil across an internal-id replace', async () => {
     const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
     const store = new MemoryMapPlaceStore(() => new Date(nowMs));
     const created = keyedStore(store).insertIfNew({ ...pin, techProvider: '21.gifts' });
@@ -984,7 +984,7 @@ describe('admin routes', () => {
     expect(store.getById(created.place.id)?.name).toBe(pin.name);
   });
 
-  it('rejects createdAt, lastTransactionAt, and activity on PUT without a public id', async () => {
+  it('rejects createdAt, lastTransactionAt, and activity on PUT without an internal id', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
     const created = keyedStore(store).insertIfNew(pin);
     const api = build({ store, token: 'secret' });
@@ -1069,7 +1069,7 @@ describe('admin routes', () => {
     });
   });
 
-  it('deletes by public id and leaves a different row', async () => {
+  it('deletes by internal id and leaves a different row', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
     const first = keyedStore(store).insertIfNew(pin);
     const second = keyedStore(store).insertIfNew({ ...pin, externalId: 'store-2' });
@@ -1122,7 +1122,7 @@ describe('admin routes', () => {
     expect(store.listAll()).toHaveLength(1);
   });
 
-  it('does not delete when the public id origin or caller id does not match', async () => {
+  it('does not delete when the internal-id origin or caller id does not match', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
     const created = keyedStore(store).insertIfNew(pin);
     const signed = bind(build({ store }));

@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS map_place_payment_day (
 CREATE INDEX IF NOT EXISTS map_place_activity_until ON map_place(activity_until);
 -- One shop per NOSTR key (R7). Several rows without a key are allowed.
 CREATE UNIQUE INDEX IF NOT EXISTS map_place_nostr_pubkey ON map_place (nostr_pubkey);
--- Every key a pair ever stored, kept after the place is deleted (R7).
+-- Every key a pair ever stored, kept after the place is deleted (R7). An admin
+-- move by internal id points the place's own key at its new pair.
 CREATE TABLE IF NOT EXISTS map_pubkey_reservation (
   nostr_pubkey TEXT PRIMARY KEY,
   origin TEXT NOT NULL,

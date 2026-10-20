@@ -359,7 +359,7 @@ function storedPaymentDays(days: Set<string> | undefined): string[] {
 export type AdminActivityWrite =
   { kind: 'keep' } | { kind: 'set'; activity: PlaceActivity } | { kind: 'recompute' };
 
-/** One public-id replace. The id is the address and is not a column this write changes. */
+/** One internal-id replace. The id is the address and is not a column this write changes. */
 export type ReplaceByIdInput = {
   id: string;
   content: MapPlaceInput;

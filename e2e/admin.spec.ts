@@ -223,7 +223,7 @@ test('Function: adminRoutes — GET /admin/places includes caller id and payment
   expect(row.name).toBe(fremd.name);
 });
 
-test('Function: adminRoutes — PUT /admin/places replaces a pin by its public id', async ({
+test('Function: adminRoutes — PUT /admin/places replaces a pin by its internal id', async ({
   request,
 }) => {
   const row = await listedPlace(request, fremd.externalId);
@@ -256,7 +256,7 @@ test('Function: adminRoutes — PUT /admin/places with an unknown id inserts not
 }) => {
   const body = JSON.stringify({
     ...fremd,
-    id: 'missing-public-id',
+    id: 'missing-internal-id',
     name: 'Nope',
   });
   const res = await request.put('/admin/places', {
@@ -270,7 +270,7 @@ test('Function: adminRoutes — PUT /admin/places with an unknown id inserts not
 test('Function: adminRoutes — DELETE /admin/places with an unknown id deletes nothing', async ({
   request,
 }) => {
-  const body = JSON.stringify({ id: 'missing-public-id', origin: 'NOT AN ORIGIN' });
+  const body = JSON.stringify({ id: 'missing-internal-id', origin: 'NOT AN ORIGIN' });
   const res = await request.delete('/admin/places', {
     headers: signedHeaders('DELETE', PATH, Buffer.from(body)),
     data: body,
@@ -281,7 +281,7 @@ test('Function: adminRoutes — DELETE /admin/places with an unknown id deletes 
   expect(row.origin).toBe(fremd.origin);
 });
 
-test('Function: adminRoutes — DELETE /admin/places removes one pin by its public id', async ({
+test('Function: adminRoutes — DELETE /admin/places removes one pin by its internal id', async ({
   request,
 }) => {
   const created = {
@@ -327,7 +327,7 @@ test('Function: normalizeExternalId — a blank caller id on delete is rejected'
   expect(kept.id).toBe(row.id);
 });
 
-test('Function: adminRoutes — PUT /admin/places rewrites one public id and rejects a taken pair', async ({
+test('Function: adminRoutes — PUT /admin/places rewrites one internal id and rejects a taken pair', async ({
   request,
 }) => {
   const fremdBefore = await listedPlace(request, fremd.externalId);

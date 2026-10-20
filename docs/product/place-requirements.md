@@ -111,7 +111,8 @@ the public URL `https://opencryptopay.io/{npub}`. The full rules are in
   defaulted, generated or derived by the API.
 - It is unique across all shops of all sources, also over time: once stored
   for an origin and external id, it stays reserved for that pair, also after
-  the shop is deleted.
+  the shop is deleted. Only a signed admin move of the shop to another pair
+  takes its key along.
 - It is fixed once stored. A shop moves to a new key only by being deleted
   and registered again.
 - A shop already stored without a key is not served in the public list.
