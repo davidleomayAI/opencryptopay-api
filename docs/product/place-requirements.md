@@ -116,6 +116,5 @@ the public URL `https://opencryptopay.io/{npub}`. The full rules are in
 - It is fixed once stored. A shop moves to a new key only by being deleted
   and registered again.
 - A shop already stored without a key is not served in the public list.
-- A registration or update without a key is rejected once every source sends
-  keys (step 1b in shop-identity.md). Until then such a write is stored, and
-  the shop stays out of the public list.
+- A registration or update without a key is rejected with 400 (step 1b in
+  shop-identity.md).

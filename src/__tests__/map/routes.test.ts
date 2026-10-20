@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { publicFilterResponse } from '@/lib/map/filter-catalog';
 import { npubEncode } from '@/lib/map/nostr-key';
-import { normalizeMapPlace } from '@/lib/map/place';
+import { normalizeMapPlace, type MapPlaceInput } from '@/lib/map/place';
 import { MemoryMapPlaceStore } from '@/lib/map/store';
 import { createApp } from '@/server';
 import { keyFor } from './keys';
@@ -1143,22 +1143,35 @@ describe('map routes NOSTR identity and request order', () => {
     });
   }
 
-  it('stores a place without a key, answers id null and keeps it off the list', async () => {
-    const api = rawApp({ token: 'secret' });
-    const created = await send(api, 'POST', body);
-    expect(created.status).toBe(201);
-    expect(await created.json()).toMatchObject({ created: true, id: null });
-    const listed = (await (await api.request('/map/places')).json()) as { places: unknown[] };
-    expect(listed.places).toEqual([]);
+  it('rejects a place without a key with 400 and stores nothing (step 1b)', async () => {
+    const store = new MemoryMapPlaceStore();
+    const api = rawApp({ token: 'secret', store });
+    for (const method of ['POST', 'PUT'] as const) {
+      const refused = await send(api, method, body);
+      expect(refused.status).toBe(400);
+      expect(await refused.json()).toEqual({ error: 'Place NOSTR public key is required' });
+    }
+    expect(store.listAll()).toEqual([]);
   });
 
-  it('answers the npub as id and lists the place once it has a key', async () => {
-    const api = rawApp({ token: 'secret' });
-    await send(api, 'POST', body);
+  it('adds the key to a row stored before step 1a and lists it with its npub', async () => {
+    const store = new MemoryMapPlaceStore();
+    const parsed = normalizeMapPlace({ ...body, nostrPubkey: keyA });
+    if (!parsed.ok) {
+      throw new Error(parsed.error);
+    }
+    const keyless: MapPlaceInput = { ...parsed.value };
+    delete keyless.nostrPubkey;
+    store.insertIfNew(keyless);
+    const api = rawApp({ token: 'secret', store });
     const added = await send(api, 'POST', { ...body, nostrPubkey: keyA });
     expect(added.status).toBe(200);
     expect(await added.json()).toMatchObject({ created: false, id: npubA });
-    const replaced = await send(api, 'PUT', { ...body, name: 'SPAR Triesen Nord' });
+    const replaced = await send(api, 'PUT', {
+      ...body,
+      nostrPubkey: keyA,
+      name: 'SPAR Triesen Nord',
+    });
     expect(replaced.status).toBe(200);
     expect(await replaced.json()).toMatchObject({ created: false, id: npubA });
     const listed = (await (await api.request('/map/places')).json()) as {
@@ -1186,7 +1199,7 @@ describe('map routes NOSTR identity and request order', () => {
     const badKey = await send(api, 'PUT', { ...body, nostrPubkey: 'zz', revision: 1 });
     expect(badKey.status).toBe(400);
     expect(await badKey.json()).toEqual({ error: 'Place NOSTR public key is invalid' });
-    const badRevision = await send(api, 'POST', { ...body, revision: '6' });
+    const badRevision = await send(api, 'POST', { ...body, nostrPubkey: keyA, revision: '6' });
     expect(badRevision.status).toBe(400);
     expect(await badRevision.json()).toEqual({ error: 'Place revision is invalid' });
     const badDelete = await send(api, 'DELETE', {

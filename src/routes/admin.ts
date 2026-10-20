@@ -188,19 +188,25 @@ function isPlaceActivity(raw: unknown): raw is PlaceActivity {
 
 /**
  * Copy a place body for `normalizeMapPlace`.
- * Drops the internal id and the admin-only fields, then sets the resolved pair.
+ * Drops the internal id and the admin-only fields, sets the resolved pair, and
+ * fills in the stored key when the body leaves it out.
  *
  * @param body - JSON object that includes `id`.
  * @param origin - Normalized origin to store.
  * @param externalId - Normalized caller id to store.
+ * @param storedKey - The row's stored key, or null.
  * @returns The body the place validator accepts.
  */
 function adminReplaceBody(
   body: Record<string, unknown>,
   origin: string,
   externalId: string,
+  storedKey: string | null,
 ): Record<string, unknown> {
   const copy: Record<string, unknown> = { ...body };
+  if (!Object.hasOwn(copy, 'nostrPubkey') && storedKey !== null) {
+    copy['nostrPubkey'] = storedKey;
+  }
   delete copy['id'];
   delete copy['createdAt'];
   delete copy['lastTransactionAt'];
@@ -352,7 +358,7 @@ export function adminRoutes(deps: AdminRouteDeps): Hono<AdminEnv> {
       activityWrite = { kind: 'keep' };
     }
     const parsed = normalizeMapPlace(
-      adminReplaceBody(parsedId.body, identity.origin, identity.externalId),
+      adminReplaceBody(parsedId.body, identity.origin, identity.externalId, stored.nostrPubkey),
     );
     if (!parsed.ok) {
       return c.json({ error: parsed.error }, 400);
@@ -374,8 +380,8 @@ export function adminRoutes(deps: AdminRouteDeps): Hono<AdminEnv> {
     if (replaced.status === 'keyConflict') {
       return c.json({ error: replaced.error }, 409);
     }
-    const npub =
-      replaced.place.nostrPubkey === null ? null : npubEncode(replaced.place.nostrPubkey);
+    // The validator requires a key and replaceById refuses a different one, so it is the row's key.
+    const npub = npubEncode(parsed.value.nostrPubkey);
     return c.json({ created: false, id: replaced.place.id, npub, btcmap: 'skipped' }, 200);
   });
 

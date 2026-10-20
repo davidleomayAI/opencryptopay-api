@@ -34,7 +34,11 @@ export type MapPlaceInput = {
   city: string;
   country: string;
   supports: MapPlaceSupport[];
-  /** NIP-01 public key, the shop id (R7). Optional until step 1b. */
+  /**
+   * NIP-01 public key, the shop id (R7). `normalizeMapPlace` requires it
+   * (step 1b); the type stays optional because stored rows from before step 1a
+   * have none and the stores keep a stored key when a write leaves it out.
+   */
   nostrPubkey?: string;
 };
 
@@ -123,6 +127,7 @@ const DESCRIPTION_ERROR = 'Place description is invalid';
 const SUPPORT_ERROR = 'Place support is invalid';
 const TRANSACTION_TIME_ERROR = 'Place transaction time is invalid';
 const NOSTR_PUBKEY_ERROR = 'Place NOSTR public key is invalid';
+const NOSTR_PUBKEY_REQUIRED_ERROR = 'Place NOSTR public key is required';
 const REVISION_ERROR = 'Place revision is invalid';
 const FOUR_DIGIT_YEAR = /^\d{4}-/u;
 
@@ -791,9 +796,9 @@ function normalizeRevision(
 
 function normalizeNostrPubkey(
   raw: unknown,
-): { ok: true; value: string | undefined } | { ok: false; error: string } {
+): { ok: true; value: string } | { ok: false; error: string } {
   if (raw === undefined) {
-    return { ok: true, value: undefined };
+    return { ok: false, error: NOSTR_PUBKEY_REQUIRED_ERROR };
   }
   if (!isNostrPubkey(raw)) {
     return { ok: false, error: NOSTR_PUBKEY_ERROR };
@@ -802,15 +807,17 @@ function normalizeNostrPubkey(
 }
 
 /**
- * Validate a JSON body for one map pin, including the optional NOSTR key (R7)
- * and request revision (R8).
+ * Validate a JSON body for one map pin, including the required NOSTR key (R7)
+ * and the optional request revision (R8).
  *
  * @param input - Request JSON.
  * @returns The pin and its revision, or a fixed error message.
  */
 export function normalizeMapPlace(
   input: unknown,
-): { ok: true; value: MapPlaceInput; revision: number | undefined } | { ok: false; error: string } {
+):
+  | { ok: true; value: MapPlaceInput & { nostrPubkey: string }; revision: number | undefined }
+  | { ok: false; error: string } {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {
     return { ok: false, error: COORD_ERROR };
   }
@@ -928,7 +935,7 @@ export function normalizeMapPlace(
     return revision;
   }
 
-  const value: MapPlaceInput = {
+  const value: MapPlaceInput & { nostrPubkey: string } = {
     origin: origin.value,
     externalId: externalId.value,
     name: name.value,
@@ -944,12 +951,10 @@ export function normalizeMapPlace(
     city: city.value,
     country: country.value,
     supports,
+    nostrPubkey: nostrPubkey.value,
   };
   if (techProvider.value !== undefined) {
     value.techProvider = techProvider.value;
-  }
-  if (nostrPubkey.value !== undefined) {
-    value.nostrPubkey = nostrPubkey.value;
   }
   return { ok: true, value, revision: revision.value };
 }

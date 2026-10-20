@@ -1417,6 +1417,15 @@ describe('MemoryMapPlaceStore admin writes by internal id', () => {
     });
   });
 
+  it('keeps a row from before step 1a without a key when the write sends none', () => {
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const keyless = inserted(store, input);
+    expect(replace(store, keyless.id, { ...input, name: 'Still Keyless' })).toMatchObject({
+      status: 'updated',
+      place: { name: 'Still Keyless', nostrPubkey: null },
+    });
+  });
+
   it('deletes by id without a revision, keeps the reservation and drops unused photo files', () => {
     const store = new MemoryMapPlaceStore(() => new Date(nowMs));
     const place = inserted(store, { ...input, nostrPubkey: keyA }, 3);

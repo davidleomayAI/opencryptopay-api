@@ -1,8 +1,8 @@
 # Shop identity, photos and shop page
 
-Status: **steps 1a and 2 implemented** (R7 accepted, R8, `id` = npub,
-`GET /map/places/{npub}`, photos); steps 3, 1b and 4 are specified, not
-implemented in this repository. A change that builds a part of this adds its routes to
+Status: **steps 1a, 2 and 1b implemented** (R7 enforced, R8, `id` = npub,
+`GET /map/places/{npub}`, photos). Step 3 lives in the sources' repositories
+and step 4 in openCryptoPay/landingPage. A change that builds a part of this adds its routes to
 [endpoints.md](../handbook/endpoints.md), its exported functions to
 [functions.md](../handbook/functions.md) and its columns and tables to
 [map-place.sql](../schema/map-place.sql) in that same change, and documents
@@ -40,10 +40,9 @@ Every shop must state a NOSTR public key:
   point on the curve. An `npub` string, uppercase hex or any other form is
   rejected.
 - It is required. A body without it is rejected with **400** and nothing is
-  stored, as in R6. It is never defaulted, generated or derived by the API.
-  This rejection is switched on in step 1b of the order of work below, once
-  every source sends keys; step 1a already hides shops without a key and
-  stores the writes.
+  stored, as in R6 (`Place NOSTR public key is required`). It is never
+  defaulted, generated or derived by the API. Rows stored before step 1a
+  have no key; they stay out of the public list until a write adds one.
 - It is unique across all shops of all sources, also over time. Once a key
   has been stored for an `origin` + `externalId`, it stays reserved for that
   pair, also after `DELETE /map/places`. The one exception is a signed admin
@@ -107,16 +106,15 @@ Every write that stores a key that has no reservation row yet inserts one
 transaction, so each
 key a pair ever used stays reserved. The memory store keeps the same map.
 
-The column is nullable for old rows and, until step 1b, for writes without a
-key. A write without `nostrPubkey` never clears a key that is already stored:
-`PUT` replaces every other field and keeps the key, as it keeps `id` and
-`createdAt`. From step 1b on, the write path never stores a null.
+The column is nullable for rows stored before step 1a. Every source write
+carries a key (step 1b), so the write path never stores a null. A signed admin
+`PUT` by internal id may leave the key out to keep the stored one; on a row
+without a key it must send one.
 
 `origin` + `externalId` stay the source's own key for idempotent writes. Every
 public response and every new route uses the NOSTR key instead. The internal
 UUID no longer appears in any public JSON: the `id` in the answers of `POST`
-and `PUT /map/places` is the npub, or `null` for a place without a key (step
-1a only).
+and `PUT /map/places` is the npub.
 
 Only the signed admin interface still shows the internal UUID, because it
 must also reach places without a key. `GET /admin/places` returns it as `id`
@@ -526,19 +524,23 @@ The steps are named by label, in this order:
 - **Step 1a, R7 accepted and R8:** `revision` checked and stored;
   `nostrPubkey` accepted, validated, unique and fixed; shops without a key
   are not complete and leave the public list; `id` = npub;
-  `GET /map/places/{npub}` without photos. A write without the key is still
-  stored, so no source breaks while it adds keys.
+  `GET /map/places/{npub}` without photos.
 - **Step 2, photos:** photo endpoint, photo route, metadata removal,
   `coverPhoto` and `photos`.
 - **Step 3, sources,** after steps 1a and 2: 21.gifts sends its keys and
   photos; DFX.swiss creates and sends keys for SPAR.
-- **Step 1b, R7 enforced:** once every source sends keys, a write without
-  `nostrPubkey` is rejected with **400**.
+- **Step 1b, R7 enforced:** a write without `nostrPubkey` is rejected with
+  **400**.
 - **Step 4, website,** any time after step 1a: shop page, map and table
   links. Until step 2 is live the page treats missing `coverPhoto` and
   `photos` as no photos.
 
-Steps 1a and 2 land together in one pull request, and step 1b in its own;
+Steps 1a, 2 and 1b land together in one pull request. Because the API before
+it rejects `nostrPubkey` as an unknown field, the sources can only send keys
+once it is live, and with step 1b it refuses their writes without a key: deploy
+it together with the step-3 changes of both sources (the 21.gifts outbox
+retries its writes; the SPAR import is run again), so that the gap between the
+deploys stays short;
 each comes with handbook entries, e2e tests and the 100% coverage gate, as in
 [CONTRIBUTING.md](../../CONTRIBUTING.md).
 

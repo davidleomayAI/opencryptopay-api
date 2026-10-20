@@ -156,16 +156,17 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
 - **Target:** every shop has a NOSTR public key that is valid, unique over
   all sources and over time, fixed once stored, and its id everywhere; a
   write without one is rejected.
-- **Code:** accepted, not enforced (step 1a of
-  [shop-identity.md](shop-identity.md)). `POST` and `PUT /map/places` accept
-  and validate `nostrPubkey`, reserve it for its origin and external id, and
-  refuse a changed key or a key of another shop with 409. A row without a key
-  is not complete, so it stays out of `GET /map/places`, `GET /map/places/{npub}`
-  and the countries of `GET /map/filters`. A write without a key is still
-  stored; step 1b rejects it with 400.
+- **Code:** met (steps 1a and 1b of [shop-identity.md](shop-identity.md)).
+  `POST` and `PUT /map/places` require and validate `nostrPubkey` (400 without
+  it), reserve it for its origin and external id, and refuse a changed key or
+  a key of another shop with 409. A row stored before step 1a has no key, is
+  not complete, and stays out of `GET /map/places`, `GET /map/places/{npub}`
+  and the countries of `GET /map/filters` until a write adds one.
 - **Data:** the column is new, so no stored shop has a key yet, and none is
   public until its source sends one.
-- **Sources:** neither sends a key yet (step 3 of shop-identity.md).
+- **Sources:** both send keys with step 3 of shop-identity.md, which ships
+  together with this API change; until a source's next write a shop has no
+  key and is not public.
 
 ## What closes the gap
 

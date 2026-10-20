@@ -14,6 +14,8 @@ import type { StoredMapPlace } from '@/lib/map/place';
 const DESCRIPTION =
   'SPAR supermarket in Triesen. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
 
+const KEY = '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d';
+
 const valid = {
   origin: 'dfx',
   externalId: 'store-1',
@@ -29,6 +31,7 @@ const valid = {
   postalCode: '9495',
   city: 'Triesen',
   country: 'LI',
+  nostrPubkey: KEY,
 };
 
 describe('normalizePlaceOrigin', () => {
@@ -1257,8 +1260,6 @@ describe('toPublicMapPlace', () => {
   });
 });
 
-const KEY = '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d';
-
 describe('normalizeMapPlace NOSTR key and revision', () => {
   it('stores a valid key and returns the revision next to the pin', () => {
     const parsed = normalizeMapPlace({ ...valid, nostrPubkey: KEY, revision: 7 });
@@ -1269,13 +1270,16 @@ describe('normalizeMapPlace NOSTR key and revision', () => {
     }
   });
 
-  it('leaves the key and the revision unset when they are omitted', () => {
+  it('requires the key and leaves the revision unset when it is omitted', () => {
+    const withoutKey: Record<string, unknown> = { ...valid };
+    delete withoutKey['nostrPubkey'];
+    expect(normalizeMapPlace(withoutKey)).toEqual({
+      ok: false,
+      error: 'Place NOSTR public key is required',
+    });
     const parsed = normalizeMapPlace(valid);
-    expect(parsed.ok).toBe(true);
-    if (parsed.ok) {
-      expect('nostrPubkey' in parsed.value).toBe(false);
-      expect(parsed.revision).toBeUndefined();
-    }
+    expect(parsed.ok && parsed.value.nostrPubkey).toBe(KEY);
+    expect(parsed.ok && parsed.revision).toBeUndefined();
   });
 
   it('rejects a key that is not 64 lowercase hex characters on the curve', () => {

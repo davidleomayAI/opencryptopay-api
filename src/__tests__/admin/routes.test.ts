@@ -38,7 +38,7 @@ const pin: MapPlaceInput = {
   supports: [],
 };
 
-const fremd: MapPlaceInput = { ...pin, origin: 'fremd', externalId: 'shop-9' };
+const fremd: MapPlaceInput = withKey({ ...pin, origin: 'fremd', externalId: 'shop-9' });
 
 class MissingOnReplace extends MemoryMapPlaceStore {
   override replaceById(_input: ReplaceByIdInput): { status: 'missing' } {
@@ -1196,13 +1196,9 @@ describe('admin routes', () => {
       '/admin/places',
       jsonBytes({ ...pin, id: keyless.place.id, name: 'Still Keyless' }),
     );
-    expect(await stillKeyless.json()).toEqual({
-      created: false,
-      id: keyless.place.id,
-      npub: null,
-      btcmap: 'skipped',
-    });
-    expect(store.getById(keyless.place.id)?.nostrPubkey).toBeNull();
+    expect(stillKeyless.status).toBe(400);
+    expect(await stillKeyless.json()).toEqual({ error: 'Place NOSTR public key is required' });
+    expect(store.getById(keyless.place.id)?.name).toBe(pin.name);
     const reserved = await signed(
       'PUT',
       '/admin/places',

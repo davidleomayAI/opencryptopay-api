@@ -968,7 +968,7 @@ test('Function: SqliteMapPlaceStore — old schema hides incomplete rows; listAl
   expect(stdout.trim()).toBe('ok');
 });
 
-test('Function: isNostrPubkey — an invalid key is 400 and a shop without a key stays off the list', async ({
+test('Function: isNostrPubkey — an invalid key is 400 and a shop without a key is 400 (step 1b)', async ({
   request,
 }) => {
   const invalid = await request.post('/map/places', {
@@ -981,8 +981,8 @@ test('Function: isNostrPubkey — an invalid key is 400 and a shop without a key
     headers: ingest,
     data: keylessPlace({ externalId: 'e2e-keyless', name: 'Keyless SPAR' }),
   });
-  expect(keyless.status()).toBe(201);
-  expect(await keyless.json()).toMatchObject({ created: true, id: null });
+  expect(keyless.status()).toBe(400);
+  expect(await keyless.json()).toEqual({ error: 'Place NOSTR public key is required' });
   const listed = (await (await request.get('/map/places')).json()) as {
     places: Array<{ name: string }>;
   };
@@ -994,16 +994,12 @@ test('Function: npubEncode — the answer id is the npub and GET /map/places/:id
 }) => {
   const key = keyFor('e2e-identity');
   const npub = npubEncode(key);
-  await request.post('/map/places', {
-    headers: ingest,
-    data: keylessPlace({ externalId: 'e2e-identity', name: 'Identity SPAR' }),
-  });
   const added = await request.post('/map/places', {
     headers: ingest,
     data: completePlace({ externalId: 'e2e-identity', name: 'Identity SPAR', nostrPubkey: key }),
   });
-  expect(added.status()).toBe(200);
-  expect(await added.json()).toMatchObject({ created: false, id: npub });
+  expect(added.status()).toBe(201);
+  expect(await added.json()).toMatchObject({ created: true, id: npub });
   const detail = await request.get(`/map/places/${npub}`);
   expect(detail.status()).toBe(200);
   expect(detail.headers()['cache-control']).toBe('public, max-age=60');

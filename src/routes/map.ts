@@ -89,7 +89,7 @@ export async function putPlace(
 ): Promise<
   | { status: 400; body: { error: string } }
   | { status: 409; body: { error: MapPlaceWriteError } }
-  | { status: 200 | 201; body: { created: boolean; id: string | null; btcmap: MapPushResult } }
+  | { status: 200 | 201; body: { created: boolean; id: string; btcmap: MapPushResult } }
 > {
   const parsed = normalizeMapPlace(raw);
   if (!parsed.ok) {
@@ -104,7 +104,8 @@ export async function putPlace(
   if (created) {
     btcmap = await pushMapPlace(place, deps.env, deps.fetchImpl);
   }
-  const id = place.nostrPubkey === null ? null : npubEncode(place.nostrPubkey);
+  // A write carries a key (step 1b) and the store refuses a different one, so it is the row's key.
+  const id = npubEncode(parsed.value.nostrPubkey);
   return { status: created ? 201 : 200, body: { created, id, btcmap } };
 }
 
@@ -256,7 +257,7 @@ export function mapRoutes(deps: MapRouteDeps): Hono {
     if (created) {
       btcmap = await pushMapPlace(place, deps.env, deps.fetchImpl);
     }
-    const id = place.nostrPubkey === null ? null : npubEncode(place.nostrPubkey);
+    const id = npubEncode(parsed.value.nostrPubkey);
     return c.json({ created, id, btcmap }, created ? 201 : 200);
   });
 
