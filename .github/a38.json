@@ -1,0 +1,63 @@
+{
+  "schema": "a38/v1",
+  "standard": "A38",
+  "documentation": "docs/a38.md",
+  "mode": "enforce",
+  "jobs": [
+    {
+      "id": "check",
+      "name": "Typecheck, Lint, Handbook, E2E-check, Test (100% coverage), Build, E2E",
+      "timeout_s": 900,
+      "workflow": ".github/workflows/ci.yaml",
+      "job": "check",
+      "executor": {
+        "adapter": "commands",
+        "config": {
+          "env": {
+            "CI": "1",
+            "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "1"
+          },
+          "steps": [
+            ["bun", "install", "--frozen-lockfile"],
+            ["bun", "run", "typecheck"],
+            ["bun", "run", "lint"],
+            ["bun", "run", "handbook:check"],
+            ["bun", "run", "e2e:check"],
+            ["bun", "run", "test:coverage"],
+            ["bun", "run", "test:schema"],
+            ["node", "--test", "scripts/db-change-notice.test.mjs"],
+            ["bun", "run", "build"],
+            ["bun", "run", "e2e"]
+          ]
+        }
+      }
+    }
+  ],
+  "exclusions": [
+    {
+      "workflow": ".github/workflows/db-change-notice.yaml",
+      "job": "notice",
+      "reason": "This job reads the pull request description and file list through the GitHub API and decides with the base-branch copy of scripts/db-change-notice.mjs. It is a pull-request text gate, not an author-measured test. The script tests run in ci.yaml."
+    },
+    {
+      "workflow": ".github/workflows/publish-dev.yaml",
+      "job": "publish",
+      "reason": "This job builds and pushes the beta container image with registry credentials. It is a publish path, not an author-measured test."
+    },
+    {
+      "workflow": ".github/workflows/publish-prd.yaml",
+      "job": "publish",
+      "reason": "This job builds and pushes the production container image with registry credentials. It is a publish path, not an author-measured test."
+    },
+    {
+      "workflow": ".github/workflows/auto-release-pr.yaml",
+      "job": "create-release-pr",
+      "reason": "This job opens the develop to main release pull request. It is housekeeping and performs no author-measured test."
+    },
+    {
+      "workflow": ".github/workflows/a38-guard.yml",
+      "job": "guard",
+      "reason": "This job is the A38 guard itself. It audits the author report on the trusted base and is not part of the measured suite."
+    }
+  ]
+}
