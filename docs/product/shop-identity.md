@@ -7,12 +7,14 @@ and step 4 in openCryptoPay/landingPage. A change that builds a part of this add
 [functions.md](../handbook/functions.md) and its columns and tables to
 [map-place.sql](../schema/map-place.sql) in that same change, and documents
 any new environment variable in the README. R7 is in
-[place-requirements.md](place-requirements.md) and recorded as met in
-[place-requirements-gap.md](place-requirements-gap.md).
+[place-requirements.md](place-requirements.md).
+[place-requirements-gap.md](place-requirements-gap.md) records it as met with
+#26 only in the code column; production, data and sources do not meet it yet.
 
 Every shop is registered with a NOSTR public key. That key is the shop's
-identifier everywhere: in the API, in the public page
-`https://opencryptopay.io/{npub}`, and in every new route. The
+public identifier: in every public API answer, in the public page
+`https://opencryptopay.io/{npub}`, and in every new route. Only the signed
+admin interface keeps the internal id (see Storage). The
 page shows everything the API knows about the shop, including its photos. The
 API stores the photos and serves them.
 
@@ -76,8 +78,8 @@ Every shop must state a NOSTR public key:
   PR #22 (R2 to R5), whether the key arrives with a `PUT` or, as described
   above, with a `POST`.
 
-The npub is not stored. It is `nip19.npubEncode(nostrPubkey)` wherever it is
-shown.
+The npub is not stored. It is `npubEncode(nostrPubkey)`
+(`src/lib/map/nostr-key.ts`) wherever it is shown.
 
 ### Storage
 
@@ -123,10 +125,12 @@ admin corrections outside the source's write order. They reject an npub as
 Such a `PUT` may move a place to another `origin` and `externalId`. The key is
 the one field it cannot change: it keeps a stored key, and it stores a sent
 key on a place without one under the same R7 rules as a source write, checked
-against the new pair. The key's reservation moves with the place to the new
-pair. A pair that already has another place is refused (`409 Place already
-exists`). After such a move, or a `DELETE` by `id`, the old pair keeps its
-revision and every other key it reserved, as after a source delete.
+against the new pair. A pair that already has another place is refused (`409
+Place already exists`). On such a move the place's own key moves with it: its
+reservation now names the new pair, while the old pair keeps its revision and
+every other key it reserved. A `DELETE` by `id` moves nothing: the place's own
+key stays reserved for the old pair, which also keeps its revision, as after a
+source delete.
 
 ## R8 Request order
 
@@ -177,8 +181,7 @@ carry a revision:
   their stated order. `POST /map/places/transactions` carries no revision
   and is not affected.
 - `revision` is added to `ALLOWED_PLACE_KEYS` and to the allowed keys of the
-  photo route. `DELETE /map/places` today ignores unknown keys; from step 1a
-  it accepts exactly `origin`, `externalId` and `revision` and answers
+  photo route. `DELETE /map/places` accepts exactly `origin`, `externalId` and `revision` and answers
   **400** to any other key, like `POST`, `PUT /map/places` and the photo
   route. This check belongs to the `DELETE` route only:
   `POST /map/places/transactions` reads its key through the same
@@ -247,7 +250,9 @@ uploads, so the header rules here are stricter:
   so is the stored file after metadata removal (a written-back orientation
   can add a few bytes).
 - The file type is read from the magic bytes and must equal `contentType`.
-- The markers or chunks must walk cleanly: a JPEG to its `EOI`, a PNG to
+- The markers or chunks must walk cleanly: a JPEG to its `EOI`, with
+  `SOI` only at the start and at least one `SOS` whose entropy-coded data
+  ends at a marker, a PNG to
   its `IEND` with at least one `IDAT` before it, with no segment or chunk
   length past the end of the file. For a
   WebP, 8 plus the RIFF size must not exceed the file length, and its chunks
@@ -521,30 +526,30 @@ shared link shows the shop's name and photo.
 
 ## Order of work
 
-The steps are named by label, in this order:
+The steps are named by label. Steps 1a, 2 and 1b land together in one pull
+request (#26); step 3 is deployed with it in the sources, and step 4 follows
+on the website:
 
 - **Step 1a, R7 accepted and R8:** `revision` checked and stored;
   `nostrPubkey` accepted, validated, unique and fixed; shops without a key
   are not complete and leave the public list; `id` = npub;
-  `GET /map/places/{npub}` without photos.
+  `GET /map/places/{npub}`.
 - **Step 2, photos:** photo endpoint, photo route, metadata removal,
   `coverPhoto` and `photos`.
-- **Step 3, sources,** after steps 1a and 2: 21.gifts sends its keys and
-  photos; DFX.swiss creates and sends keys for SPAR.
 - **Step 1b, R7 enforced:** a `POST` or `PUT /map/places` without
   `nostrPubkey` is rejected with **400**. A signed admin `PUT` by internal id
   may leave it out and keeps the stored key; it gets **400** only when the row
   has no stored key.
-- **Step 4, website,** any time after step 1a: shop page, map and table
-  links. Until step 2 is live the page treats missing `coverPhoto` and
-  `photos` as no photos.
+- **Step 3, sources,** deployed together with #26: 21.gifts sends its keys
+  and photos; DFX.swiss creates and sends keys for SPAR.
+- **Step 4, website,** any time after #26 is live: shop page, map and table
+  links.
 
-Steps 1a, 2 and 1b land together in one pull request. Because the API before
-it rejects `nostrPubkey` as an unknown field, the sources can only send keys
-once it is live, and with step 1b it refuses their writes without a key: deploy
-it together with the step-3 changes of both sources (the 21.gifts outbox
-retries its writes; the SPAR import is run again), so that the gap between the
-deploys stays short. The pull request comes with handbook entries, e2e tests
+Because the API before #26 rejects `nostrPubkey` as an unknown field, the
+sources can only send keys once it is live, and with step 1b it refuses their
+writes without a key: deploy it together with the step-3 changes of both
+sources (the 21.gifts outbox retries its writes; the SPAR import is run
+again), so that the gap between the deploys stays short. The pull request comes with handbook entries, e2e tests
 and the 100% coverage gate, as in [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ## Not part of this

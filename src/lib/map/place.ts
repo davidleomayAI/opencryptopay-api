@@ -1231,8 +1231,8 @@ export function publicPhoto(photo: StoredPlacePhoto, baseUrl: string): PublicPho
 }
 
 /**
- * Drop fields that only the ingest caller needs. The id is the shop's npub; the
- * internal UUID is not returned by this mapper or by public map responses.
+ * Drop fields that only the ingest caller needs. The id is the shop's npub, or null without a
+ * key; the internal UUID is not returned by this mapper or by public map responses.
  *
  * @param place - Stored pin.
  * @param baseUrl - `OCP_PUBLIC_BASE_URL`, the origin of every photo URL.

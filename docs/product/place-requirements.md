@@ -102,8 +102,9 @@ and 21.gifts. The same rules apply to both, and to any later source.
 
 ## R7 NOSTR identity
 
-Every shop must state a NOSTR public key, which is its id everywhere, also in
-the public URL `https://opencryptopay.io/{npub}`. The full rules are in
+Every shop must state a NOSTR public key, which is its public id in every
+public answer and in the public URL `https://opencryptopay.io/{npub}`. Only
+the signed admin interface keeps the internal id. The full rules are in
 [shop-identity.md](shop-identity.md).
 
 - The key is the x-only secp256k1 public key from NIP-01, sent as 64

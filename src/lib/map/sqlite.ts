@@ -377,8 +377,10 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Insert when the pair is new, otherwise replace every field of the stored pin.
-   * A stored key is kept; a row without a key stores the key this write carries.
+   * Insert when the pair is new, otherwise replace the pin's content (name, description,
+   * position, category, payment methods, tech provider, shop type, address, supports).
+   * The id, photos, timestamps and activity stay, and the stored revision changes only when
+   * one is sent. A stored key is kept; a row without a key stores the key this write carries.
    *
    * @param input - Validated pin.
    * @param revision - Request revision (R8), when sent.
@@ -579,7 +581,8 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Replace every stored fact of one internal id except the id and a stored key.
+   * Replace every stored fact of one internal id except the id, a stored key, the photos and
+   * the pair's revision.
    * Runs in one transaction. A missing id writes nothing.
    * Another row with this origin and caller id writes nothing.
    * A key follows R7 against the new pair, and the row's key reservation moves
@@ -588,7 +591,8 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
    * `activity_until` is updated here even though it is not in `MAP_PLACE_COLUMNS`.
    *
    * @param input - Id, validated pin, timestamps, activity write, and clock.
-   * @returns The stored row when updated, otherwise missing or conflict.
+   * @returns The stored row when updated, otherwise missing, conflict, or
+   * `{ status: 'keyConflict', error }` with the R7 409 text.
    */
   replaceById(input: ReplaceByIdInput): ReplaceByIdResult {
     const techProvider = input.content.techProvider ?? 'DFX.swiss';

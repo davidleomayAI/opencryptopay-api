@@ -51,7 +51,7 @@
 
 ## Endpoint: DELETE /map/places
 
-- **Purpose:** Remove one map pin by origin and external id, with its photos; a photo file no other shop uses is deleted. A missing pair returns `{ deleted: false }` with status 200; its revision is stored too. The pair's key reservations and stored revision stay after the delete, so a late older request cannot bring the shop back and its keys cannot move to another shop. This call does not contact BTC Map.
+- **Purpose:** Remove one map pin by origin and external id, with its photos; a photo file no other shop uses is deleted. A missing pair returns `{ deleted: false }` with status 200; a revision sent for it is stored too. The pair's key reservations and stored revision stay after the delete, so a late older request cannot bring the shop back and its keys cannot move to another shop. This call does not contact BTC Map.
 - **Errors:** 503 `{ error: "Place ingest is not configured" }` when the ingest token is unset or blank. 401 `{ error: "Unauthorized" }` when the bearer does not match. 400 with the validator message for a bad body, including `Place field is not allowed: <key>` for any key other than `origin`, `externalId`, and `revision` (`id` included), and `Place revision is invalid`. 409 `{ error: "Stale revision" }` when a revision is stored for the pair and the body sends none or one that is not higher.
 - **Used by:** Trusted callers that take a shop off the public map.
 - **Auth:** `Authorization: Bearer` must equal `OCP_PLACE_INGEST_TOKEN`. The JSON body is exactly `origin`, `externalId`, and an optional `revision`.

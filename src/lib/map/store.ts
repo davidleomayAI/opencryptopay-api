@@ -449,8 +449,10 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Insert when the pair is new, otherwise replace every field of the stored pin.
-   * A stored key is kept; a row without a key stores the key this write carries.
+   * Insert when the pair is new, otherwise replace the pin's content (name, description,
+   * position, category, payment methods, tech provider, shop type, address, supports).
+   * The id, photos, timestamps and activity stay, and the stored revision changes only when
+   * one is sent. A stored key is kept; a row without a key stores the key this write carries.
    *
    * @param input - Validated pin.
    * @param revision - Request revision (R8), when sent.
@@ -520,7 +522,8 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Replace every stored fact of one internal id except the id and a stored key.
+   * Replace every stored fact of one internal id except the id, a stored key, the photos and
+   * the pair's revision.
    * A missing id writes nothing. Another row with this origin and caller id writes nothing.
    * A key follows R7 as in a source write, checked against the new pair: a row
    * without a key stores the sent one unless it is reserved for another pair, and
@@ -531,7 +534,8 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
    * `recompute` leaves payment days and classifies from the written instant.
    *
    * @param input - Id, validated pin, timestamps, activity write, and clock.
-   * @returns A copy when updated, otherwise missing or conflict.
+   * @returns A copy when updated, otherwise missing, conflict, or `{ status: 'keyConflict', error }`
+   * with the R7 409 text.
    */
   replaceById(input: ReplaceByIdInput): ReplaceByIdResult {
     const existing = this.#rows.find((row) => row.id === input.id);

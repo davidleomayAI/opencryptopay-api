@@ -316,6 +316,23 @@ describe('stripPhotoMetadata JPEG', () => {
       expect(strip('image/jpeg', bytes)).toEqual({ ok: false, error: 'unreadable' });
     }
   });
+
+  it('rejects a JPEG without a scan', () => {
+    expect(strip('image/jpeg', jpeg([DQT, sof(2, 1)]))).toEqual({
+      ok: false,
+      error: 'unreadable',
+    });
+  });
+
+  it('rejects a second SOI instead of reading it as a segment', () => {
+    // Read as a segment of length 4, the second SOI would have swallowed the two bytes after it.
+    for (const bytes of [
+      jpeg([DQT, sof(2, 1), new Uint8Array([0xff, 0xd8, 0x00, 0x04, 0x00, 0x00]), scan()]),
+      jpeg([new Uint8Array([0xff, 0xd8]), DQT, sof(2, 1), scan()]),
+    ]) {
+      expect(strip('image/jpeg', bytes)).toEqual({ ok: false, error: 'unreadable' });
+    }
+  });
 });
 
 describe('stripPhotoMetadata PNG', () => {
