@@ -3,10 +3,11 @@ import type { Hono } from 'hono';
 import { describe, expect, it } from 'vitest';
 import type { AdminPublicKey } from '@/lib/admin/keys';
 import { signAdminRequest } from '@/lib/admin/signature';
+import { npubEncode } from '@/lib/map/nostr-key';
 import type { MapPlaceInput } from '@/lib/map/place';
 import { MemoryMapPlaceStore, type ReplaceByIdInput } from '@/lib/map/store';
 import { createApp } from '@/server';
-import { withKey } from '../map/keys';
+import { keyFor, keyedStore, withKey } from '../map/keys';
 
 const DESCRIPTION =
   'SPAR supermarket in Triesen. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
@@ -271,8 +272,14 @@ describe('admin routes', () => {
 
   it('lists complete and incomplete places', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
-    store.insertIfNew(withKey(pin));
+    const first = store.insertIfNew(withKey(pin));
     store.insertIfNew(withKey({ ...pin, externalId: 'blank', name: '' }));
+    store.insertIfNew(
+      withKey({ ...pin, externalId: 'cash', paymentMethods: null, name: 'Cash Shop' }),
+    );
+    if (!first.ok) {
+      throw new Error(first.error);
+    }
     const response = await bind(build({ store }))('GET', '/admin/places');
     expect(response.status).toBe(200);
     const listed = (await response.json()) as {
@@ -294,6 +301,9 @@ describe('admin routes', () => {
       paymentMethods: 'lightning',
       createdAt: new Date(NOW_MS).toISOString(),
       lastTransactionAt: null,
+      id: first.place.id,
+      npub: npubEncode(first.place.nostrPubkey ?? ''),
+      coverPhoto: null,
     });
     if (complete === undefined) {
       throw new Error('missing complete place');
@@ -305,6 +315,7 @@ describe('admin routes', () => {
         'city',
         'complete',
         'country',
+        'coverPhoto',
         'createdAt',
         'description',
         'externalId',
@@ -314,6 +325,7 @@ describe('admin routes', () => {
         'lat',
         'lon',
         'name',
+        'npub',
         'origin',
         'paymentMethods',
         'postalCode',
@@ -401,13 +413,15 @@ describe('admin routes', () => {
       now: () => NOW_MS,
       adminKeys: [desk],
       adminHost: ADMIN_HOST,
+      publicBaseUrl: 'https://api.test',
     });
     return { calls, signed: bind(api) };
   }
 
   it('upserts and may create when the body has no id', async () => {
     const { calls, signed } = adminWithMap(new MemoryMapPlaceStore(() => new Date(NOW_MS)));
-    const created = await signed('PUT', '/admin/places', jsonBytes(fremd));
+    const keyed = withKey(fremd);
+    const created = await signed('PUT', '/admin/places', jsonBytes(keyed));
     expect(created.status).toBe(201);
     const createdBody = (await created.json()) as { created: boolean; id: string; btcmap: string };
     expect(createdBody.created).toBe(true);
@@ -417,7 +431,7 @@ describe('admin routes', () => {
     const updated = await signed(
       'PUT',
       '/admin/places',
-      jsonBytes({ ...fremd, name: 'Filiale Nord' }),
+      jsonBytes({ ...keyed, name: 'Filiale Nord' }),
     );
     expect(updated.status).toBe(200);
     expect(await updated.json()).toEqual({
@@ -430,7 +444,7 @@ describe('admin routes', () => {
 
   it('rejects a blank or non-string public id and does not trim it', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
-    const created = store.insertIfNew(pin);
+    const created = keyedStore(store).insertIfNew(pin);
     const { calls, signed } = adminWithMap(store);
     for (const id of ['', '   ', null, 1, false, [], {}]) {
       const response = await signed(
@@ -454,7 +468,7 @@ describe('admin routes', () => {
 
   it('returns 404 for an unknown id and does not insert or call BTC Map', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
-    const created = store.insertIfNew(pin);
+    const created = keyedStore(store).insertIfNew(pin);
     const { calls, signed } = adminWithMap(store);
     const missing = await signed(
       'PUT',
@@ -484,7 +498,7 @@ describe('admin routes', () => {
 
   it('rejects an invalid origin or caller id and moves a free pair onto the same id', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
-    const created = store.insertIfNew(pin);
+    const created = keyedStore(store).insertIfNew(pin);
     const { calls, signed } = adminWithMap(store);
     const cases: Array<{ body: Record<string, unknown>; error: string }> = [
       {
@@ -521,6 +535,7 @@ describe('admin routes', () => {
     expect(await moved.json()).toEqual({
       created: false,
       id: created.place.id,
+      npub: expect.stringMatching(/^npub1/),
       btcmap: 'skipped',
     });
     expect(calls).toEqual([]);
@@ -541,7 +556,7 @@ describe('admin routes', () => {
 
   it('does not write when the public id body fails place validation', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
-    const created = store.insertIfNew(pin);
+    const created = keyedStore(store).insertIfNew(pin);
     const { calls, signed } = adminWithMap(store);
     const badLat = await signed(
       'PUT',
@@ -574,12 +589,16 @@ describe('admin routes', () => {
       'Neighbourhood grocery in Zürich. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
     const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
     const store = new MemoryMapPlaceStore(() => new Date(nowMs));
-    const created = store.insertIfNew({
+    const created = keyedStore(store).insertIfNew({
       ...pin,
       techProvider: '21.gifts',
       supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
     });
-    const other = store.insertIfNew({ ...pin, externalId: 'store-2', name: 'Second Shop' });
+    const other = keyedStore(store).insertIfNew({
+      ...pin,
+      externalId: 'store-2',
+      name: 'Second Shop',
+    });
     const day = (value: string): string => `${value}T12:00:00.000Z`;
     store.recordTransaction('dfx', 'store-1', day('2026-10-05'), nowMs);
     store.recordTransaction('dfx', 'store-1', day('2026-10-06'), nowMs);
@@ -617,6 +636,7 @@ describe('admin routes', () => {
     expect(await replaced.json()).toEqual({
       created: false,
       id: before.id,
+      npub: expect.stringMatching(/^npub1/),
       btcmap: 'skipped',
     });
     expect(calls).toEqual([]);
@@ -683,6 +703,7 @@ describe('admin routes', () => {
     expect(await cleared.json()).toEqual({
       created: false,
       id: before.id,
+      npub: expect.stringMatching(/^npub1/),
       btcmap: 'skipped',
     });
     expect(store.getById(before.id)).toMatchObject({
@@ -707,7 +728,7 @@ describe('admin routes', () => {
   it('keeps activityUntil across a public id replace', async () => {
     const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
     const store = new MemoryMapPlaceStore(() => new Date(nowMs));
-    const created = store.insertIfNew({ ...pin, techProvider: '21.gifts' });
+    const created = keyedStore(store).insertIfNew({ ...pin, techProvider: '21.gifts' });
     const last = '2026-10-08T12:00:00.000Z';
     store.recordTransaction(pin.origin, pin.externalId, last, nowMs);
     const until = Date.parse(last) + 7 * 24 * 60 * 60 * 1000 + 1;
@@ -721,6 +742,7 @@ describe('admin routes', () => {
     expect(await replaced.json()).toEqual({
       created: false,
       id: created.place.id,
+      npub: expect.stringMatching(/^npub1/),
       btcmap: 'skipped',
     });
     expect(calls).toEqual([]);
@@ -742,7 +764,7 @@ describe('admin routes', () => {
 
   it('rejects an invalid createdAt and writes nothing', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
-    const created = store.insertIfNew(pin);
+    const created = keyedStore(store).insertIfNew(pin);
     const { calls, signed } = adminWithMap(store);
     const cases: unknown[] = [null, 1, '', '   ', 'not-a-date', '-000001-01-01T00:00:00.000Z'];
     for (const createdAt of cases) {
@@ -771,7 +793,7 @@ describe('admin routes', () => {
 
   it('rejects an invalid lastTransactionAt and writes an older instant', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
-    const created = store.insertIfNew(pin);
+    const created = keyedStore(store).insertIfNew(pin);
     const recent = new Date(NOW_MS).toISOString();
     store.recordTransaction(pin.origin, pin.externalId, recent, NOW_MS);
     const { calls, signed } = adminWithMap(store);
@@ -803,6 +825,7 @@ describe('admin routes', () => {
     expect(await written.json()).toEqual({
       created: false,
       id: created.place.id,
+      npub: expect.stringMatching(/^npub1/),
       btcmap: 'skipped',
     });
     expect(calls).toEqual([]);
@@ -816,7 +839,7 @@ describe('admin routes', () => {
 
   it('clears lastTransactionAt when the JSON value is null and recomputes activity', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
-    const created = store.insertIfNew(pin);
+    const created = keyedStore(store).insertIfNew(pin);
     const recent = new Date(NOW_MS).toISOString();
     store.recordTransaction(pin.origin, pin.externalId, recent, NOW_MS);
     expect(store.getById(created.place.id)?.activity).toBe('within7Days');
@@ -830,6 +853,7 @@ describe('admin routes', () => {
     expect(await response.json()).toEqual({
       created: false,
       id: created.place.id,
+      npub: expect.stringMatching(/^npub1/),
       btcmap: 'skipped',
     });
     expect(calls).toEqual([]);
@@ -845,7 +869,7 @@ describe('admin routes', () => {
 
   it('rejects an activity token that is not exact and writes nothing', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
-    const created = store.insertIfNew(pin);
+    const created = keyedStore(store).insertIfNew(pin);
     const { calls, signed } = adminWithMap(store);
     for (const activity of [' daily', 'daily ', 'Daily', 'none ', '', 'nope', null, 1, true]) {
       const response = await signed(
@@ -872,7 +896,7 @@ describe('admin routes', () => {
 
   it('stores an exact activity token, keeps it across refresh, and leaves payment days', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
-    const created = store.insertIfNew(pin);
+    const created = keyedStore(store).insertIfNew(pin);
     const day = (value: string): string => `${value}T12:00:00.000Z`;
     store.recordTransaction(pin.origin, pin.externalId, day('2023-11-11'), NOW_MS);
     store.recordTransaction(pin.origin, pin.externalId, day('2023-11-12'), NOW_MS);
@@ -889,6 +913,7 @@ describe('admin routes', () => {
     expect(await set.json()).toEqual({
       created: false,
       id: created.place.id,
+      npub: expect.stringMatching(/^npub1/),
       btcmap: 'skipped',
     });
     expect(store.getById(created.place.id)?.activity).toBe('none');
@@ -914,8 +939,8 @@ describe('admin routes', () => {
 
   it('returns 409 when the origin and caller id belong to another row', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
-    const first = store.insertIfNew(pin);
-    const second = store.insertIfNew({
+    const first = keyedStore(store).insertIfNew(pin);
+    const second = keyedStore(store).insertIfNew({
       ...pin,
       origin: 'fremd',
       externalId: 'store-2',
@@ -945,7 +970,7 @@ describe('admin routes', () => {
 
   it('returns 404 when replaceById reports the id missing and writes nothing', async () => {
     const store = new MissingOnReplace(() => new Date(NOW_MS));
-    const created = store.insertIfNew(pin);
+    const created = keyedStore(store).insertIfNew(pin);
     const { calls, signed } = adminWithMap(store);
     const response = await signed(
       'PUT',
@@ -961,7 +986,7 @@ describe('admin routes', () => {
 
   it('rejects createdAt, lastTransactionAt, and activity on PUT without a public id', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
-    const created = store.insertIfNew(pin);
+    const created = keyedStore(store).insertIfNew(pin);
     const api = build({ store, token: 'secret' });
     const signed = bind(api);
     const fields = [
@@ -998,7 +1023,7 @@ describe('admin routes', () => {
 
   it('keeps the stored origin and caller id when they are omitted or match', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
-    const created = store.insertIfNew(pin);
+    const created = keyedStore(store).insertIfNew(pin);
     const signed = bind(build({ store }));
     const base = {
       name: 'Origin Kept',
@@ -1023,6 +1048,7 @@ describe('admin routes', () => {
     expect(await withOrigin.json()).toEqual({
       created: false,
       id: created.place.id,
+      npub: expect.stringMatching(/^npub1/),
       btcmap: 'skipped',
     });
     expect(store.getById(created.place.id)).toMatchObject({
@@ -1045,8 +1071,8 @@ describe('admin routes', () => {
 
   it('deletes by public id and leaves a different row', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
-    const first = store.insertIfNew(pin);
-    const second = store.insertIfNew({ ...pin, externalId: 'store-2' });
+    const first = keyedStore(store).insertIfNew(pin);
+    const second = keyedStore(store).insertIfNew({ ...pin, externalId: 'store-2' });
     const signed = bind(build({ store }));
     const removed = await signed(
       'DELETE',
@@ -1069,7 +1095,7 @@ describe('admin routes', () => {
 
   it('does not delete an unknown id, even when origin is present', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
-    const created = store.insertIfNew(pin);
+    const created = keyedStore(store).insertIfNew(pin);
     const signed = bind(build({ store }));
     const wrongId = await signed(
       'DELETE',
@@ -1098,7 +1124,7 @@ describe('admin routes', () => {
 
   it('does not delete when the public id origin or caller id does not match', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
-    const created = store.insertIfNew(pin);
+    const created = keyedStore(store).insertIfNew(pin);
     const signed = bind(build({ store }));
     const cases: Array<{ body: Record<string, unknown>; error: string }> = [
       { body: { origin: 'fremd', externalId: 'other' }, error: 'Place origin does not match' },
@@ -1120,7 +1146,7 @@ describe('admin routes', () => {
 
   it('rejects a blank or non-string id on delete and deletes nothing', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
-    store.insertIfNew(pin);
+    keyedStore(store).insertIfNew(pin);
     const signed = bind(build({ store }));
     for (const id of ['', '   ', null, 1, false]) {
       const response = await signed(
@@ -1133,6 +1159,76 @@ describe('admin routes', () => {
     }
     expect(store.listAll()).toHaveLength(1);
     expect(store.listAll()[0]?.externalId).toBe('store-1');
+  });
+
+  it('rejects an npub or a revision beside an internal id and changes nothing', async () => {
+    const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
+    const created = keyedStore(store).insertIfNew(pin);
+    const npub = npubEncode(created.place.nostrPubkey ?? '');
+    const signed = bind(build({ store }));
+    for (const method of ['PUT', 'DELETE']) {
+      const byNpub = await signed(method, '/admin/places', jsonBytes({ ...pin, id: npub }));
+      expect(byNpub.status).toBe(400);
+      expect(await byNpub.json()).toEqual({ error: 'Place id is the internal id, not the npub' });
+      const withRevision = await signed(
+        method,
+        '/admin/places',
+        jsonBytes({ ...pin, id: created.place.id, revision: 9 }),
+      );
+      expect(withRevision.status).toBe(400);
+      expect(await withRevision.json()).toEqual({
+        error: 'Place field is not allowed: revision',
+      });
+    }
+    expect(store.getById(created.place.id)).toEqual(created.place);
+  });
+
+  it('answers 409 when an internal-id write breaks the key rules', async () => {
+    const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
+    const keyless = store.insertIfNew(pin);
+    const other = keyedStore(store).insertIfNew({ ...pin, externalId: 'store-2' });
+    if (!keyless.ok) {
+      throw new Error(keyless.error);
+    }
+    const signed = bind(build({ store }));
+    const stillKeyless = await signed(
+      'PUT',
+      '/admin/places',
+      jsonBytes({ ...pin, id: keyless.place.id, name: 'Still Keyless' }),
+    );
+    expect(await stillKeyless.json()).toEqual({
+      created: false,
+      id: keyless.place.id,
+      npub: null,
+      btcmap: 'skipped',
+    });
+    expect(store.getById(keyless.place.id)?.nostrPubkey).toBeNull();
+    const reserved = await signed(
+      'PUT',
+      '/admin/places',
+      jsonBytes({ ...pin, id: keyless.place.id, nostrPubkey: other.place.nostrPubkey }),
+    );
+    expect(reserved.status).toBe(409);
+    expect(await reserved.json()).toEqual({ error: 'nostrPubkey belongs to another place' });
+    const changed = await signed(
+      'PUT',
+      '/admin/places',
+      jsonBytes({ ...pin, externalId: 'store-2', id: other.place.id, nostrPubkey: keyFor('new') }),
+    );
+    expect(changed.status).toBe(409);
+    expect(await changed.json()).toEqual({ error: 'nostrPubkey of a place cannot change' });
+    const added = await signed(
+      'PUT',
+      '/admin/places',
+      jsonBytes({ ...pin, id: keyless.place.id, nostrPubkey: keyFor('added') }),
+    );
+    expect(added.status).toBe(200);
+    expect(await added.json()).toEqual({
+      created: false,
+      id: keyless.place.id,
+      npub: npubEncode(keyFor('added')),
+      btcmap: 'skipped',
+    });
   });
 
   it('returns 404 for a signed unknown path', async () => {

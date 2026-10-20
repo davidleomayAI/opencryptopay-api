@@ -11,6 +11,7 @@ import {
   type PlaceActivity,
   type StoredMapPlace,
 } from '@/lib/map/place';
+import { npubEncode } from '@/lib/map/nostr-key';
 import { placeProblems, type AdminActivityWrite, type MapPlaceStore } from '@/lib/map/store';
 import { deletePlace, putPlace } from '@/routes/map';
 
@@ -61,15 +62,16 @@ function parseJsonBody(bytes: Uint8Array): unknown {
 
 type ParsedPlaceId =
   | { kind: 'absent' }
-  | { kind: 'invalid' }
+  | { kind: 'invalid'; error: string }
   | { kind: 'id'; id: string; body: Record<string, unknown> };
 
 /**
  * Read an own property `id` without trimming a non-empty value.
- * A non-object has no id. A blank or non-string id is invalid.
+ * A non-object has no id. A blank or non-string id, or an npub, is invalid:
+ * admin writes address the internal id that `GET /admin/places` returns.
  *
  * @param raw - Parsed JSON.
- * @returns Whether `id` is absent, invalid, or a public id.
+ * @returns Whether `id` is absent, invalid, or an internal id.
  */
 function parsePlaceId(raw: unknown): ParsedPlaceId {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -81,7 +83,10 @@ function parsePlaceId(raw: unknown): ParsedPlaceId {
   }
   const id = body['id'];
   if (typeof id !== 'string' || id.trim() === '') {
-    return { kind: 'invalid' };
+    return { kind: 'invalid', error: 'Place id is required' };
+  }
+  if (id.startsWith('npub1')) {
+    return { kind: 'invalid', error: 'Place id is the internal id, not the npub' };
   }
   return { kind: 'id', id, body };
 }
@@ -183,7 +188,7 @@ function isPlaceActivity(raw: unknown): raw is PlaceActivity {
 
 /**
  * Copy a place body for `normalizeMapPlace`.
- * Drops the public id and the admin-only fields, then sets the resolved pair.
+ * Drops the internal id and the admin-only fields, then sets the resolved pair.
  *
  * @param body - JSON object that includes `id`.
  * @param origin - Normalized origin to store.
@@ -210,14 +215,18 @@ function adminReplaceBody(
  * The signature uses the configured host, never the request Host header.
  * The body is read once and then parsed as JSON for PUT and DELETE.
  * Bodies above 64 KiB answer 413 before the signature is checked.
- * GET adds the caller id, payment methods, created time, and last transaction
- * time beside the public place. It does not add the refresh deadline or payment days.
- * A JSON object with an own property `id` addresses that public id.
+ * GET returns the public place with the internal id as `id` and the public id
+ * as `npub`, and adds the caller id, payment methods, created time, and last
+ * transaction time. It does not add the refresh deadline or payment days.
+ * A JSON object with an own property `id` addresses that internal id; an npub is rejected.
  * PUT with `id` replaces that row, including a new origin and caller id, and does not call BTC Map.
- * DELETE with `id` still rejects a different origin or caller id.
- * Without `id`, PUT and DELETE keep the origin and external id paths.
+ * It keeps a stored key, stores a sent key on a row without one (R7, checked against the new
+ * pair), moves the key reservation with the row, and does not take a `revision` (R8).
+ * DELETE with `id` still rejects a different origin or caller id and needs no revision.
+ * Without `id`, PUT and DELETE keep the origin and external id paths with the source rules.
  *
- * @param deps - Store, BTC Map environment, allowed keys, configured host, and an optional clock.
+ * @param deps - Store, BTC Map environment, allowed keys, configured host, the public base URL
+ * of photo URLs, and an optional clock.
  * @returns The admin route group.
  */
 export function adminRoutes(deps: AdminRouteDeps): Hono<AdminEnv> {
@@ -267,8 +276,11 @@ export function adminRoutes(deps: AdminRouteDeps): Hono<AdminEnv> {
   app.get('/places', (c) => {
     const places = deps.store.listAll().map((place) => {
       const problems = placeProblems(place);
+      const publicPlace = toPublicMapPlace(place, deps.publicBaseUrl);
       return {
-        ...toPublicMapPlace(place, deps.publicBaseUrl),
+        ...publicPlace,
+        id: place.id,
+        npub: publicPlace.id,
         complete: problems.length === 0,
         problems,
         externalId: place.externalId,
@@ -284,7 +296,7 @@ export function adminRoutes(deps: AdminRouteDeps): Hono<AdminEnv> {
     const raw = parseJsonBody(c.get('rawBody'));
     const parsedId = parsePlaceId(raw);
     if (parsedId.kind === 'invalid') {
-      return c.json({ error: 'Place id is required' }, 400);
+      return c.json({ error: parsedId.error }, 400);
     }
     if (parsedId.kind === 'absent') {
       const result = await putPlace(
@@ -292,6 +304,9 @@ export function adminRoutes(deps: AdminRouteDeps): Hono<AdminEnv> {
         raw,
       );
       return c.json(result.body, result.status);
+    }
+    if (Object.hasOwn(parsedId.body, 'revision')) {
+      return c.json({ error: 'Place field is not allowed: revision' }, 400);
     }
     const stored = deps.store.getById(parsedId.id);
     if (stored === undefined) {
@@ -356,18 +371,26 @@ export function adminRoutes(deps: AdminRouteDeps): Hono<AdminEnv> {
     if (replaced.status === 'conflict') {
       return c.json({ error: 'Place already exists' }, 409);
     }
-    return c.json({ created: false, id: replaced.place.id, btcmap: 'skipped' }, 200);
+    if (replaced.status === 'keyConflict') {
+      return c.json({ error: replaced.error }, 409);
+    }
+    const npub =
+      replaced.place.nostrPubkey === null ? null : npubEncode(replaced.place.nostrPubkey);
+    return c.json({ created: false, id: replaced.place.id, npub, btcmap: 'skipped' }, 200);
   });
 
   app.delete('/places', (c) => {
     const raw = parseJsonBody(c.get('rawBody'));
     const parsedId = parsePlaceId(raw);
     if (parsedId.kind === 'invalid') {
-      return c.json({ error: 'Place id is required' }, 400);
+      return c.json({ error: parsedId.error }, 400);
     }
     if (parsedId.kind === 'absent') {
       const result = deletePlace({ store: deps.store }, raw);
       return c.json(result.body, result.status);
+    }
+    if (Object.hasOwn(parsedId.body, 'revision')) {
+      return c.json({ error: 'Place field is not allowed: revision' }, 400);
     }
     const stored = deps.store.getById(parsedId.id);
     if (stored === undefined) {

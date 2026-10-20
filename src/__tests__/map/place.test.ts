@@ -1200,7 +1200,7 @@ describe('toPublicMapPlace', () => {
       activity: 'none',
       coverPhoto: null,
     });
-    const hidden = toPublicMapPlace(stored);
+    const hidden = toPublicMapPlace(stored, 'https://api.test');
     expect(hidden).not.toHaveProperty('externalId');
     expect(hidden).not.toHaveProperty('paymentMethods');
   });

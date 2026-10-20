@@ -628,7 +628,135 @@ if (schemaOk && listAllOk && identityOk) {
   }
 }
 
+let adminByIdOk = false;
 if (schemaOk && listAllOk && identityOk && photosOk) {
+  const adminDir = mkdtempSync(join(tmpdir(), 'sqlite-admin-by-id-'));
+  const adminFile = join(adminDir, 'map.sqlite');
+  let adminStore: SqliteMapPlaceStore | undefined;
+  try {
+    adminStore = new SqliteMapPlaceStore(adminFile);
+    const keyA = keyFor('admin-a');
+    const keyB = keyFor('admin-b');
+    const keyC = keyFor('admin-c');
+    const replace = (id: string, content: MapPlaceInput) =>
+      (adminStore as SqliteMapPlaceStore).replaceById({
+        id,
+        content,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        lastTransactionAt: null,
+        activity: { kind: 'keep' },
+        nowMs: Date.now(),
+      });
+    const keyless: MapPlaceInput = { ...COMPLETE, externalId: 'admin-1' };
+    delete keyless.nostrPubkey;
+    const placed = adminStore.insertIfNew(
+      { ...COMPLETE, externalId: 'admin-0', nostrPubkey: keyA },
+      5,
+    );
+    const bare = adminStore.insertIfNew(keyless);
+    adminStore.insertIfNew({ ...COMPLETE, externalId: 'admin-2', nostrPubkey: keyB });
+    if (!placed.ok || !bare.ok) {
+      throw new Error('admin seed failed');
+    }
+    const moved = replace(placed.place.id, { ...keyless, origin: 'fremd', externalId: 'moved' });
+    const oldPairKey = adminStore.insertIfNew(
+      { ...COMPLETE, externalId: 'admin-0', nostrPubkey: keyA },
+      6,
+    );
+    const oldPairRevision = adminStore.insertIfNew(
+      { ...COMPLETE, externalId: 'admin-0', nostrPubkey: keyC },
+      5,
+    );
+    const newPairSource = adminStore.upsert({
+      ...COMPLETE,
+      origin: 'fremd',
+      externalId: 'moved',
+      nostrPubkey: keyA,
+    });
+    const reserved = replace(bare.place.id, { ...keyless, nostrPubkey: keyB });
+    const taken = replace(bare.place.id, { ...keyless, externalId: 'admin-2' });
+    const added = replace(bare.place.id, { ...keyless, nostrPubkey: keyC });
+    const changed = replace(bare.place.id, { ...keyless, nostrPubkey: keyB });
+    const photo = preparePhoto(
+      { contentType: 'image/png', data: Buffer.from(simplePng(3, 2)).toString('base64') },
+      0,
+    );
+    if (!photo.ok) {
+      throw new Error(photo.error);
+    }
+    adminStore.replacePhotos('fremd', keyA, [photo.photo]);
+    const servedBefore = adminStore.findPublicPhoto(photo.photo.sha256) !== undefined;
+    const deleted = adminStore.deleteById(placed.place.id);
+    const deletedAgain = adminStore.deleteById(placed.place.id);
+    const servedAfter = adminStore.findPublicPhoto(photo.photo.sha256) !== undefined;
+    const keyStillReserved = adminStore.insertIfNew({
+      ...COMPLETE,
+      externalId: 'admin-9',
+      nostrPubkey: keyA,
+    });
+    if (
+      moved.status === 'updated' &&
+      moved.place.nostrPubkey === keyA &&
+      moved.place.origin === 'fremd' &&
+      !oldPairKey.ok &&
+      oldPairKey.error === 'nostrPubkey belongs to another place' &&
+      !oldPairRevision.ok &&
+      oldPairRevision.error === 'Stale revision' &&
+      newPairSource.ok &&
+      newPairSource.place.id === placed.place.id &&
+      reserved.status === 'keyConflict' &&
+      reserved.error === 'nostrPubkey belongs to another place' &&
+      taken.status === 'conflict' &&
+      added.status === 'updated' &&
+      added.place.nostrPubkey === keyC &&
+      changed.status === 'keyConflict' &&
+      changed.error === 'nostrPubkey of a place cannot change' &&
+      servedBefore &&
+      deleted &&
+      !deletedAgain &&
+      !servedAfter &&
+      !keyStillReserved.ok &&
+      adminStore.getById(placed.place.id) === undefined &&
+      adminStore.getById(bare.place.id)?.nostrPubkey === keyC
+    ) {
+      adminByIdOk = true;
+    } else {
+      process.stdout.write(
+        `${JSON.stringify({
+          moved,
+          oldPairKey,
+          oldPairRevision,
+          newPairSource: newPairSource.ok,
+          reserved,
+          taken,
+          added: added.status,
+          changed,
+          servedBefore,
+          deleted,
+          deletedAgain,
+          servedAfter,
+          keyStillReserved,
+        })}\n`,
+      );
+      process.exitCode = 1;
+    }
+  } catch (error) {
+    process.stdout.write(
+      `${JSON.stringify({ error: error instanceof Error ? error.message : error })}\n`,
+    );
+    process.exitCode = 1;
+  } finally {
+    try {
+      if (adminStore !== undefined) {
+        adminStore.close();
+      }
+    } finally {
+      rmSync(adminDir, { recursive: true, force: true });
+    }
+  }
+}
+
+if (schemaOk && listAllOk && identityOk && photosOk && adminByIdOk) {
   const activityDir = mkdtempSync(join(tmpdir(), 'sqlite-activity-backfill-'));
   const activityFile = join(activityDir, 'map.sqlite');
   let activitySeed: Database | undefined;

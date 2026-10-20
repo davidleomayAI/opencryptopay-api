@@ -369,9 +369,15 @@ export type ReplaceByIdInput = {
   nowMs: number;
 };
 
-/** Result of `replaceById`. `missing` and `conflict` write nothing. */
+/**
+ * Result of `replaceById`. `missing`, `conflict` (another row has the pair) and
+ * `keyConflict` (R7) write nothing.
+ */
 export type ReplaceByIdResult =
-  { status: 'updated'; place: StoredMapPlace } | { status: 'missing' } | { status: 'conflict' };
+  | { status: 'updated'; place: StoredMapPlace }
+  | { status: 'missing' }
+  | { status: 'conflict' }
+  | { status: 'keyConflict'; error: MapPlaceWriteError };
 
 /**
  * Store for map pins. The SQLite driver is `sqlite.ts`. Tests use the memory store.
@@ -379,6 +385,7 @@ export type ReplaceByIdResult =
 export interface MapPlaceStore {
   insertIfNew(input: MapPlaceInput, revision?: number): MapPlaceWriteResult;
   upsert(input: MapPlaceInput, revision?: number): MapPlaceWriteResult;
+  replaceById(input: ReplaceByIdInput): ReplaceByIdResult;
   recordTransaction(
     origin: string,
     externalId: string,
@@ -387,6 +394,8 @@ export interface MapPlaceStore {
   ): StoredMapPlace | undefined;
   refreshActivity(nowMs: number): void;
   deleteByKey(origin: string, externalId: string, revision?: number): MapPlaceDeleteResult;
+  getById(id: string): StoredMapPlace | undefined;
+  deleteById(id: string): boolean;
   replacePhotos(
     origin: string,
     nostrPubkey: string,
@@ -511,8 +520,12 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Replace every stored fact of one public id except the id.
+   * Replace every stored fact of one internal id except the id and a stored key.
    * A missing id writes nothing. Another row with this origin and caller id writes nothing.
+   * A key follows R7 as in a source write, checked against the new pair: a row
+   * without a key stores the sent one unless it is reserved for another pair, and
+   * a stored key cannot change. The row's key reservation moves to the new pair.
+   * Revisions (R8) are neither checked nor stored.
    * `keep` does not change activity, the refresh deadline, or payment days.
    * `set` stores that token, clears the refresh deadline, and leaves payment days.
    * `recompute` leaves payment days and classifies from the written instant.
@@ -533,6 +546,27 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
     );
     if (conflict !== undefined) {
       return { status: 'conflict' };
+    }
+    const key = input.content.nostrPubkey;
+    const keyConflict = placeWriteConflict({
+      storedRevision: undefined,
+      revision: undefined,
+      rowExists: true,
+      storedKey: existing.nostrPubkey,
+      key,
+      reservedFor: key === undefined ? undefined : this.#reservations.get(key),
+      origin: input.content.origin,
+      externalId: input.content.externalId,
+    });
+    if (keyConflict !== null) {
+      return { status: 'keyConflict', error: keyConflict };
+    }
+    existing.nostrPubkey = existing.nostrPubkey ?? key ?? null;
+    if (existing.nostrPubkey !== null) {
+      this.#reservations.set(existing.nostrPubkey, {
+        origin: input.content.origin,
+        externalId: input.content.externalId,
+      });
     }
     existing.origin = input.content.origin;
     existing.externalId = input.content.externalId;
@@ -776,9 +810,9 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Read one pin by its public id.
+   * Read one pin by its internal id.
    *
-   * @param id - Public id, compared exactly.
+   * @param id - Internal id, compared exactly.
    * @returns A copy of the row, or undefined when the id is missing.
    */
   getById(id: string): StoredMapPlace | undefined {
@@ -790,10 +824,10 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Remove the pin with this public id.
-   * Resolves the row and then calls deleteByKey.
+   * Remove the pin with this internal id. Revisions (R8) are neither checked nor
+   * stored; the pair's key reservations and revision stay.
    *
-   * @param id - Public id, compared exactly.
+   * @param id - Internal id, compared exactly.
    * @returns Whether a row was removed. False when the id is missing.
    */
   deleteById(id: string): boolean {
@@ -801,7 +835,11 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
     if (existing === undefined) {
       return false;
     }
-    return this.deleteByKey(existing.origin, existing.externalId);
+    this.#paymentDays.delete(existing.id);
+    this.#activityUntil.delete(existing.id);
+    this.#rows.splice(this.#rows.indexOf(existing), 1);
+    this.#dropUnusedPhotos();
+    return true;
   }
 
   /**

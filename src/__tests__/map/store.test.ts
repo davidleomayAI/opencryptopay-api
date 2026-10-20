@@ -680,7 +680,7 @@ describe('MemoryMapPlaceStore', () => {
 
   it('reads a copy by id and deletes only that row', () => {
     const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
-    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date(nowMs)));
     const created = store.insertIfNew({
       ...input,
       supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
@@ -715,7 +715,7 @@ describe('MemoryMapPlaceStore', () => {
 
   it('returns missing and writes nothing when the id is unknown', () => {
     const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
-    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date(nowMs)));
     const created = store.insertIfNew(input);
     const before = store.listAll();
     const result = store.replaceById({
@@ -734,7 +734,7 @@ describe('MemoryMapPlaceStore', () => {
 
   it('returns conflict and leaves both rows unchanged', () => {
     const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
-    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date(nowMs)));
     const first = store.insertIfNew({
       ...input,
       supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
@@ -778,7 +778,7 @@ describe('MemoryMapPlaceStore', () => {
 
   it('keeps activity and the refresh deadline while writing the other columns', () => {
     const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
-    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date(nowMs)));
     const created = store.insertIfNew(input);
     const last = '2026-10-08T12:00:00.000Z';
     store.recordTransaction('dfx', 'store-1', last, nowMs);
@@ -856,7 +856,7 @@ describe('MemoryMapPlaceStore', () => {
 
   it('sets an activity token, skips refresh, and keeps payment days', () => {
     const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
-    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date(nowMs)));
     const created = store.insertIfNew(input);
     const day = (value: string): string => `${value}T12:00:00.000Z`;
     store.recordTransaction('dfx', 'store-1', day('2026-10-05'), nowMs);
@@ -885,7 +885,7 @@ describe('MemoryMapPlaceStore', () => {
 
   it('recomputes daily from five payment days when the last transaction is null', () => {
     const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
-    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date(nowMs)));
     const created = store.insertIfNew(input);
     const day = (value: string): string => `${value}T12:00:00.000Z`;
     for (const value of ['2026-10-04', '2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08']) {
@@ -928,7 +928,7 @@ describe('MemoryMapPlaceStore', () => {
 
   it('recomputes none when a null last transaction has no five payment days', () => {
     const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
-    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const store = keyedStore(new MemoryMapPlaceStore(() => new Date(nowMs)));
     const created = store.insertIfNew({ ...input, techProvider: '21.gifts' });
     store.recordTransaction('dfx', 'store-1', '2026-10-08T12:00:00.000Z', nowMs);
     const updated = store.replaceById({
@@ -952,7 +952,7 @@ describe('MemoryMapPlaceStore', () => {
     store.refreshActivity(nowMs + 40 * 24 * 60 * 60 * 1000);
     expect(store.getById(created.place.id)?.activity).toBe('none');
 
-    const fresh = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const fresh = keyedStore(new MemoryMapPlaceStore(() => new Date(nowMs)));
     const inserted = fresh.insertIfNew(input);
     const none = fresh.replaceById({
       id: inserted.place.id,
@@ -1337,5 +1337,105 @@ describe('MemoryMapPlaceStore photos', () => {
     expect(store.replacePhotos('dfx', keyA, [first]).ok).toBe(true);
     store.close();
     expect(store.findPublicPhoto(first.sha256)).toBeUndefined();
+  });
+});
+
+describe('MemoryMapPlaceStore admin writes by internal id', () => {
+  const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
+  const keyA = keyFor('admin-a');
+  const keyB = keyFor('admin-b');
+  const keyC = keyFor('admin-c');
+
+  function replace(store: MemoryMapPlaceStore, id: string, content: MapPlaceInput) {
+    return store.replaceById({
+      id,
+      content,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      lastTransactionAt: null,
+      activity: { kind: 'keep' },
+      nowMs,
+    });
+  }
+
+  function inserted(store: MemoryMapPlaceStore, content: MapPlaceInput, revision?: number) {
+    const result = store.insertIfNew(content, revision);
+    if (!result.ok) {
+      throw new Error(result.error);
+    }
+    return result.place;
+  }
+
+  it('keeps a stored key, moves its reservation with the row and ignores revisions', () => {
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const place = inserted(store, { ...input, nostrPubkey: keyA }, 5);
+    const moved = replace(store, place.id, { ...input, origin: 'fremd', externalId: 'moved' });
+    expect(moved).toMatchObject({
+      status: 'updated',
+      place: { id: place.id, origin: 'fremd', externalId: 'moved', nostrPubkey: keyA },
+    });
+    expect(store.insertIfNew({ ...input, nostrPubkey: keyA }, 6)).toEqual({
+      ok: false,
+      error: 'nostrPubkey belongs to another place',
+    });
+    expect(store.insertIfNew({ ...input, nostrPubkey: keyB }, 5)).toEqual({
+      ok: false,
+      error: 'Stale revision',
+    });
+    const source = store.upsert({
+      ...input,
+      origin: 'fremd',
+      externalId: 'moved',
+      nostrPubkey: keyA,
+    });
+    expect(source).toMatchObject({ ok: true, created: false, place: { id: place.id } });
+  });
+
+  it('stores a sent key on a row without one and refuses a change or a reserved key', () => {
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const keyless = inserted(store, input);
+    inserted(store, { ...input, externalId: 'store-2', nostrPubkey: keyB });
+    expect(replace(store, keyless.id, { ...input, nostrPubkey: keyB })).toEqual({
+      status: 'keyConflict',
+      error: 'nostrPubkey belongs to another place',
+    });
+    expect(store.getById(keyless.id)?.nostrPubkey).toBeNull();
+    expect(replace(store, keyless.id, { ...input, nostrPubkey: keyA })).toMatchObject({
+      status: 'updated',
+      place: { nostrPubkey: keyA },
+    });
+    expect(replace(store, keyless.id, { ...input, nostrPubkey: keyC })).toEqual({
+      status: 'keyConflict',
+      error: 'nostrPubkey of a place cannot change',
+    });
+    expect(replace(store, keyless.id, input)).toMatchObject({
+      status: 'updated',
+      place: { nostrPubkey: keyA },
+    });
+    expect(store.insertIfNew({ ...input, externalId: 'other', nostrPubkey: keyA })).toEqual({
+      ok: false,
+      error: 'nostrPubkey belongs to another place',
+    });
+  });
+
+  it('deletes by id without a revision, keeps the reservation and drops unused photo files', () => {
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const place = inserted(store, { ...input, nostrPubkey: keyA }, 3);
+    const photo = preparePhoto({ contentType: 'image/png', data: base64(simplePng(3, 2)) }, 0);
+    if (!photo.ok) {
+      throw new Error(photo.error);
+    }
+    expect(store.replacePhotos('dfx', keyA, [photo.photo], 4).ok).toBe(true);
+    expect(store.findPublicPhoto(photo.photo.sha256)).toBeDefined();
+    expect(store.deleteById(place.id)).toBe(true);
+    expect(store.deleteById(place.id)).toBe(false);
+    expect(store.findPublicPhoto(photo.photo.sha256)).toBeUndefined();
+    expect(store.insertIfNew({ ...input, externalId: 'store-9', nostrPubkey: keyA })).toEqual({
+      ok: false,
+      error: 'nostrPubkey belongs to another place',
+    });
+    expect(store.insertIfNew({ ...input, nostrPubkey: keyA }, 4)).toEqual({
+      ok: false,
+      error: 'Stale revision',
+    });
   });
 });

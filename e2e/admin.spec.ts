@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { canonicalString, signAdminRequest } from '../src/lib/admin/signature';
-import { isNostrPubkey } from '../src/lib/map/nostr-key';
+import { isNostrPubkey, npubEncode } from '../src/lib/map/nostr-key';
 
 /** A valid NIP-01 key derived from a label, so each test shop has its own. */
 function keyFor(label: string): string {
@@ -70,6 +70,7 @@ function privateKey(): KeyObject {
 
 type AdminListedPlace = {
   id: string;
+  npub: string | null;
   origin: string;
   name: string;
   externalId: string;
@@ -237,7 +238,13 @@ test('Function: adminRoutes — PUT /admin/places replaces a pin by its public i
     data: body,
   });
   expect(res.status()).toBe(200);
-  expect(await res.json()).toEqual({ created: false, id: row.id, btcmap: 'skipped' });
+  expect(await res.json()).toEqual({
+    created: false,
+    id: row.id,
+    npub: npubEncode(fremd.nostrPubkey),
+    btcmap: 'skipped',
+  });
+  expect(row.npub).toBe(npubEncode(fremd.nostrPubkey));
   const updated = await listedPlace(request, fremd.externalId);
   expect(updated.id).toBe(row.id);
   expect(updated.name).toBe('Fremde Filiale Nord');
@@ -281,6 +288,7 @@ test('Function: adminRoutes — DELETE /admin/places removes one pin by its publ
     ...fremd,
     externalId: 'e2e-admin-by-id',
     name: 'By Id Shop',
+    nostrPubkey: keyFor('e2e-admin-by-id'),
   };
   const createBody = JSON.stringify(created);
   const createdRes = await request.put('/admin/places', {
@@ -331,12 +339,14 @@ test('Function: adminRoutes — PUT /admin/places rewrites one public id and rej
     origin: 'dfx',
     externalId: 'e2e-admin-rewrite',
     name: 'Rewrite Shop',
+    nostrPubkey: keyFor('e2e-admin-rewrite'),
   };
   const other = {
     ...fremd,
     origin: 'spar',
     externalId: 'e2e-admin-other',
     name: 'Other Shop',
+    nostrPubkey: keyFor('e2e-admin-other'),
   };
   const createdAt = '2020-05-01T00:00:00.000Z';
   try {
@@ -372,6 +382,7 @@ test('Function: adminRoutes — PUT /admin/places rewrites one public id and rej
     expect(await rewritten.json()).toEqual({
       created: false,
       id: dedicatedRow.id,
+      npub: npubEncode(dedicated.nostrPubkey),
       btcmap: 'skipped',
     });
     const moved = await listedPlace(request, 'e2e-admin-moved');

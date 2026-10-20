@@ -111,7 +111,8 @@ export async function putPlace(
 /**
  * Remove one map pin by origin and external id.
  * Same validation as `DELETE /map/places`: exactly `origin`, `externalId` and an
- * optional `revision`. A missing pair is `{ deleted: false }`.
+ * optional `revision`; any other field, `id` included, is rejected and nothing is
+ * deleted. A missing pair is `{ deleted: false }`.
  *
  * @param deps - Store.
  * @param raw - Request JSON, or null when the body is not JSON.

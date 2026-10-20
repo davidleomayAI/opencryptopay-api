@@ -111,9 +111,22 @@ key. A write without `nostrPubkey` never clears a key that is already stored:
 
 `origin` + `externalId` stay the source's own key for idempotent writes. Every
 public response and every new route uses the NOSTR key instead. The internal
-UUID no longer appears in any JSON: the `id` in the answers of `POST` and
-`PUT /map/places` is the npub, or `null` for a place without a key (step 1a
-only).
+UUID no longer appears in any public JSON: the `id` in the answers of `POST`
+and `PUT /map/places` is the npub, or `null` for a place without a key (step
+1a only).
+
+Only the signed admin interface still shows the internal UUID, because it
+must also reach places without a key. `GET /admin/places` returns it as `id`
+and the npub as `npub`. `PUT` and `DELETE /admin/places` with that `id` are
+admin corrections outside the source's write order. They reject an npub as
+`id` and a `revision`, and they neither check nor store a revision (R8).
+Such a `PUT` may move a place to another `origin` and `externalId`. The key is
+the one field it cannot change: it keeps a stored key, and it stores a sent
+key on a place without one under the same R7 rules as a source write, checked
+against the new pair. The key's reservation moves with the place to the new
+pair. A pair that already has another place is refused (`409 Place already
+exists`). After such a move, or a `DELETE` by `id`, the old pair keeps its
+revision and every other key it reserved, as after a source delete.
 
 ## R8 Request order
 

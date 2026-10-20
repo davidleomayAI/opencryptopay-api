@@ -20,6 +20,8 @@ import {
   type MapPlaceListFilter,
   type MapPlaceStore,
   type MapPlaceWriteResult,
+  type ReplaceByIdInput,
+  type ReplaceByIdResult,
 } from '@/lib/map/store';
 
 const MAP_PLACE_COLUMNS =
@@ -292,8 +294,9 @@ function replaceSupportRows(db: Database, placeId: string, supports: MapPlaceSup
  * by the HTTP end-to-end run.
  * Opening an old-schema file (shop_name present, description and shop_type
  * missing) and hiding incomplete rows is exercised by e2e/sqlite-backfill.ts.
- * It also checks that listAll returns incomplete rows, and that supports load in
- * chunks for more than 500 places.
+ * It also checks that listAll returns incomplete rows, that supports load in
+ * chunks for more than 500 places, the key and revision rules (R7, R8), photos,
+ * and the key rules of replace-by-id and delete-by-id.
  */
 export class SqliteMapPlaceStore implements MapPlaceStore {
   readonly #db: Database;
@@ -576,9 +579,11 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Replace every stored fact of one public id except the id.
+   * Replace every stored fact of one internal id except the id and a stored key.
    * Runs in one transaction. A missing id writes nothing.
    * Another row with this origin and caller id writes nothing.
+   * A key follows R7 against the new pair, and the row's key reservation moves
+   * to it. Revisions (R8) are neither checked nor stored.
    * A UNIQUE failure rolls back, including support rows, and returns conflict.
    * `activity_until` is updated here even though it is not in `MAP_PLACE_COLUMNS`.
    *
@@ -604,6 +609,47 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
       if (other !== null) {
         return { status: 'conflict' };
       }
+      const key = input.content.nostrPubkey;
+      const reservation =
+        key === undefined
+          ? null
+          : (this.#db
+              .query(
+                'SELECT origin, external_id FROM map_pubkey_reservation WHERE nostr_pubkey = ?',
+              )
+              .get(key) as { origin: string; external_id: string } | null);
+      const keyConflict = placeWriteConflict({
+        storedRevision: undefined,
+        revision: undefined,
+        rowExists: true,
+        storedKey: existing.nostr_pubkey,
+        key,
+        reservedFor:
+          reservation === null
+            ? undefined
+            : { origin: reservation.origin, externalId: reservation.external_id },
+        origin: input.content.origin,
+        externalId: input.content.externalId,
+      });
+      if (keyConflict !== null) {
+        return { status: 'keyConflict', error: keyConflict };
+      }
+      const nostrPubkey = existing.nostr_pubkey ?? key ?? null;
+      if (nostrPubkey !== null) {
+        this.#db
+          .query(
+            `INSERT INTO map_pubkey_reservation (nostr_pubkey, origin, external_id, created_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT (nostr_pubkey) DO UPDATE
+             SET origin = excluded.origin, external_id = excluded.external_id`,
+          )
+          .run(
+            nostrPubkey,
+            input.content.origin,
+            input.content.externalId,
+            new Date().toISOString(),
+          );
+      }
       // activity_until is not selected with MAP_PLACE_COLUMNS. keep leaves it.
       const activitySql =
         input.activity.kind === 'keep' ? '' : ', activity = ?, activity_until = ?';
@@ -625,6 +671,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
         input.content.shopType,
         input.createdAt,
         input.lastTransactionAt,
+        nostrPubkey,
       ];
       if (input.activity.kind === 'set') {
         params.push(input.activity.activity, null);
@@ -643,7 +690,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
            SET origin = ?, external_id = ?, name = ?, description = ?, lat = ?, lon = ?,
                category = ?, payment_methods = ?, tech_provider = ?, country = ?, street = ?,
                house_number = ?, postal_code = ?, city = ?, shop_type = ?, created_at = ?,
-               last_transaction_at = ?${activitySql}
+               last_transaction_at = ?, nostr_pubkey = ?${activitySql}
            WHERE id = ?`,
         )
         .run(...params);
@@ -881,9 +928,9 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Read one pin by its public id.
+   * Read one pin by its internal id.
    *
-   * @param id - Public id, compared exactly.
+   * @param id - Internal id, compared exactly.
    * @returns A copy of the row, or undefined when the id is missing.
    */
   getById(id: string): StoredMapPlace | undefined {
@@ -900,20 +947,18 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Remove the pin with this public id.
-   * Resolves the row and then calls deleteByKey.
+   * Remove the pin with this internal id. Revisions (R8) are neither checked nor
+   * stored; the pair's key reservations and revision stay.
    *
-   * @param id - Public id, compared exactly.
+   * @param id - Internal id, compared exactly.
    * @returns Whether a row was removed. False when the id is missing.
    */
   deleteById(id: string): boolean {
-    const existing = this.#db
-      .query('SELECT origin, external_id FROM map_place WHERE id = ?')
-      .get(id) as { origin: string; external_id: string } | null;
-    if (existing === null) {
-      return false;
-    }
-    return this.deleteByKey(existing.origin, existing.external_id);
+    return this.#db.transaction((): boolean => {
+      const result = this.#db.query('DELETE FROM map_place WHERE id = ?').run(id);
+      dropUnusedPhotos(this.#db);
+      return result.changes > 0;
+    })();
   }
 
   /**
