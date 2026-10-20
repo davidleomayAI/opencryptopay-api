@@ -166,6 +166,10 @@ export function preparePhoto(
   ) {
     return { ok: false, error: `${label} must be 1 to 4096 pixels wide and high` };
   }
+  if (stripped.bytes.length > MAX_PHOTO_BYTES) {
+    // The written-back orientation can make the stored file a few bytes larger.
+    return { ok: false, error: `${label} is larger than 1 MiB` };
+  }
   return {
     ok: true,
     photo: {

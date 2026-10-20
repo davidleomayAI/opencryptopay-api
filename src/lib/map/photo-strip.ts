@@ -230,19 +230,36 @@ function hasMarkerLength(marker: number, length: number): boolean {
   return marker !== 0xcc || length % 2 === 0;
 }
 
-/** End of the entropy-coded data that starts at `at`: the next marker other than RSTn. */
-function scanEnd(bytes: Uint8Array, at: number): number {
+/**
+ * The entropy-coded data that starts at `at`, up to the next marker other than
+ * RSTn. Fill bytes (`FF`) before a stuffed zero or an RSTn stay in the scan and
+ * are written as one `FF`, so their count carries nothing.
+ *
+ * @returns The end of the data and the bytes to keep, or null when no marker ends it.
+ */
+function scanData(bytes: Uint8Array, at: number): { end: number; data: Uint8Array } | null {
+  const kept: Uint8Array[] = [];
+  let start = at;
   let pos = at;
   while (pos + 1 < bytes.length) {
-    if (byte(bytes, pos) === 0xff) {
-      const next = byte(bytes, pos + 1);
-      if (next !== 0x00 && !(next >= 0xd0 && next <= 0xd7)) {
-        return pos;
-      }
+    if (byte(bytes, pos) !== 0xff) {
+      pos += 1;
+      continue;
     }
-    pos += 1;
+    let next = pos + 1;
+    while (byte(bytes, next) === 0xff && next + 1 < bytes.length) {
+      next += 1;
+    }
+    const code = byte(bytes, next);
+    if (code !== 0x00 && !(code >= 0xd0 && code <= 0xd7)) {
+      kept.push(bytes.subarray(start, pos));
+      return { end: pos, data: concat(kept) };
+    }
+    kept.push(bytes.subarray(start, pos + 1));
+    start = next;
+    pos = next + 1;
   }
-  return -1;
+  return null;
 }
 
 function stripJpeg(bytes: Uint8Array): StripResult {
@@ -312,12 +329,12 @@ function stripJpeg(bytes: Uint8Array): StripResult {
       }
       parts.push(bytes.slice(pos, end));
       if (marker === 0xda) {
-        const dataEnd = scanEnd(bytes, end);
-        if (dataEnd === -1) {
+        const scan = scanData(bytes, end);
+        if (scan === null) {
           return { ok: false, error: 'unreadable' };
         }
-        parts.push(bytes.slice(end, dataEnd));
-        pos = dataEnd;
+        parts.push(scan.data);
+        pos = scan.end;
         continue;
       }
     }
@@ -380,6 +397,9 @@ function stripPng(bytes: Uint8Array): StripResult {
       return { ok: false, error: 'unreadable' };
     }
     if (type === 'IEND') {
+      if (!afterData) {
+        return { ok: false, error: 'unreadable' };
+      }
       parts.push(pngChunk(bytes.subarray(pos + 4, pos + 8), new Uint8Array(0)));
       break;
     }
@@ -563,16 +583,17 @@ export function photoTypeOf(bytes: Uint8Array): PhotoType | null {
  * Remove metadata from a photo by allow-list and read its displayed size. JPEG keeps the first
  * plain JFIF header without thumbnail, the first 12-byte Adobe segment, a minimal EXIF orientation
  * when the original held 2 to 8, and the image markers (SOFn, DHT, DAC, SOS with its scan data,
- * DQT, DNL, DRI) up to the main image's EOI; every other marker, and TEM or RSTn outside a scan, is
- * dropped. PNG keeps the listed rendering chunks up to IEND, each rebuilt with a fresh CRC; an
- * ancillary chunk or PLTE is kept once and only before the first IDAT, PLTE only for an indexed
- * image, a chunk of a length the format does not allow or an indexed bKGD that names no palette
- * entry is dropped, and IEND is written empty. WebP keeps `VP8X` (first and exactly 10 bytes), one
- * `ALPH` after `VP8X` and before a `VP8 ` frame, and the first `VP8 ` or `VP8L` frame up to the
- * RIFF end, each rebuilt from its declared size with a zero pad byte, keeps only the alpha flag of
- * `VP8X` with its reserved bytes zeroed and rewrites the RIFF size. Every byte after the end of the
- * image is cut. No metadata segment or chunk survives; bytes inside a kept segment, such as DQT or
- * DHT tables, are copied as they are.
+ * where fill bytes before an RSTn become one FF, DQT, DNL, DRI) up to the main image's EOI; every
+ * other marker, and TEM or RSTn outside a scan, is dropped. PNG needs an IDAT before IEND and keeps
+ * the listed rendering chunks up to IEND, each rebuilt with a fresh CRC; an ancillary chunk or PLTE
+ * is kept once and only before the first IDAT, PLTE only for an indexed image, a chunk of a length
+ * the format does not allow or an indexed bKGD that names no palette entry is dropped, and IEND is
+ * written empty. WebP keeps `VP8X` (first and exactly 10 bytes), one `ALPH` after `VP8X` and before
+ * a `VP8 ` frame, and the first `VP8 ` or `VP8L` frame up to the RIFF end, each rebuilt from its
+ * declared size with a zero pad byte, keeps only the alpha flag of `VP8X` with its reserved bytes
+ * zeroed and rewrites the RIFF size. Every byte after the end of the image is cut. No metadata
+ * segment or chunk survives; bytes inside a kept segment, such as DQT or DHT tables, are copied as
+ * they are.
  *
  * @param type - The file type read from the magic bytes.
  * @param bytes - Decoded photo file.

@@ -9,6 +9,7 @@ import {
 import {
   base64,
   bytesOf,
+  exifTiff,
   ihdr,
   jpeg,
   jpegSegment,
@@ -187,6 +188,47 @@ describe('preparePhoto', () => {
     expect(result.ok).toBe(true);
     const atLimit = preparePhoto({ contentType: 'image/jpeg', data: base64(exact) }, 0);
     expect(atLimit.ok && atLimit.photo.width).toBe(2);
+  });
+});
+
+describe('preparePhoto stored size and DNL', () => {
+  const sos = jpegSegment(0xda, [3, 1, 0, 2, 0x11, 3, 0x11, 0, 0x3f, 0]);
+
+  function fullJpeg(head: Uint8Array[], height: number): Uint8Array {
+    const fixed = jpeg([...head, jpegSegment(0xdb, new Uint8Array(65)), sof(2, height), sos]);
+    const filler = new Uint8Array(1_048_576 - fixed.length).fill(0x12);
+    return jpeg([
+      ...head,
+      jpegSegment(0xdb, new Uint8Array(65)),
+      sof(2, height),
+      bytesOf(sos, filler),
+    ]);
+  }
+
+  it('rejects a file that the written-back orientation makes larger than 1 MiB', () => {
+    // An EXIF block without the 4 bytes after its only entry is still read.
+    const shortExif = jpegSegment(0xe1, bytesOf('Exif\0\0', exifTiff('II', 6).subarray(0, 22)));
+    const grown = fullJpeg([shortExif], 1);
+    expect(grown.length).toBe(1_048_576);
+    expect(preparePhoto({ contentType: 'image/jpeg', data: base64(grown) }, 0)).toEqual({
+      ok: false,
+      error: 'Photo 1 is larger than 1 MiB',
+    });
+    const exact = fullJpeg([jpegSegment(0xe1, bytesOf('Exif\0\0', exifTiff('II', 6)))], 1);
+    expect(preparePhoto({ contentType: 'image/jpeg', data: base64(exact) }, 0).ok).toBe(true);
+  });
+
+  it('skips a JPEG whose height is given only by DNL', () => {
+    const dnl = jpeg([
+      jpegSegment(0xdb, new Uint8Array(65)),
+      sof(2, 0),
+      scan(),
+      jpegSegment(0xdc, [0, 9]),
+    ]);
+    expect(preparePhoto({ contentType: 'image/jpeg', data: base64(dnl) }, 0)).toEqual({
+      ok: false,
+      error: 'Photo 1 must be 1 to 4096 pixels wide and high',
+    });
   });
 });
 

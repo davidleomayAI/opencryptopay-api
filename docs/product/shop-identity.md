@@ -242,10 +242,13 @@ Rules per photo. 21.gifts checks only size and magic bytes on its own
 uploads, so the header rules here are stricter:
 
 - `contentType` is `image/jpeg`, `image/png` or `image/webp`.
-- `data` is strict base64. The decoded size is at most 1 048 576 bytes.
+- `data` is strict base64. The decoded size is at most 1 048 576 bytes, and
+  so is the stored file after metadata removal (a written-back orientation
+  can add a few bytes).
 - The file type is read from the magic bytes and must equal `contentType`.
 - The markers or chunks must walk cleanly: a JPEG to its `EOI`, a PNG to
-  its `IEND`, with no segment or chunk length past the end of the file. For a
+  its `IEND` with at least one `IDAT` before it, with no segment or chunk
+  length past the end of the file. For a
   WebP, 8 plus the RIFF size must not exceed the file length, and its chunks
   must end exactly at byte 8 plus the RIFF size. Otherwise the photo is
   skipped (`Photo N could not be read`), so metadata that cannot be found is
@@ -255,7 +258,8 @@ uploads, so the header rules here are stricter:
   skipped (`Photo N is animated`). A shop photo is a still
   picture, and this keeps the metadata walk to one level.
 - Width and height are read from the file header, which must parse. Each is
-  between 1 and 4096. The API returns the displayed size: for a JPEG whose
+  between 1 and 4096, so a JPEG whose height is only given by `DNL` (height
+  0 in its `SOF`) is skipped. The API returns the displayed size: for a JPEG whose
   EXIF orientation is 5 to 8, width and height are swapped. Orientation
   values outside 2 to 8 count as 1.
 - `caption` is optional, 1–200 characters, no control characters.
@@ -286,7 +290,8 @@ having re-encoded the image, because a phone photo can carry its GPS position:
   - walk the markers through the whole image, also between the scans of a
     progressive JPEG. Keep only the image markers `SOI`, `SOFn`, `DHT`,
     `DAC`, `DQT`, `DRI`, `DNL`, `SOS` with its entropy-coded data (including
-    its `RSTn`) and `EOI`. A `DRI` or `DNL` that is not 4 bytes long, or a
+    its `RSTn`; fill bytes before an `RSTn` are written as one `FF`) and
+    `EOI`. A `DRI` or `DNL` that is not 4 bytes long, or a
     `DAC` of an odd length, could not be read. Every `APPn` and `COM` goes
     through the allow-list above; every other marker (`JPG`, `JPGn`, `DHP`,
     `EXP`, reserved, and the length-free `TEM` and `RSTn` outside a scan) is

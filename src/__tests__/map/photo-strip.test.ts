@@ -247,6 +247,22 @@ describe('stripPhotoMetadata JPEG', () => {
     expect(contains(result.bytes, [0xff, 0xdd, 0, 4, 0, 4])).toBe(true);
   });
 
+  it('keeps fill bytes before a restart marker in a scan as one FF', () => {
+    const result = stripped(
+      'image/jpeg',
+      jpeg([
+        DQT,
+        sof(4, 3),
+        bytesOf(scan(), [0x21, 0xff, 0xff, 0xff, 0xd5, 0x22, 0xff, 0xff, 0x00, 0x23]),
+      ]),
+    );
+    expect(result).toMatchObject({ width: 4, height: 3 });
+    expect(contains(result.bytes, [0x21, 0xff, 0xd5, 0x22, 0xff, 0x00, 0x23, 0xff, 0xd9])).toBe(
+      true,
+    );
+    expect(contains(result.bytes, [0xff, 0xff])).toBe(false);
+  });
+
   it('drops TEM and a stray restart marker outside a scan', () => {
     const result = stripped(
       'image/jpeg',
@@ -502,6 +518,7 @@ describe('stripPhotoMetadata PNG', () => {
       bytesOf(signature, pngChunk('IHDR', new Uint8Array(12))),
       bytesOf(signature, ihdr(2, 2), pngChunk('IDAT', [1])),
       png([ihdr(2, 2), pngChunk('IHDR', 'hidden'), pngChunk('IDAT', [1])]),
+      png([ihdr(2, 2), pngChunk('gAMA', [0, 0, 0, 1])]),
     ]) {
       expect(strip('image/png', bytes)).toEqual({ ok: false, error: 'unreadable' });
     }
