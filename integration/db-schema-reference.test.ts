@@ -454,6 +454,22 @@ describe('readRawSchema', () => {
     expect(pages.get('docs/database/README.md')).toContain('- Foreign keys: 4');
   });
 
+  test('labels a composite foreign key in its declared column order', async () => {
+    const db = openSchema(
+      [
+        'CREATE TABLE zpair (z TEXT NOT NULL, a TEXT NOT NULL, PRIMARY KEY (z, a));',
+        'CREATE TABLE zpair_ref (z TEXT NOT NULL, a TEXT NOT NULL,',
+        '  FOREIGN KEY (z, a) REFERENCES zpair (z, a));',
+      ].join('\n'),
+    );
+    const model = modelOf(readRawSchema(db), new Map());
+    db.close();
+    const pages = await renderPages(model, new Map(), REPO_ROOT);
+    expect(pages.get('docs/database/tables/zpair_ref.md')).toContain(
+      '"zpair_ref" }o..|| "zpair" : "z, a"',
+    );
+  });
+
   test('treats only a rowid table INTEGER PRIMARY KEY as the rowid', () => {
     const db = openSchema(
       [

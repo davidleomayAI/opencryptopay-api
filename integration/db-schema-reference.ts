@@ -85,6 +85,8 @@ export type ForeignKeyModel = {
   table: string;
   /** `PRAGMA foreign_key_list` id: the columns of one composite key share it. */
   constraint: number;
+  /** Position of `column` in the declared key. */
+  seq: number;
   column: string;
   refTable: string;
   refColumn: string;
@@ -539,6 +541,7 @@ function buildTableModel(
     foreignKeyModels.push({
       table: table.name,
       constraint: foreignKey.id,
+      seq: foreignKey.seq,
       column: foreignKey.from,
       refTable: foreignKey.refTable,
       refColumn,
@@ -704,7 +707,10 @@ function renderRelations(
 ): string | null {
   // One edge per constraint: a composite key is labelled with all its columns and is optional when
   // any of them accepts NULL.
-  const edges = new Map<string, { key: ForeignKeyModel; columns: string[]; nullable: boolean }>();
+  const edges = new Map<
+    string,
+    { key: ForeignKeyModel; members: ForeignKeyModel[]; nullable: boolean }
+  >();
   for (const foreignKey of foreignKeys) {
     if (foreignKey.table !== tableName && foreignKey.refTable !== tableName) continue;
     const id = `${foreignKey.table}\u0000${foreignKey.constraint}`;
@@ -712,20 +718,22 @@ function renderRelations(
     if (edge === undefined) {
       edges.set(id, {
         key: foreignKey,
-        columns: [foreignKey.column],
+        members: [foreignKey],
         nullable: foreignKey.nullable,
       });
       continue;
     }
-    edge.columns.push(foreignKey.column);
+    edge.members.push(foreignKey);
     edge.nullable ||= foreignKey.nullable;
   }
   const lines = [
     ...new Set(
-      [...edges.values()].map(
-        ({ key, columns, nullable }) =>
-          `    "${escapeMermaid(key.table)}" ${cardinality(nullable, key.unique, key.identifying)} "${escapeMermaid(key.refTable)}" : "${escapeMermaid(columns.join(', '))}"`,
-      ),
+      [...edges.values()].map(({ key, members, nullable }) => {
+        // The label keeps the declared column order of the key.
+        const columns = [...members].sort((left, right) => left.seq - right.seq);
+        const label = columns.map((member) => member.column).join(', ');
+        return `    "${escapeMermaid(key.table)}" ${cardinality(nullable, key.unique, key.identifying)} "${escapeMermaid(key.refTable)}" : "${escapeMermaid(label)}"`;
+      }),
     ),
   ].sort(compareText);
   if (lines.length === 0) return null;
