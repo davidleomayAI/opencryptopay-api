@@ -13,6 +13,11 @@ import {
   simplePng,
   simpleWebp,
   sof,
+  vp8,
+  vp8l,
+  vp8x,
+  webp,
+  webpChunk,
 } from '../src/__tests__/map/photo-fixtures';
 
 /** A valid NIP-01 key derived from a label, so each test shop has its own. */
@@ -1167,6 +1172,45 @@ test('Function: stripPhotoMetadata — a stored photo carries no EXIF, text or t
   expect(body.includes('Alice')).toBe(false);
   expect(body.includes(Buffer.from([0x99, 0x98, 0x97]))).toBe(false);
   expect(body.subarray(-2)).toEqual(Buffer.from([0xff, 0xd9]));
+});
+
+test('Function: stripPhotoMetadata — a WebP whose VP8X canvas hides an oversized frame is skipped', async ({
+  request,
+}) => {
+  const key = await shopWithKey(request, 'e2e-photo-webp-canvas');
+  const stored = await request.put('/map/places/photos', {
+    headers: ingest,
+    data: {
+      origin: 'dfx',
+      nostrPubkey: key,
+      photos: [
+        {
+          contentType: 'image/webp',
+          data: base64(
+            webp([webpChunk('VP8X', vp8x(0, 1, 1)), webpChunk('VP8 ', vp8(16383, 16383))]),
+          ),
+        },
+        {
+          contentType: 'image/webp',
+          data: base64(
+            webp([webpChunk('VP8X', vp8x(0, 1, 1)), webpChunk('VP8L', vp8l(16384, 16384))]),
+          ),
+        },
+        {
+          contentType: 'image/webp',
+          data: base64(webp([webpChunk('VP8X', vp8x(0, 6, 5)), webpChunk('VP8 ', vp8(6, 5))])),
+        },
+      ],
+    },
+  });
+  expect(stored.status()).toBe(200);
+  const json = (await stored.json()) as { photos: Array<{ url: string }>; skipped: unknown[] };
+  expect(json.skipped).toEqual([
+    { index: 0, error: 'Photo 1 could not be read' },
+    { index: 1, error: 'Photo 2 could not be read' },
+  ]);
+  expect(json.photos).toHaveLength(1);
+  expect(json.photos[0]?.url.endsWith('.webp')).toBe(true);
 });
 
 test('Function: preparePhoto — a bad photo is skipped by index and the others are stored in order', async ({

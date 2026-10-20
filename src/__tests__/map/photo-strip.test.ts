@@ -619,6 +619,30 @@ describe('stripPhotoMetadata WebP', () => {
     expect(contains(lossless.bytes, 'ALPH')).toBe(false);
   });
 
+  it('rejects a VP8X canvas that differs from the frame size', () => {
+    for (const frame of [
+      webpChunk('VP8 ', vp8(16383, 16383)),
+      webpChunk('VP8L', vp8l(16384, 16384)),
+      webpChunk('VP8 ', vp8(2, 1)),
+      webpChunk('VP8L', vp8l(1, 2)),
+    ]) {
+      expect(strip('image/webp', webp([webpChunk('VP8X', vp8x(0, 1, 1)), frame]))).toEqual({
+        ok: false,
+        error: 'unreadable',
+      });
+    }
+    const lossy = stripped(
+      'image/webp',
+      webp([webpChunk('VP8X', vp8x(0, 4096, 4096)), webpChunk('VP8 ', vp8(4096, 4096))]),
+    );
+    expect(lossy).toMatchObject({ width: 4096, height: 4096 });
+    const lossless = stripped(
+      'image/webp',
+      webp([webpChunk('VP8X', vp8x(0x10, 33, 17)), webpChunk('VP8L', vp8l(33, 17))]),
+    );
+    expect(lossless).toMatchObject({ width: 33, height: 17 });
+  });
+
   it('skips an animated WebP', () => {
     for (const chunks of [
       [webpChunk('VP8X', vp8x(0x02, 10, 10)), webpChunk('VP8 ', vp8(10, 10))],

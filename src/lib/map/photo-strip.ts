@@ -534,6 +534,11 @@ function stripWebp(bytes: Uint8Array): StripResult {
   if (frame === null) {
     return { ok: false, error: 'unreadable' };
   }
+  if (canvas !== null && (canvas.width !== frame.width || canvas.height !== frame.height)) {
+    // A still image fills the whole canvas; a frame of another size would be decoded at its own
+    // size, so the canvas could hide an oversized frame from the size limit.
+    return { ok: false, error: 'unreadable' };
+  }
   const body = concat(parts);
   const header = new Uint8Array(12);
   header.set(bytes.subarray(0, 4));
@@ -543,8 +548,7 @@ function stripWebp(bytes: Uint8Array): StripResult {
     4,
   );
   header.set(bytes.subarray(8, 12), 8);
-  const size = canvas ?? frame;
-  return { ok: true, bytes: concat([header, body]), width: size.width, height: size.height };
+  return { ok: true, bytes: concat([header, body]), width: frame.width, height: frame.height };
 }
 
 /**
@@ -594,7 +598,8 @@ export function photoTypeOf(bytes: Uint8Array): PhotoType | null {
  * before) are dropped. WebP keeps `VP8X` (first and exactly 10 bytes), one `ALPH` after `VP8X`
  * and before a `VP8 ` frame, and the first `VP8 ` or `VP8L` frame up to the RIFF end, each rebuilt
  * from its declared size with a zero pad byte, keeps only the alpha flag of `VP8X` with its
- * reserved bytes zeroed and rewrites the RIFF size. Every byte after the end of the image is cut.
+ * reserved bytes zeroed and rewrites the RIFF size. A `VP8X` canvas that is not exactly the size
+ * of the kept frame makes the file `unreadable`, so the returned size is always the frame's. Every byte after the end of the image is cut.
  * No segment or chunk outside these lists survives, so EXIF other than the orientation, XMP, ICC,
  * comments and text chunks are gone; bytes inside a kept segment, such as DQT or DHT tables, are
  * copied as they are.

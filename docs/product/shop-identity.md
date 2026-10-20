@@ -320,7 +320,9 @@ having re-encoded the image, because a phone photo can carry its GPS position:
   other chunk, each together with its pad byte when the chunk size is odd,
   which removes `EXIF`, `XMP `, `ICCP` and C2PA chunks. Walk to byte 8 plus
   the RIFF size and cut every byte after it. `VP8X` must be the first chunk
-  and exactly 10 bytes, otherwise the photo could not be read. Keep only the
+  and exactly 10 bytes, and its canvas width and height must equal those of
+  the kept frame, otherwise the photo could not be read; the 1 to 4096 limit
+  is then checked on the frame size. Keep only the
   first frame chunk, and one `ALPH` only after `VP8X`, before the frame and
   only with a `VP8 ` frame (a `VP8L` frame carries its own alpha). Rebuild every kept chunk
   from its declared size with a zero pad byte, keep only the alpha flag

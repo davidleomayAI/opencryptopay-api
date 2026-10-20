@@ -20,6 +20,11 @@ import {
   simplePng,
   simpleWebp,
   sof,
+  vp8,
+  vp8l,
+  vp8x,
+  webp,
+  webpChunk,
 } from './photo-fixtures';
 import { keyFor } from './keys';
 
@@ -229,6 +234,44 @@ describe('preparePhoto stored size and DNL', () => {
       ok: false,
       error: 'Photo 1 must be 1 to 4096 pixels wide and high',
     });
+  });
+});
+
+describe('preparePhoto extended WebP size', () => {
+  function extended(frame: Uint8Array, width = 1, height = 1): string {
+    return base64(webp([webpChunk('VP8X', vp8x(0, width, height)), frame]));
+  }
+
+  it('skips a small VP8X canvas over an oversized frame', () => {
+    for (const frame of [
+      webpChunk('VP8 ', vp8(16383, 16383)),
+      webpChunk('VP8L', vp8l(16384, 16384)),
+    ]) {
+      expect(preparePhoto({ contentType: 'image/webp', data: extended(frame) }, 0)).toEqual({
+        ok: false,
+        error: 'Photo 1 could not be read',
+      });
+    }
+  });
+
+  it('skips a matching canvas and frame over 4096 pixels', () => {
+    expect(
+      preparePhoto(
+        {
+          contentType: 'image/webp',
+          data: extended(webpChunk('VP8L', vp8l(4097, 8)), 4097, 8),
+        },
+        0,
+      ),
+    ).toEqual({ ok: false, error: 'Photo 1 must be 1 to 4096 pixels wide and high' });
+  });
+
+  it('stores a VP8X canvas that matches its frame', () => {
+    const result = preparePhoto(
+      { contentType: 'image/webp', data: extended(webpChunk('VP8 ', vp8(640, 480)), 640, 480) },
+      0,
+    );
+    expect(result.ok && [result.photo.width, result.photo.height]).toEqual([640, 480]);
   });
 });
 
