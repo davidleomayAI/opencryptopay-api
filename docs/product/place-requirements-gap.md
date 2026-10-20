@@ -22,7 +22,7 @@ Every row below that is not "met" is a defect against the requirements.
 | R4  | Name, description | met                                   | not met    | 0 of 193 described  | not met |
 | R5  | Shop type         | met                                   | not met    | no enum (see R5)    | not met |
 | R6  | Enforcement       | met except coordinates at the address | not met    | 193 of 193 accepted | n/a     |
-| R7  | NOSTR identity    | accepted, not enforced                | not met    | no key stored       | not met |
+| R7  | NOSTR identity    | met                                   | not met    | no key stored       | not met |
 
 ## Live data
 

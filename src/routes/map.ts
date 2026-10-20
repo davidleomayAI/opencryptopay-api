@@ -76,8 +76,8 @@ function checkIngest(
  * @param deps - Store, BTC Map environment, and fetch.
  * @param raw - Request JSON, or null when the body is not JSON.
  * @returns 400 with the validator message, 409 for a stale revision or a key
- * conflict (R7, R8), 201 when inserted, or 200 when replaced. `id` is the npub,
- * or null for a place stored without a key.
+ * conflict (R7, R8), 201 when inserted, or 200 when replaced. `id` is the npub
+ * of the key the body carries.
  */
 export async function putPlace(
   deps: {
