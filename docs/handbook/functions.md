@@ -257,7 +257,7 @@
 - **Purpose:** File extension of a stored photo type in `/map/photos/{sha256}.{ext}`, so each file has exactly one URL.
 - **Inputs:** A stored content type.
 - **Returns / side effects:** `jpg`, `png`, or `webp`. No I/O.
-- **Used by:** `toPublicMapPlace`, `toPublicMapPlaceDetail`, and `mapRoutes` on `PUT /map/places/photos` and `GET /map/photos/:file`.
+- **Used by:** `publicPhoto` (and through it `toPublicMapPlace`, `toPublicMapPlaceDetail` and `mapRoutes` on `PUT /map/places/photos`), and `mapRoutes` on `GET /map/photos/:file`.
 
 ## Function: normalizePhotoUpload
 
