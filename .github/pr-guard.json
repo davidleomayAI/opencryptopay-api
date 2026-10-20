@@ -1,0 +1,27 @@
+{
+  "schema": "pr-guard/v1",
+  "a38": {
+    "enforce": ["develop"],
+    "exclude": ["main"],
+    "default": "enforce"
+  },
+  "workflow_approval": {
+    "enabled": true,
+    "workflows": [".github/workflows/ci.yaml"]
+  },
+  "lifecycle": {
+    "enabled": true,
+    "auto_ready": true,
+    "required_workflows": [
+      ".github/workflows/ci.yaml",
+      ".github/workflows/db-change-notice.yaml"
+    ],
+    "ignored_workflows": [".github/workflows/a38-guard.yml"],
+    "required_checks": {
+      ".github/workflows/ci.yaml": [
+        "Typecheck, Lint, Handbook, E2E-check, Test (100% coverage), Build, E2E"
+      ],
+      ".github/workflows/db-change-notice.yaml": ["Database change notice"]
+    }
+  }
+}

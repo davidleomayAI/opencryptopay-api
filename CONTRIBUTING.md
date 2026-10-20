@@ -58,3 +58,14 @@ Publish workflows need these Actions secrets:
 | ----------------- | --------------------------------------------------------------------------- |
 | `DOCKER_USERNAME` | Docker Hub username for the push                                            |
 | `DOCKER_PASSWORD` | Docker Hub access token with read and write on `dfxswiss/opencryptopay-api` |
+
+## A38
+
+This repository follows the A38 standard in DFXswiss/agent
+([docs/a38.md](https://github.com/DFXswiss/agent/blob/88581c74937b8f3eaaccad637d1a7d7b34fe68a2/docs/a38.md#adopting-a38-in-a-repository),
+[docs/a38-guard.md](https://github.com/DFXswiss/agent/blob/88581c74937b8f3eaaccad637d1a7d7b34fe68a2/docs/a38-guard.md)).
+
+- [`.github/a38.json`](.github/a38.json) lists the pull-request jobs the author measures locally.
+- [`.github/pr-guard.json`](.github/pr-guard.json) enforces A38 on `develop`. `main` is the release pull request and stays out of scope. `workflow_approval` releases the listed fork `pull_request` jobs after an enforce pass.
+- [`.github/workflows/a38-guard.yml`](.github/workflows/a38-guard.yml) is `dfx pr guard`. The action is pinned to a commit. The job does not check out the pull request.
+
