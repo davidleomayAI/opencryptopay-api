@@ -5,7 +5,7 @@
 - **Purpose:** Trim a pin origin and accept only `^[a-z0-9][a-z0-9-]{0,31}$`. A leading digit is valid. Uppercase tokens such as SPAR are invalid.
 - **Inputs:** Unknown value, typically a JSON field or the `origin` query string.
 - **Returns / side effects:** `{ ok: true, value }` with the trimmed origin, or `{ ok: false, error: "Place origin is invalid" }`. No I/O.
-- **Used by:** `normalizeMapPlace`, `normalizeMapPlaceKey`, `mapRoutes` on `GET /map/places`, and `adminRoutes` when an internal-id body includes `origin`.
+- **Used by:** `normalizeMapPlace`, `normalizeMapPlaceKey`, `normalizePhotoUpload`, `mapRoutes` on `GET /map/places`, and `adminRoutes` when an internal-id body includes `origin`.
 
 ## Function: normalizeExternalId
 
