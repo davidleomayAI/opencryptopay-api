@@ -3,7 +3,9 @@
 This note compares the [place requirements](place-requirements.md) (target)
 with the current state. It was checked on 2026-10-16 against:
 
-- code: `develop` at `707b349`
+- code: `develop` at `707b349`; the code column of the R7 row describes
+  #26 (steps 1a, 2 and 1b of [shop-identity.md](shop-identity.md)), which
+  is not on `develop` at that commit
 - production: `api.opencryptopay.io`, image built from `e603b76a` (#17), which
   does not contain #18 (street, house number, postal code, and city fields)
   or #19 (the `daily` and `olderThan30Days` activity levels)
@@ -22,7 +24,7 @@ Every row below that is not "met" is a defect against the requirements.
 | R4  | Name, description | met                                   | not met    | 0 of 193 described  | not met |
 | R5  | Shop type         | met                                   | not met    | no enum (see R5)    | not met |
 | R6  | Enforcement       | met except coordinates at the address | not met    | 193 of 193 accepted | n/a     |
-| R7  | NOSTR identity    | met                                   | not met    | no key stored       | not met |
+| R7  | NOSTR identity    | met with #26                          | not met    | no key stored       | not met |
 
 ## Live data
 

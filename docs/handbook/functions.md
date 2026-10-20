@@ -82,14 +82,14 @@
 - **Purpose:** Check a NIP-01 public key (R7): exactly 64 lowercase hex characters naming the x coordinate of a point on secp256k1. The x value must be below the field prime and `x³ + 7` must be a square modulo that prime (Euler's criterion). An `npub`, uppercase hex, and any other form are rejected.
 - **Inputs:** Any JSON value.
 - **Returns / side effects:** True or false. No I/O.
-- **Used by:** `normalizeMapPlace`, and `mapRoutes` on `GET /map/places/:id` for the hex form.
+- **Used by:** `normalizeMapPlace`, `normalizePhotoUpload`, and `mapRoutes` on `GET /map/places/:id` for the hex form.
 
 ## Function: npubEncode
 
 - **Purpose:** NIP-19 `npub` (bech32, prefix `npub`) of a public key. The npub is never stored; it is computed wherever a shop id is shown.
 - **Inputs:** A key accepted by `isNostrPubkey`.
 - **Returns / side effects:** The 63-character `npub1…` string. No I/O.
-- **Used by:** `toPublicMapPlace`, `putPlace`, and `mapRoutes` on `POST /map/places` and for the redirect of `GET /map/places/:id`.
+- **Used by:** `toPublicMapPlace`, `putPlace`, `adminRoutes` for the `npub` of an internal-id `PUT`, and `mapRoutes` on `POST /map/places` and for the redirect of `GET /map/places/:id`.
 
 ## Function: npubDecode
 
@@ -103,7 +103,7 @@
 - **Purpose:** Decide whether a place write is refused, in the order R8 and R7 fix. First the revision: once a revision is stored for the origin and external id, a write without one, or with one that is not higher, is `Stale revision`. Then the key, only when the write carries one: a row that already has a key refuses a different key with `nostrPubkey of a place cannot change`; otherwise a key reserved for another origin or external id is `nostrPubkey belongs to another place`. So when both key rules break, the stored key decides.
 - **Inputs:** The stored revision, the sent revision, whether the pair has a row and that row's key, the sent key, the pair the sent key is reserved for, and the pair of the write.
 - **Returns / side effects:** The 409 text, or null when the write may go ahead. No I/O.
-- **Used by:** `MemoryMapPlaceStore` and `SqliteMapPlaceStore` inside `insertIfNew` and `upsert`, before anything is stored.
+- **Used by:** `MemoryMapPlaceStore` and `SqliteMapPlaceStore` inside `insertIfNew` and `upsert`, and without revisions inside `replaceById`, before anything is stored.
 
 ## Function: placeActivity
 
