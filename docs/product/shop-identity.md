@@ -6,10 +6,9 @@ and step 4 in openCryptoPay/landingPage. A change that builds a part of this add
 [endpoints.md](../handbook/endpoints.md), its exported functions to
 [functions.md](../handbook/functions.md) and its columns and tables to
 [map-place.sql](../schema/map-place.sql) in that same change, and documents
-any new environment variable in the README. Step 1a adds R7 to
-[place-requirements.md](place-requirements.md) and records it as accepted,
-not enforced, in [place-requirements-gap.md](place-requirements-gap.md);
-step 1b updates that entry to enforced.
+any new environment variable in the README. R7 is in
+[place-requirements.md](place-requirements.md) and recorded as met in
+[place-requirements-gap.md](place-requirements-gap.md).
 
 Every shop is registered with a NOSTR public key. That key is the shop's
 identifier everywhere: in the API, in the public page

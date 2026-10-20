@@ -178,11 +178,13 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
    including an unparseable transaction time, out of `GET /map/places`.
 2. DFX.swiss: send a short name that may include the street and must not
    contain the postal code as a standalone token, a description, the shop
-   type, the full address, and coordinates for every SPAR shop through
-   `PUT /map/places`.
+   type, the full address, coordinates and the shop's `nostrPubkey` (one key
+   pair per SPAR shop, created and kept by DFX.swiss) for every SPAR shop
+   through `PUT /map/places`, with a `revision` on every write.
 3. 21.gifts: collect a short name that may include the street and must not
    contain the postal code as a standalone token, a structured address, and a
-   description for every shop, and send them with the shop type.
+   description for every shop, and send them with the shop type, the shop's
+   `nostrPubkey` and a `revision` on every write, plus the shop's photos.
 4. Production: release `develop` so that R1 is served with all five levels.
    The release stores at most one payment date per shop: the UTC date of its
    latest transaction, and only if that date lies within the last seven.
