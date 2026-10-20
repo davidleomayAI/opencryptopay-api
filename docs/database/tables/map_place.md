@@ -28,6 +28,7 @@ Source: [src/lib/map/store.ts](../../../src/lib/map/store.ts)
 | `last_transaction_at` | Free text               | `TEXT`        | Yes      | –           | –          |
 | `activity`            | ENUM                    | `TEXT`        | No       | `none`      | –          |
 | `activity_until`      | Free text               | `TEXT`        | Yes      | –           | –          |
+| `nostr_pubkey`        | Free text               | `TEXT`        | Yes      | –           | –          |
 
 ## Indexes
 
@@ -36,6 +37,7 @@ Source: [src/lib/map/store.ts](../../../src/lib/map/store.ts)
 | `activity_until`        | No     | index             | No      |
 | `country`               | No     | index             | No      |
 | `id`                    | Yes    | primary key       | No      |
+| `nostr_pubkey`          | Yes    | index             | No      |
 | `origin`, `external_id` | Yes    | unique constraint | No      |
 
 ## Referenced by
@@ -43,6 +45,7 @@ Source: [src/lib/map/store.ts](../../../src/lib/map/store.ts)
 | Table                   | Column     | Points to |
 | ----------------------- | ---------- | --------- |
 | `map_place_payment_day` | `place_id` | `id`      |
+| `map_place_photo`       | `place_id` | `id`      |
 | `map_place_support`     | `place_id` | `id`      |
 
 ## Relations
@@ -50,5 +53,6 @@ Source: [src/lib/map/store.ts](../../../src/lib/map/store.ts)
 ```mermaid
 erDiagram
     "map_place_payment_day" }o--|| "map_place" : "place_id"
+    "map_place_photo" }o--|| "map_place" : "place_id"
     "map_place_support" }o--|| "map_place" : "place_id"
 ```

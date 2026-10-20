@@ -797,6 +797,10 @@ export const TABLE_TYPES: Readonly<Record<string, TableType | null>> = {
   map_place: { file: 'src/lib/map/place.ts', typeName: 'StoredMapPlace' },
   map_place_support: { file: 'src/lib/map/place.ts', typeName: 'MapPlaceSupport' },
   map_place_payment_day: null,
+  map_photo: { file: 'src/lib/map/photo.ts', typeName: 'PreparedPhoto' },
+  map_place_photo: null,
+  map_place_revision: null,
+  map_pubkey_reservation: null,
 };
 
 /**
