@@ -3,6 +3,7 @@ import { bodyLimit } from 'hono/body-limit';
 import type { AdminPublicKey } from '@/lib/admin/keys';
 import { verifyAdminRequest, type AdminReplayCache } from '@/lib/admin/signature';
 import type { FetchLike } from '@/lib/map/btcmap';
+import { PLACE_ACTIVITIES as PLACE_ACTIVITY_VALUES } from '@/lib/map/filter-catalog';
 import {
   normalizeExternalId,
   normalizeMapPlace,
@@ -36,13 +37,7 @@ type AdminEnv = {
 
 const MAX_ADMIN_BODY_BYTES = 64 * 1024;
 const FOUR_DIGIT_YEAR = /^\d{4}-/u;
-const PLACE_ACTIVITIES: ReadonlySet<string> = new Set([
-  'daily',
-  'within7Days',
-  'within30Days',
-  'olderThan30Days',
-  'none',
-]);
+const PLACE_ACTIVITIES: ReadonlySet<string> = new Set(PLACE_ACTIVITY_VALUES);
 
 function pathWithQuery(requestUrl: string): string {
   const url = new URL(requestUrl);

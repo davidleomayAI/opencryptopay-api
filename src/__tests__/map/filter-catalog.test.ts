@@ -3,9 +3,17 @@ import {
   isCatalogAsset,
   isCatalogBlockchain,
   matchesUnstatedPayment,
+  PLACE_ACTIVITIES,
   publicFilterResponse,
   unstatedPaymentSql,
 } from '@/lib/map/filter-catalog';
+import type { PlaceActivity } from '@/lib/map/place';
+
+type SameActivityList<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+
+const activityListMatchesPlace: SameActivityList<PlaceActivity, (typeof PLACE_ACTIVITIES)[number]> =
+  true;
 
 describe('payment-link filter catalog', () => {
   it('names the payment-link networks and assets, not test or inactive ones', () => {
@@ -80,6 +88,14 @@ describe('payment-link filter catalog', () => {
     });
     expect(merged.shopTypes).toEqual(['SPAR', 'Others']);
     expect(merged.shopNames).toEqual(['SPAR', 'others']);
+    expect(activityListMatchesPlace).toBe(true);
+    expect(merged.activities).toEqual([
+      'daily',
+      'within7Days',
+      'within30Days',
+      'olderThan30Days',
+      'none',
+    ]);
     expect(merged.countries).toEqual(['CH']);
     expect(merged.blockchains).toContain('Plasma');
     expect(merged.blockchains).toContain('Lightning');
@@ -99,6 +115,7 @@ describe('payment-link filter catalog', () => {
     expect(ethereum.assets).not.toContain('ONDO');
     expect(ethereum.assets).not.toContain('BTC');
     expect(ethereum.blockchains).toContain('Plasma');
+    expect(ethereum.activities).toBe(merged.activities);
 
     const plasma = publicFilterResponse(
       { countries: [], blockchains: ['Plasma'], assets: ['ONDO'] },

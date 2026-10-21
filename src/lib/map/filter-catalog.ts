@@ -12,6 +12,15 @@ const GIFTS_TECH_PROVIDER = '21.gifts';
 const GIFTS_BLOCKCHAIN = 'Lightning';
 const GIFTS_ASSET = 'BTC';
 
+/** Every activity a place can have, in filter order. Not limited to stored rows. */
+export const PLACE_ACTIVITIES = [
+  'daily',
+  'within7Days',
+  'within30Days',
+  'olderThan30Days',
+  'none',
+] as const;
+
 const DFX_BLOCKCHAINS: readonly string[] = [
   'Arbitrum',
   'Base',
@@ -102,6 +111,7 @@ export type PublicMapFilters = {
   countries: string[];
   blockchains: string[];
   assets: string[];
+  activities: typeof PLACE_ACTIVITIES;
   techProviders: MapFilterTechProvider[];
 };
 
@@ -247,7 +257,7 @@ export function unstatedPaymentSql(
  *
  * @param stored - Distinct countries, blockchains, and assets already stored.
  * @param blockchain - When set, top-level assets are limited to that network.
- * @returns Shop-type tokens, the deprecated shop-name alias, countries, networks, assets, and per-provider offers.
+ * @returns Shop-type tokens, the deprecated shop-name alias, countries, networks, assets, every activity value, and per-provider offers.
  */
 export function publicFilterResponse(
   stored: { countries: string[]; blockchains: string[]; assets: string[] },
@@ -259,6 +269,7 @@ export function publicFilterResponse(
     countries: stored.countries,
     blockchains: uniqueSorted([...DFX_BLOCKCHAINS, ...stored.blockchains]),
     assets: uniqueSorted([...assetsFor(blockchain), ...stored.assets]),
+    activities: PLACE_ACTIVITIES,
     techProviders: [
       {
         name: 'DFX.swiss',
