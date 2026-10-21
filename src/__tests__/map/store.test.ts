@@ -416,7 +416,12 @@ describe('MemoryMapPlaceStore', () => {
     store.insertIfNew({ ...input, externalId: 'complete', country: 'LI' });
     const blanks: Array<Partial<MapPlaceInput> & { externalId: string }> = [
       { externalId: 'empty-name', name: '', country: 'CH' },
-      { externalId: 'empty-description', name: 'Empty Description', description: '', country: 'DE' },
+      {
+        externalId: 'empty-description',
+        name: 'Empty Description',
+        description: '',
+        country: 'DE',
+      },
       { externalId: 'empty-street', name: 'Empty Street', street: '', country: 'AT' },
       { externalId: 'empty-house', name: 'Empty House', houseNumber: '', country: 'FR' },
       { externalId: 'empty-postal', name: 'Empty Postal', postalCode: '', country: 'IT' },
@@ -1287,9 +1292,7 @@ describe('MemoryMapPlaceStore exact name', () => {
 
   it('reports a stale revision and a changed key before the name', () => {
     const store = new MemoryMapPlaceStore();
-    const own = written(
-      store.insertIfNew({ ...input, name: 'Own Shop', nostrPubkey: keyA }, 2),
-    );
+    const own = written(store.insertIfNew({ ...input, name: 'Own Shop', nostrPubkey: keyA }, 2));
     written(
       store.insertIfNew({
         ...input,
@@ -1330,12 +1333,12 @@ describe('MemoryMapPlaceStore exact name', () => {
       error: nameError,
     });
     expect(store.getById(own.id)).toEqual(before);
-    expect(
-      replace(store, own.id, { ...input, name: 'Own Shop', nostrPubkey: keyA }),
-    ).toMatchObject({
-      status: 'updated',
-      place: { name: 'Own Shop' },
-    });
+    expect(replace(store, own.id, { ...input, name: 'Own Shop', nostrPubkey: keyA })).toMatchObject(
+      {
+        status: 'updated',
+        place: { name: 'Own Shop' },
+      },
+    );
     expect(
       replace(store, own.id, { ...input, name: 'Free Shop', nostrPubkey: keyA }),
     ).toMatchObject({
