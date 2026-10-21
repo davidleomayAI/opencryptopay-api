@@ -1,4 +1,6 @@
 import { matchesUnstatedPayment } from '@/lib/map/filter-catalog';
+import type { PreparedPhoto } from '@/lib/map/photo';
+import type { PhotoType } from '@/lib/map/photo-strip';
 import {
   placeActivity,
   type MapPlaceInput,
@@ -6,6 +8,7 @@ import {
   type MapPlaceSupport,
   type PlaceActivity,
   type StoredMapPlace,
+  type StoredPlacePhoto,
 } from '@/lib/map/place';
 
 const DEFAULT_TECH_PROVIDER = 'DFX.swiss';
@@ -32,6 +35,7 @@ export const MAP_PLACE_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS map_place (
   last_transaction_at TEXT,
   activity TEXT NOT NULL DEFAULT 'none',
   activity_until TEXT,
+  nostr_pubkey TEXT,
   UNIQUE (origin, external_id)
 );
 CREATE TABLE IF NOT EXISTS map_place_support (
@@ -50,12 +54,105 @@ CREATE TABLE IF NOT EXISTS map_place_payment_day (
   PRIMARY KEY (place_id, day),
   FOREIGN KEY (place_id) REFERENCES map_place(id) ON DELETE CASCADE
 );
-CREATE INDEX IF NOT EXISTS map_place_activity_until ON map_place(activity_until)`;
+CREATE INDEX IF NOT EXISTS map_place_activity_until ON map_place(activity_until);
+CREATE UNIQUE INDEX IF NOT EXISTS map_place_nostr_pubkey ON map_place (nostr_pubkey);
+CREATE TABLE IF NOT EXISTS map_pubkey_reservation (
+  nostr_pubkey TEXT PRIMARY KEY,
+  origin TEXT NOT NULL,
+  external_id TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS map_place_revision (
+  origin TEXT NOT NULL,
+  external_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  PRIMARY KEY (origin, external_id)
+);
+CREATE TABLE IF NOT EXISTS map_photo (
+  sha256 TEXT PRIMARY KEY,
+  content_type TEXT NOT NULL CHECK (content_type IN ('image/jpeg', 'image/png', 'image/webp')),
+  width INTEGER NOT NULL CHECK (width BETWEEN 1 AND 4096),
+  height INTEGER NOT NULL CHECK (height BETWEEN 1 AND 4096),
+  data BLOB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS map_place_photo (
+  place_id TEXT NOT NULL,
+  position INTEGER NOT NULL CHECK (position BETWEEN 0 AND 9),
+  sha256 TEXT NOT NULL,
+  caption TEXT,
+  PRIMARY KEY (place_id, position),
+  FOREIGN KEY (place_id) REFERENCES map_place(id) ON DELETE CASCADE,
+  FOREIGN KEY (sha256) REFERENCES map_photo(sha256)
+)`;
 
 /** Optional AND predicates for `list`, applied before sort and limit. */
 export type MapPlaceListFilter = MapPlaceQueryFilter & {
   origin?: string;
 };
+
+/** Why a place write changed nothing (R7, R8). Each is a 409 body text. */
+export type MapPlaceWriteError =
+  | 'Stale revision'
+  | 'nostrPubkey belongs to another place'
+  | 'nostrPubkey of a place cannot change';
+
+/** Outcome of `insertIfNew` and `upsert`. */
+export type MapPlaceWriteResult =
+  { ok: true; created: boolean; place: StoredMapPlace } | { ok: false; error: MapPlaceWriteError };
+
+/** Outcome of `replacePhotos`. */
+export type MapPhotoWriteResult =
+  | { ok: true; photos: StoredPlacePhoto[] }
+  | { ok: false; error: 'Place not found' | 'Stale revision' };
+
+/** A stored photo file served by `GET /map/photos/{sha256}.{ext}`. */
+export type MapPhotoFile = { contentType: PhotoType; data: Uint8Array };
+
+/** Outcome of `deleteByKey`. */
+export type MapPlaceDeleteResult =
+  { ok: true; deleted: boolean } | { ok: false; error: 'Stale revision' };
+
+/**
+ * Decide whether a place write is refused, in the order R8 and R7 fix: a stale
+ * or missing revision first, then a changed key, then a key reserved for
+ * another pair. Both stores call this inside their write, before anything is
+ * stored.
+ *
+ * @param check - The highest stored revision of the pair, the revision sent,
+ * whether the pair has a row and that row's key, the key sent, and the pair a
+ * sent key is already reserved for.
+ * @returns The 409 text, or null when the write may go ahead.
+ */
+export function placeWriteConflict(check: {
+  storedRevision: number | undefined;
+  revision: number | undefined;
+  rowExists: boolean;
+  storedKey: string | null;
+  key: string | undefined;
+  reservedFor: { origin: string; externalId: string } | undefined;
+  origin: string;
+  externalId: string;
+}): MapPlaceWriteError | null {
+  if (
+    check.storedRevision !== undefined &&
+    (check.revision === undefined || check.revision <= check.storedRevision)
+  ) {
+    return 'Stale revision';
+  }
+  if (check.key === undefined) {
+    return null;
+  }
+  if (check.rowExists && check.storedKey !== null) {
+    return check.key === check.storedKey ? null : 'nostrPubkey of a place cannot change';
+  }
+  if (
+    check.reservedFor !== undefined &&
+    (check.reservedFor.origin !== check.origin || check.reservedFor.externalId !== check.externalId)
+  ) {
+    return 'nostrPubkey belongs to another place';
+  }
+  return null;
+}
 
 function compareSupport(a: MapPlaceSupport, b: MapPlaceSupport): number {
   if (a.blockchain < b.blockchain) {
@@ -103,6 +200,18 @@ function copyStoredPlace(place: StoredMapPlace): StoredMapPlace {
       blockchain: item.blockchain,
       asset: item.asset,
     })),
+    photos: place.photos.map((photo) => ({ ...photo })),
+  };
+}
+
+/** The stored reference of a prepared photo, without its bytes. */
+function storedPhotoOf(photo: PreparedPhoto): StoredPlacePhoto {
+  return {
+    sha256: photo.sha256,
+    contentType: photo.contentType,
+    width: photo.width,
+    height: photo.height,
+    caption: photo.caption,
   };
 }
 
@@ -112,7 +221,8 @@ function copyStoredPlace(place: StoredMapPlace): StoredMapPlace {
  * `SqliteMapPlaceStore` applies the same rule in SQL via `COMPLETE_PLACE_SQL` for its public list.
  * Empty when the pin is complete.
  * A row is complete when name, description, street, house number, postal code,
- * city, and country are non-empty, shop type is SPAR or Others, and
+ * city, and country are non-empty, shop type is SPAR or Others, a NOSTR key is
+ * stored (R7), and
  * lastTransactionAt is null or a parseable instant with a four-digit year, which
  * matches SQLite `julianday()` for the canonical ISO instants this service writes.
  *
@@ -151,6 +261,9 @@ export function placeProblems(place: StoredMapPlace): string[] {
     (/^\d{4}-/u.test(lastTransactionAt) && Number.isFinite(Date.parse(lastTransactionAt)));
   if (!lastInstantOk) {
     problems.push('lastTransactionAt is not a valid instant');
+  }
+  if (place.nostrPubkey === null) {
+    problems.push('nostrPubkey is missing');
   }
   return problems;
 }
@@ -206,11 +319,17 @@ function toStoredPlace(input: MapPlaceInput, id: string, createdAt: string): Sto
     city: input.city,
     country: input.country,
     supports: storedSupports(input.supports),
+    photos: [],
+    nostrPubkey: input.nostrPubkey ?? null,
     lastTransactionAt: null,
     activity: 'none',
     id,
     createdAt,
   };
+}
+
+function pairKey(origin: string, externalId: string): string {
+  return `${origin}\n${externalId}`;
 }
 
 function utcDayFromMs(ms: number): string {
@@ -240,7 +359,7 @@ function storedPaymentDays(days: Set<string> | undefined): string[] {
 export type AdminActivityWrite =
   { kind: 'keep' } | { kind: 'set'; activity: PlaceActivity } | { kind: 'recompute' };
 
-/** One public-id replace. The id is the address and is not a column this write changes. */
+/** One internal-id replace. The id is the address and is not a column this write changes. */
 export type ReplaceByIdInput = {
   id: string;
   content: MapPlaceInput;
@@ -250,16 +369,22 @@ export type ReplaceByIdInput = {
   nowMs: number;
 };
 
-/** Result of `replaceById`. `missing` and `conflict` write nothing. */
+/**
+ * Result of `replaceById`. `missing`, `conflict` (another row has the pair) and
+ * `keyConflict` (R7) write nothing.
+ */
 export type ReplaceByIdResult =
-  { status: 'updated'; place: StoredMapPlace } | { status: 'missing' } | { status: 'conflict' };
+  | { status: 'updated'; place: StoredMapPlace }
+  | { status: 'missing' }
+  | { status: 'conflict' }
+  | { status: 'keyConflict'; error: MapPlaceWriteError };
 
 /**
  * Store for map pins. The SQLite driver is `sqlite.ts`. Tests use the memory store.
  */
 export interface MapPlaceStore {
-  insertIfNew(input: MapPlaceInput): { created: boolean; place: StoredMapPlace };
-  upsert(input: MapPlaceInput): { created: boolean; place: StoredMapPlace };
+  insertIfNew(input: MapPlaceInput, revision?: number): MapPlaceWriteResult;
+  upsert(input: MapPlaceInput, revision?: number): MapPlaceWriteResult;
   replaceById(input: ReplaceByIdInput): ReplaceByIdResult;
   recordTransaction(
     origin: string,
@@ -268,10 +393,18 @@ export interface MapPlaceStore {
     nowMs: number,
   ): StoredMapPlace | undefined;
   refreshActivity(nowMs: number): void;
-  deleteByKey(origin: string, externalId: string): boolean;
+  deleteByKey(origin: string, externalId: string, revision?: number): MapPlaceDeleteResult;
   getById(id: string): StoredMapPlace | undefined;
   deleteById(id: string): boolean;
+  replacePhotos(
+    origin: string,
+    nostrPubkey: string,
+    photos: PreparedPhoto[],
+    revision?: number,
+  ): MapPhotoWriteResult;
+  findPublicPhoto(sha256: string): MapPhotoFile | undefined;
   list(limit: number, filter?: MapPlaceListFilter): StoredMapPlace[];
+  findPublicByPubkey(pubkey: string): StoredMapPlace | undefined;
   listAll(): StoredMapPlace[];
   filters(blockchain?: string | undefined): {
     countries: string[];
@@ -288,6 +421,12 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
   readonly #rows: StoredMapPlace[] = [];
   readonly #paymentDays = new Map<string, Set<string>>();
   readonly #activityUntil = new Map<string, string>();
+  /** Every key a pair ever stored. Never shrinks (R7). */
+  readonly #reservations = new Map<string, { origin: string; externalId: string }>();
+  /** Highest accepted revision per pair. A place delete keeps it (R8). */
+  readonly #revisions = new Map<string, number>();
+  /** Each distinct photo file once, by the hash of its stripped bytes. */
+  readonly #photoFiles = new Map<string, MapPhotoFile>();
   readonly #now: () => Date;
 
   /**
@@ -298,62 +437,105 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Insert when the pair is new. An existing pair is returned unchanged.
+   * Insert when the pair is new. An existing pair is returned unchanged, except
+   * that a row without a key stores the key this write carries.
    *
    * @param input - Validated pin.
-   * @returns Whether this call inserted the row.
+   * @param revision - Request revision (R8), when sent.
+   * @returns Whether this call inserted the row, or the 409 text.
    */
-  insertIfNew(input: MapPlaceInput): { created: boolean; place: StoredMapPlace } {
-    const existing = this.#rows.find(
-      (row) => row.origin === input.origin && row.externalId === input.externalId,
-    );
-    if (existing !== undefined) {
-      return { created: false, place: copyStoredPlace(existing) };
-    }
-    const place = toStoredPlace(input, crypto.randomUUID(), this.#now().toISOString());
-    this.#rows.push(place);
-    return { created: true, place: copyStoredPlace(place) };
+  insertIfNew(input: MapPlaceInput, revision?: number): MapPlaceWriteResult {
+    return this.#write(input, revision, false);
   }
 
   /**
-   * Insert when the pair is new, otherwise replace every field of the stored pin.
+   * Insert when the pair is new, otherwise replace the pin's content (name, description,
+   * position, category, payment methods, tech provider, shop type, address, supports).
+   * The id, photos, timestamps and activity stay, and the stored revision changes only when
+   * one is sent. A stored key is kept; a row without a key stores the key this write carries.
    *
    * @param input - Validated pin.
-   * @returns Whether this call inserted the row.
+   * @param revision - Request revision (R8), when sent.
+   * @returns Whether this call inserted the row, or the 409 text.
    */
-  upsert(input: MapPlaceInput): { created: boolean; place: StoredMapPlace } {
+  upsert(input: MapPlaceInput, revision?: number): MapPlaceWriteResult {
+    return this.#write(input, revision, true);
+  }
+
+  #write(
+    input: MapPlaceInput,
+    revision: number | undefined,
+    replace: boolean,
+  ): MapPlaceWriteResult {
+    const pair = pairKey(input.origin, input.externalId);
     const existing = this.#rows.find(
       (row) => row.origin === input.origin && row.externalId === input.externalId,
     );
+    const conflict = placeWriteConflict({
+      storedRevision: this.#revisions.get(pair),
+      revision,
+      rowExists: existing !== undefined,
+      storedKey: existing?.nostrPubkey ?? null,
+      key: input.nostrPubkey,
+      reservedFor:
+        input.nostrPubkey === undefined ? undefined : this.#reservations.get(input.nostrPubkey),
+      origin: input.origin,
+      externalId: input.externalId,
+    });
+    if (conflict !== null) {
+      return { ok: false, error: conflict };
+    }
+    if (input.nostrPubkey !== undefined && !this.#reservations.has(input.nostrPubkey)) {
+      this.#reservations.set(input.nostrPubkey, {
+        origin: input.origin,
+        externalId: input.externalId,
+      });
+    }
+    if (revision !== undefined) {
+      this.#revisions.set(pair, revision);
+    }
     if (existing === undefined) {
-      return this.insertIfNew(input);
+      const place = toStoredPlace(input, crypto.randomUUID(), this.#now().toISOString());
+      this.#rows.push(place);
+      return { ok: true, created: true, place: copyStoredPlace(place) };
     }
-    existing.name = input.name;
-    existing.description = input.description;
-    existing.lat = input.lat;
-    existing.lon = input.lon;
-    existing.category = input.category;
-    existing.paymentMethods = input.paymentMethods;
-    existing.techProvider = input.techProvider ?? DEFAULT_TECH_PROVIDER;
-    existing.shopType = input.shopType;
-    existing.street = input.street;
-    existing.houseNumber = input.houseNumber;
-    existing.postalCode = input.postalCode;
-    existing.city = input.city;
-    existing.country = input.country;
-    existing.supports = storedSupports(input.supports);
-    return { created: false, place: copyStoredPlace(existing) };
+    if (existing.nostrPubkey === null && input.nostrPubkey !== undefined) {
+      existing.nostrPubkey = input.nostrPubkey;
+    }
+    if (replace) {
+      existing.name = input.name;
+      existing.description = input.description;
+      existing.lat = input.lat;
+      existing.lon = input.lon;
+      existing.category = input.category;
+      existing.paymentMethods = input.paymentMethods;
+      existing.techProvider = input.techProvider ?? DEFAULT_TECH_PROVIDER;
+      existing.shopType = input.shopType;
+      existing.street = input.street;
+      existing.houseNumber = input.houseNumber;
+      existing.postalCode = input.postalCode;
+      existing.city = input.city;
+      existing.country = input.country;
+      existing.supports = storedSupports(input.supports);
+    }
+    return { ok: true, created: false, place: copyStoredPlace(existing) };
   }
 
   /**
-   * Replace every stored fact of one public id except the id.
+   * Replace every stored fact of one internal id except the id, a stored key, the photos, the
+   * payment days and the pair's revision.
    * A missing id writes nothing. Another row with this origin and caller id writes nothing.
+   * A key follows R7 as in a source write, checked against the new pair: a row
+   * without a key stores the sent one unless it is reserved for another pair, and
+   * a stored key cannot change. The row's key reservation moves to the new pair.
+   * Revisions (R8) are neither checked nor stored.
    * `keep` does not change activity, the refresh deadline, or payment days.
    * `set` stores that token, clears the refresh deadline, and leaves payment days.
    * `recompute` leaves payment days and classifies from the written instant.
    *
    * @param input - Id, validated pin, timestamps, activity write, and clock.
-   * @returns A copy when updated, otherwise missing or conflict.
+   * @returns A copy when updated, otherwise missing, conflict, or `{ status: 'keyConflict', error }`
+   * with the R7 409 text.
    */
   replaceById(input: ReplaceByIdInput): ReplaceByIdResult {
     const existing = this.#rows.find((row) => row.id === input.id);
@@ -368,6 +550,27 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
     );
     if (conflict !== undefined) {
       return { status: 'conflict' };
+    }
+    const key = input.content.nostrPubkey;
+    const keyConflict = placeWriteConflict({
+      storedRevision: undefined,
+      revision: undefined,
+      rowExists: true,
+      storedKey: existing.nostrPubkey,
+      key,
+      reservedFor: key === undefined ? undefined : this.#reservations.get(key),
+      origin: input.content.origin,
+      externalId: input.content.externalId,
+    });
+    if (keyConflict !== null) {
+      return { status: 'keyConflict', error: keyConflict };
+    }
+    existing.nostrPubkey = existing.nostrPubkey ?? key ?? null;
+    if (existing.nostrPubkey !== null) {
+      this.#reservations.set(existing.nostrPubkey, {
+        origin: input.content.origin,
+        externalId: input.content.externalId,
+      });
     }
     existing.origin = input.content.origin;
     existing.externalId = input.content.externalId;
@@ -500,29 +703,120 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Remove the pin for this origin and external id.
+   * Remove the pin for this origin and external id. The pair's key reservations
+   * and revision stay.
    *
    * @param origin - Pin origin.
    * @param externalId - Caller id.
-   * @returns Whether a row was removed.
+   * @param revision - Request revision (R8), when sent. Stored also when no row matched.
+   * @returns Whether a row was removed, or `Stale revision`.
    */
-  deleteByKey(origin: string, externalId: string): boolean {
+  deleteByKey(origin: string, externalId: string, revision?: number): MapPlaceDeleteResult {
+    const pair = pairKey(origin, externalId);
+    const stored = this.#revisions.get(pair);
+    if (stored !== undefined && (revision === undefined || revision <= stored)) {
+      return { ok: false, error: 'Stale revision' };
+    }
+    if (revision !== undefined) {
+      this.#revisions.set(pair, revision);
+    }
     const existing = this.#rows.find(
       (row) => row.origin === origin && row.externalId === externalId,
     );
     if (existing === undefined) {
-      return false;
+      return { ok: true, deleted: false };
     }
     this.#paymentDays.delete(existing.id);
     this.#activityUntil.delete(existing.id);
     this.#rows.splice(this.#rows.indexOf(existing), 1);
-    return true;
+    this.#dropUnusedPhotos();
+    return { ok: true, deleted: true };
+  }
+
+  #dropUnusedPhotos(): void {
+    const used = new Set(this.#rows.flatMap((row) => row.photos.map((photo) => photo.sha256)));
+    for (const sha256 of [...this.#photoFiles.keys()]) {
+      if (!used.has(sha256)) {
+        this.#photoFiles.delete(sha256);
+      }
+    }
   }
 
   /**
-   * Read one pin by its public id.
+   * Replace every photo of the stored place with this key and origin, listed or
+   * not. Files no place uses any more are dropped.
    *
-   * @param id - Public id, compared exactly.
+   * @param origin - Origin that registered the place.
+   * @param nostrPubkey - The place's key.
+   * @param photos - Prepared photos in display order.
+   * @param revision - Request revision (R8), when sent; it shares the place's counter.
+   * @returns The stored photo list, `Place not found` when no place of that origin
+   * has the key, or `Stale revision`.
+   */
+  replacePhotos(
+    origin: string,
+    nostrPubkey: string,
+    photos: PreparedPhoto[],
+    revision?: number,
+  ): MapPhotoWriteResult {
+    const row = this.#rows.find(
+      (item) => item.nostrPubkey === nostrPubkey && item.origin === origin,
+    );
+    if (row === undefined) {
+      return { ok: false, error: 'Place not found' };
+    }
+    const pair = pairKey(row.origin, row.externalId);
+    const stored = this.#revisions.get(pair);
+    if (stored !== undefined && (revision === undefined || revision <= stored)) {
+      return { ok: false, error: 'Stale revision' };
+    }
+    if (revision !== undefined) {
+      this.#revisions.set(pair, revision);
+    }
+    for (const photo of photos) {
+      if (!this.#photoFiles.has(photo.sha256)) {
+        this.#photoFiles.set(photo.sha256, {
+          contentType: photo.contentType,
+          data: photo.data.slice(),
+        });
+      }
+    }
+    row.photos = photos.map(storedPhotoOf);
+    this.#dropUnusedPhotos();
+    return { ok: true, photos: row.photos.map((photo) => ({ ...photo })) };
+  }
+
+  /**
+   * A photo file that a complete place uses.
+   *
+   * @param sha256 - Hash of the stripped bytes.
+   * @returns A copy of the file, or undefined when no complete place shows it.
+   */
+  findPublicPhoto(sha256: string): MapPhotoFile | undefined {
+    const file = this.#photoFiles.get(sha256);
+    const shown = this.#rows.some(
+      (row) => isCompletePlace(row) && row.photos.some((photo) => photo.sha256 === sha256),
+    );
+    return file === undefined || !shown
+      ? undefined
+      : { contentType: file.contentType, data: file.data.slice() };
+  }
+
+  /**
+   * The complete pin that carries this key.
+   *
+   * @param pubkey - 64 lowercase hex characters.
+   * @returns A copy of the row, or undefined when no complete row has the key.
+   */
+  findPublicByPubkey(pubkey: string): StoredMapPlace | undefined {
+    const row = this.#rows.find((item) => item.nostrPubkey === pubkey && isCompletePlace(item));
+    return row === undefined ? undefined : copyStoredPlace(row);
+  }
+
+  /**
+   * Read one pin by its internal id.
+   *
+   * @param id - Internal id, compared exactly.
    * @returns A copy of the row, or undefined when the id is missing.
    */
   getById(id: string): StoredMapPlace | undefined {
@@ -534,10 +828,10 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Remove the pin with this public id.
-   * Resolves the row and then calls deleteByKey.
+   * Remove the pin with this internal id. Revisions (R8) are neither checked nor
+   * stored; the pair's key reservations and revision stay.
    *
-   * @param id - Public id, compared exactly.
+   * @param id - Internal id, compared exactly.
    * @returns Whether a row was removed. False when the id is missing.
    */
   deleteById(id: string): boolean {
@@ -545,7 +839,11 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
     if (existing === undefined) {
       return false;
     }
-    return this.deleteByKey(existing.origin, existing.externalId);
+    this.#paymentDays.delete(existing.id);
+    this.#activityUntil.delete(existing.id);
+    this.#rows.splice(this.#rows.indexOf(existing), 1);
+    this.#dropUnusedPhotos();
+    return true;
   }
 
   /**
@@ -609,5 +907,8 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
     this.#rows.length = 0;
     this.#paymentDays.clear();
     this.#activityUntil.clear();
+    this.#reservations.clear();
+    this.#revisions.clear();
+    this.#photoFiles.clear();
   }
 }

@@ -356,9 +356,13 @@ describe('enum detection', () => {
 
   test('TABLE_TYPES matches the live StoredMapPlace columns', () => {
     expect(Object.keys(TABLE_TYPES).sort()).toEqual([
+      'map_photo',
       'map_place',
       'map_place_payment_day',
+      'map_place_photo',
+      'map_place_revision',
       'map_place_support',
+      'map_pubkey_reservation',
     ]);
     const program = createProgram(REPO_ROOT);
     const found = enumColumnsOf(
@@ -575,11 +579,16 @@ describe('generate', () => {
     expect([...first.keys()].sort()).toEqual(
       [
         'docs/database/README.md',
+        'docs/database/tables/map_photo.md',
         'docs/database/tables/map_place.md',
         'docs/database/tables/map_place_payment_day.md',
+        'docs/database/tables/map_place_photo.md',
+        'docs/database/tables/map_place_revision.md',
         'docs/database/tables/map_place_support.md',
+        'docs/database/tables/map_pubkey_reservation.md',
       ].sort(),
     );
+    expect(first.get('docs/database/tables/map_photo.md')).toMatch(/`content_type` +\| ENUM /);
     const support = first.get('docs/database/tables/map_place_support.md');
     expect(support).toContain('place_id');
     expect(support).toContain('map_place');

@@ -3,7 +3,9 @@
 This note compares the [place requirements](place-requirements.md) (target)
 with the current state. It was checked on 2026-10-16 against:
 
-- code: `develop` at `707b349`
+- code: `develop` at `707b349`; the code column of the R7 row describes
+  #26 (steps 1a, 2 and 1b of [shop-identity.md](shop-identity.md)), which
+  is not on `develop` at that commit
 - production: `api.opencryptopay.io`, image built from `e603b76a` (#17), which
   does not contain #18 (street, house number, postal code, and city fields)
   or #19 (the `daily` and `olderThan30Days` activity levels)
@@ -22,6 +24,7 @@ Every row below that is not "met" is a defect against the requirements.
 | R4  | Name, description | met                                   | not met    | 0 of 193 described  | not met |
 | R5  | Shop type         | met                                   | not met    | no enum (see R5)    | not met |
 | R6  | Enforcement       | met except coordinates at the address | not met    | 193 of 193 accepted | n/a     |
+| R7  | NOSTR identity    | met with #26                          | not met    | no key stored       | not met |
 
 ## Live data
 
@@ -150,6 +153,25 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
 - **Data:** every one of the 193 production rows was accepted without a
   complete address, description, or shop type.
 
+## R7 NOSTR identity
+
+- **Target:** every shop has a NOSTR public key that is valid, unique over
+  all sources and over time, fixed once stored, and its public id in every
+  public answer (the signed admin interface keeps the internal id); a source
+  write without one is rejected.
+- **Code:** met with #26 (steps 1a and 1b of [shop-identity.md](shop-identity.md)).
+  `POST` and `PUT /map/places` require and validate `nostrPubkey` (400 without
+  it; a signed admin `PUT` by internal id may leave it out and keeps the stored
+  key, 400 only when the row has none), reserve it for its origin and external id, and refuse a changed key or
+  a key of another shop with 409. A row stored before step 1a has no key, is
+  not complete, and stays out of `GET /map/places`, `GET /map/places/{npub}`
+  and the countries of `GET /map/filters` until a write adds one.
+- **Data:** the column is new, so no stored shop has a key yet, and none is
+  public until its source sends one.
+- **Sources:** both send keys with step 3 of shop-identity.md, which ships
+  together with this API change; until a source's next write a shop has no
+  key and is not public.
+
 ## What closes the gap
 
 1. API: done on this branch, except that coordinates lying at the address is
@@ -160,11 +182,13 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
    including an unparseable transaction time, out of `GET /map/places`.
 2. DFX.swiss: send a short name that may include the street and must not
    contain the postal code as a standalone token, a description, the shop
-   type, the full address, and coordinates for every SPAR shop through
-   `PUT /map/places`.
+   type, the full address, coordinates and the shop's `nostrPubkey` (one key
+   pair per SPAR shop, created and kept by DFX.swiss) for every SPAR shop
+   through `PUT /map/places`, with a `revision` on every write.
 3. 21.gifts: collect a short name that may include the street and must not
    contain the postal code as a standalone token, a structured address, and a
-   description for every shop, and send them with the shop type.
+   description for every shop, and send them with the shop type, the shop's
+   `nostrPubkey` and a `revision` on every write, plus the shop's photos.
 4. Production: release `develop` so that R1 is served with all five levels.
    The release stores at most one payment date per shop: the UTC date of its
    latest transaction, and only if that date lies within the last seven.

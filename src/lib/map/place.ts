@@ -4,6 +4,8 @@
  */
 
 import { isCatalogAsset, isCatalogBlockchain } from '@/lib/map/filter-catalog';
+import { isNostrPubkey, npubEncode } from '@/lib/map/nostr-key';
+import { photoExtension, type PhotoType } from '@/lib/map/photo-strip';
 
 /** Allowed shop type values. */
 export const SHOP_TYPES = ['SPAR', 'Others'] as const;
@@ -32,12 +34,39 @@ export type MapPlaceInput = {
   city: string;
   country: string;
   supports: MapPlaceSupport[];
+  /**
+   * NIP-01 public key, the shop id (R7). `normalizeMapPlace` requires it
+   * (step 1b); the type stays optional because stored rows from before step 1a
+   * have none and the stores keep a stored key when a write leaves it out.
+   */
+  nostrPubkey?: string;
 };
 
 export type PlaceActivity = 'daily' | 'within7Days' | 'within30Days' | 'olderThan30Days' | 'none';
 
-export type StoredMapPlace = Omit<MapPlaceInput, 'techProvider'> & {
+/** One stored photo of a place, in display order. The file is stored once per hash. */
+export type StoredPlacePhoto = {
+  sha256: string;
+  contentType: PhotoType;
+  width: number;
+  height: number;
+  caption: string | null;
+};
+
+/** A photo as the public API shows it; `url` is absolute. */
+export type PublicPhoto = {
+  url: string;
+  width: number;
+  height: number;
+  caption: string | null;
+};
+
+export type StoredMapPlace = Omit<MapPlaceInput, 'techProvider' | 'nostrPubkey'> & {
   id: string;
+  /** Photos in display order; the first is the cover. */
+  photos: StoredPlacePhoto[];
+  /** Null for a row stored without a key; such a row is not complete. */
+  nostrPubkey: string | null;
   createdAt: string;
   techProvider: string;
   lastTransactionAt: string | null;
@@ -46,7 +75,8 @@ export type StoredMapPlace = Omit<MapPlaceInput, 'techProvider'> & {
 
 /** Fields the public map may show. The caller's own id stays off this list. */
 export type PublicMapPlace = {
-  id: string;
+  /** The shop's npub, or null for a row without a key (only outside the public list). */
+  id: string | null;
   origin: string;
   name: string;
   description: string;
@@ -64,7 +94,12 @@ export type PublicMapPlace = {
   country: string;
   supports: MapPlaceSupport[];
   activity: PlaceActivity;
+  /** The first photo without its caption, or null. */
+  coverPhoto: Omit<PublicPhoto, 'caption'> | null;
 };
+
+/** One shop of `GET /map/places/{npub}`: the list entry plus every photo. */
+export type PublicMapPlaceDetail = PublicMapPlace & { photos: PublicPhoto[] };
 
 /** Query fields that restrict GET /map/places, all optional. */
 export type MapPlaceQueryFilter = {
@@ -91,6 +126,9 @@ const SHOP_TYPE_ERROR = 'Place shop type is invalid';
 const DESCRIPTION_ERROR = 'Place description is invalid';
 const SUPPORT_ERROR = 'Place support is invalid';
 const TRANSACTION_TIME_ERROR = 'Place transaction time is invalid';
+const NOSTR_PUBKEY_ERROR = 'Place NOSTR public key is invalid';
+const NOSTR_PUBKEY_REQUIRED_ERROR = 'Place NOSTR public key is required';
+const REVISION_ERROR = 'Place revision is invalid';
 const FOUR_DIGIT_YEAR = /^\d{4}-/u;
 
 const ALLOWED_PLACE_KEYS: ReadonlySet<string> = new Set([
@@ -110,7 +148,11 @@ const ALLOWED_PLACE_KEYS: ReadonlySet<string> = new Set([
   'city',
   'country',
   'supports',
+  'nostrPubkey',
+  'revision',
 ]);
+
+const ALLOWED_DELETE_KEYS: ReadonlySet<string> = new Set(['origin', 'externalId', 'revision']);
 
 const PAYMENT_METHODS = /^(onchain|lightning|nfc)(,(onchain|lightning|nfc))*$/;
 const TECH_PROVIDER = /^[A-Za-z0-9][A-Za-z0-9.-]{0,39}$/;
@@ -740,15 +782,42 @@ function normalizeSupports(
   return { ok: true, value: uniqueSortedSupports(items) };
 }
 
+function normalizeRevision(
+  raw: unknown,
+): { ok: true; value: number | undefined } | { ok: false; error: string } {
+  if (raw === undefined) {
+    return { ok: true, value: undefined };
+  }
+  if (typeof raw !== 'number' || !Number.isSafeInteger(raw) || raw < 1) {
+    return { ok: false, error: REVISION_ERROR };
+  }
+  return { ok: true, value: raw };
+}
+
+function normalizeNostrPubkey(
+  raw: unknown,
+): { ok: true; value: string } | { ok: false; error: string } {
+  if (raw === undefined) {
+    return { ok: false, error: NOSTR_PUBKEY_REQUIRED_ERROR };
+  }
+  if (!isNostrPubkey(raw)) {
+    return { ok: false, error: NOSTR_PUBKEY_ERROR };
+  }
+  return { ok: true, value: raw };
+}
+
 /**
- * Validate a JSON body for one map pin.
+ * Validate a JSON body for one map pin, including the required NOSTR key (R7)
+ * and the optional request revision (R8).
  *
  * @param input - Request JSON.
- * @returns The pin, or a fixed error message.
+ * @returns The pin and its revision, or a fixed error message.
  */
 export function normalizeMapPlace(
   input: unknown,
-): { ok: true; value: MapPlaceInput } | { ok: false; error: string } {
+):
+  | { ok: true; value: MapPlaceInput & { nostrPubkey: string }; revision: number | undefined }
+  | { ok: false; error: string } {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {
     return { ok: false, error: COORD_ERROR };
   }
@@ -856,7 +925,17 @@ export function normalizeMapPlace(
     return shopType;
   }
 
-  const value: MapPlaceInput = {
+  const nostrPubkey = normalizeNostrPubkey(rec['nostrPubkey']);
+  if (!nostrPubkey.ok) {
+    return nostrPubkey;
+  }
+
+  const revision = normalizeRevision(rec['revision']);
+  if (!revision.ok) {
+    return revision;
+  }
+
+  const value: MapPlaceInput & { nostrPubkey: string } = {
     origin: origin.value,
     externalId: externalId.value,
     name: name.value,
@@ -872,11 +951,12 @@ export function normalizeMapPlace(
     city: city.value,
     country: country.value,
     supports,
+    nostrPubkey: nostrPubkey.value,
   };
   if (techProvider.value !== undefined) {
     value.techProvider = techProvider.value;
   }
-  return { ok: true, value };
+  return { ok: true, value, revision: revision.value };
 }
 
 /**
@@ -905,6 +985,39 @@ export function normalizeMapPlaceKey(
     return externalId;
   }
   return { ok: true, value: { origin: origin.value, externalId: externalId.value } };
+}
+
+/**
+ * Validate a `DELETE /map/places` body: exactly `origin`, `externalId` and an
+ * optional `revision` (R8). `POST /map/places/transactions` keeps using
+ * {@link normalizeMapPlaceKey}, which ignores other keys.
+ *
+ * @param input - Request JSON.
+ * @returns The key and revision, or a fixed error message.
+ */
+export function normalizeMapPlaceDelete(
+  input: unknown,
+):
+  | { ok: true; value: { origin: string; externalId: string }; revision: number | undefined }
+  | { ok: false; error: string } {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    return { ok: false, error: ORIGIN_ERROR };
+  }
+  const rec = input as Record<string, unknown>;
+  for (const key of Object.keys(rec)) {
+    if (!ALLOWED_DELETE_KEYS.has(key)) {
+      return { ok: false, error: `Place field is not allowed: ${key.slice(0, 40)}` };
+    }
+  }
+  const parsed = normalizeMapPlaceKey(rec);
+  if (!parsed.ok) {
+    return parsed;
+  }
+  const revision = normalizeRevision(rec['revision']);
+  if (!revision.ok) {
+    return revision;
+  }
+  return { ok: true, value: parsed.value, revision: revision.value };
 }
 
 const PAYMENT_DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -1101,14 +1214,34 @@ export function normalizeMapPlaceFilter(
 }
 
 /**
- * Drop fields that only the ingest caller needs.
+ * A stored photo as the public API shows it.
+ *
+ * @param photo - Stored photo reference.
+ * @param baseUrl - `OCP_PUBLIC_BASE_URL`, the origin of the URL.
+ * @returns `{ url, width, height, caption }` with
+ * `url` = `<baseUrl>/map/photos/{sha256}.{jpg|png|webp}`.
+ */
+export function publicPhoto(photo: StoredPlacePhoto, baseUrl: string): PublicPhoto {
+  return {
+    url: `${baseUrl}/map/photos/${photo.sha256}.${photoExtension(photo.contentType)}`,
+    width: photo.width,
+    height: photo.height,
+    caption: photo.caption,
+  };
+}
+
+/**
+ * Drop fields that only the ingest caller needs. The id is the shop's npub, or null without a
+ * key; the internal UUID is not returned by this mapper or by public map responses.
  *
  * @param place - Stored pin.
- * @returns The public map row, including the stored activity.
+ * @param baseUrl - `OCP_PUBLIC_BASE_URL`, the origin of every photo URL.
+ * @returns The public map row, including the stored activity and the cover photo.
  */
-export function toPublicMapPlace(place: StoredMapPlace): PublicMapPlace {
+export function toPublicMapPlace(place: StoredMapPlace, baseUrl: string): PublicMapPlace {
+  const cover = place.photos[0];
   return {
-    id: place.id,
+    id: place.nostrPubkey === null ? null : npubEncode(place.nostrPubkey),
     origin: place.origin,
     name: place.name,
     description: place.description,
@@ -1128,5 +1261,31 @@ export function toPublicMapPlace(place: StoredMapPlace): PublicMapPlace {
       asset: item.asset,
     })),
     activity: place.activity,
+    coverPhoto:
+      cover === undefined
+        ? null
+        : {
+            url: publicPhoto(cover, baseUrl).url,
+            width: cover.width,
+            height: cover.height,
+          },
+  };
+}
+
+/**
+ * One shop for `GET /map/places/{npub}`: the list entry plus every photo in
+ * display order.
+ *
+ * @param place - Stored complete pin.
+ * @param baseUrl - `OCP_PUBLIC_BASE_URL`, the origin of every photo URL.
+ * @returns The public detail.
+ */
+export function toPublicMapPlaceDetail(
+  place: StoredMapPlace,
+  baseUrl: string,
+): PublicMapPlaceDetail {
+  return {
+    ...toPublicMapPlace(place, baseUrl),
+    photos: place.photos.map((photo) => publicPhoto(photo, baseUrl)),
   };
 }

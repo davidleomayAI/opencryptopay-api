@@ -1,5 +1,36 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { expect, test } from '@playwright/test';
+import { isNostrPubkey, npubEncode } from '../src/lib/map/nostr-key';
+import {
+  base64,
+  bytesOf,
+  exifTiff,
+  jpeg,
+  jpegSegment,
+  scan,
+  simpleJpeg,
+  simplePng,
+  simpleWebp,
+  sof,
+  vp8,
+  vp8l,
+  vp8x,
+  webp,
+  webpChunk,
+} from '../src/__tests__/map/photo-fixtures';
+
+/** A valid NIP-01 key derived from a label, so each test shop has its own. */
+function keyFor(label: string): string {
+  for (let round = 0; ; round += 1) {
+    const candidate = createHash('sha256')
+      .update(`${label}:${String(round)}`)
+      .digest('hex');
+    if (isNostrPubkey(candidate)) {
+      return candidate;
+    }
+  }
+}
 
 const DESCRIPTION =
   'SPAR supermarket in Triesen. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
@@ -24,8 +55,22 @@ function completePlace(overrides: Record<string, unknown> = {}): Record<string, 
     city: 'Triesen',
     country: 'LI',
     ...overrides,
+    nostrPubkey:
+      overrides['nostrPubkey'] ??
+      keyFor(
+        `${String(overrides['origin'] ?? 'dfx')}/${String(overrides['externalId'] ?? 'e2e-store')}`,
+      ),
   };
 }
+
+/** A complete pin without a key, as a source sends it before step 3. */
+function keylessPlace(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const place = completePlace(overrides);
+  delete place['nostrPubkey'];
+  return place;
+}
+
+const ingest = { Authorization: 'Bearer e2e-ingest' };
 
 const body = completePlace();
 
@@ -926,4 +971,459 @@ test('Function: normalizePlaceTransaction — a future occurredAt beyond skew is
 test('Function: SqliteMapPlaceStore — old schema hides incomplete rows; listAll returns incomplete rows and loads supports in chunks', () => {
   const stdout = execFileSync('bun', ['e2e/sqlite-backfill.ts'], { encoding: 'utf8' });
   expect(stdout.trim()).toBe('ok');
+});
+
+test('Function: isNostrPubkey — an invalid key is 400 and a shop without a key is 400 (step 1b)', async ({
+  request,
+}) => {
+  const invalid = await request.post('/map/places', {
+    headers: ingest,
+    data: completePlace({ externalId: 'e2e-bad-key', nostrPubkey: 'f'.repeat(64) }),
+  });
+  expect(invalid.status()).toBe(400);
+  expect(await invalid.json()).toEqual({ error: 'Place NOSTR public key is invalid' });
+  const keyless = await request.post('/map/places', {
+    headers: ingest,
+    data: keylessPlace({ externalId: 'e2e-keyless', name: 'Keyless SPAR' }),
+  });
+  expect(keyless.status()).toBe(400);
+  expect(await keyless.json()).toEqual({ error: 'Place NOSTR public key is required' });
+  const listed = (await (await request.get('/map/places')).json()) as {
+    places: Array<{ name: string }>;
+  };
+  expect(listed.places.some((row) => row.name === 'Keyless SPAR')).toBe(false);
+});
+
+test('Function: npubEncode — the answer id is the npub and GET /map/places/:id serves the shop', async ({
+  request,
+}) => {
+  const key = keyFor('e2e-identity');
+  const npub = npubEncode(key);
+  const added = await request.post('/map/places', {
+    headers: ingest,
+    data: completePlace({ externalId: 'e2e-identity', name: 'Identity SPAR', nostrPubkey: key }),
+  });
+  expect(added.status()).toBe(201);
+  expect(await added.json()).toMatchObject({ created: true, id: npub });
+  const detail = await request.get(`/map/places/${npub}`);
+  expect(detail.status()).toBe(200);
+  expect(detail.headers()['cache-control']).toBe('public, max-age=60');
+  const json = (await detail.json()) as { place: { id: string; name: string } };
+  expect(json.place).toMatchObject({ id: npub, name: 'Identity SPAR' });
+  const listed = (await (await request.get('/map/places')).json()) as {
+    places: Array<{ id: string }>;
+  };
+  expect(listed.places.some((row) => row.id === npub)).toBe(true);
+  const hex = await request.get(`/map/places/${key}`, { maxRedirects: 0 });
+  expect(hex.status()).toBe(301);
+  expect(hex.headers()['location']).toBe(`/map/places/${npub}`);
+});
+
+test('Function: npubDecode — GET /map/places/:id answers 404 for anything that is not a listed shop', async ({
+  request,
+}) => {
+  const literal = await request.get('/map/places/:id');
+  expect(literal.status()).toBe(404);
+  expect(await literal.json()).toEqual({ error: 'Place not found' });
+  const unknown = await request.get(`/map/places/${npubEncode(keyFor('e2e-never-stored'))}`);
+  expect(unknown.status()).toBe(404);
+  expect(unknown.headers()['cache-control']).toBe('public, max-age=60');
+});
+
+test('Function: placeWriteConflict — a changed key, a taken key and a stale revision are 409', async ({
+  request,
+}) => {
+  const key = keyFor('e2e-conflict');
+  const first = await request.put('/map/places', {
+    headers: ingest,
+    data: completePlace({ externalId: 'e2e-conflict', nostrPubkey: key, revision: 2 }),
+  });
+  expect(first.status()).toBe(201);
+  const changed = await request.put('/map/places', {
+    headers: ingest,
+    data: completePlace({
+      externalId: 'e2e-conflict',
+      nostrPubkey: keyFor('e2e-conflict-other'),
+      revision: 3,
+    }),
+  });
+  expect(changed.status()).toBe(409);
+  expect(await changed.json()).toEqual({ error: 'nostrPubkey of a place cannot change' });
+  const taken = await request.post('/map/places', {
+    headers: ingest,
+    data: completePlace({ externalId: 'e2e-conflict-2', nostrPubkey: key }),
+  });
+  expect(taken.status()).toBe(409);
+  expect(await taken.json()).toEqual({ error: 'nostrPubkey belongs to another place' });
+  const stale = await request.put('/map/places', {
+    headers: ingest,
+    data: completePlace({ externalId: 'e2e-conflict', nostrPubkey: key, revision: 2 }),
+  });
+  expect(stale.status()).toBe(409);
+  expect(await stale.json()).toEqual({ error: 'Stale revision' });
+});
+
+test('Function: normalizeMapPlaceDelete — DELETE refuses another key, keeps the revision and the reservation', async ({
+  request,
+}) => {
+  const key = keyFor('e2e-delete-order');
+  await request.put('/map/places', {
+    headers: ingest,
+    data: completePlace({ externalId: 'e2e-delete-order', nostrPubkey: key, revision: 1 }),
+  });
+  const extra = await request.delete('/map/places', {
+    headers: ingest,
+    data: { origin: 'dfx', externalId: 'e2e-delete-order', name: 'x' },
+  });
+  expect(extra.status()).toBe(400);
+  expect(await extra.json()).toEqual({ error: 'Place field is not allowed: name' });
+  const stale = await request.delete('/map/places', {
+    headers: ingest,
+    data: { origin: 'dfx', externalId: 'e2e-delete-order', revision: 1 },
+  });
+  expect(stale.status()).toBe(409);
+  const removed = await request.delete('/map/places', {
+    headers: ingest,
+    data: { origin: 'dfx', externalId: 'e2e-delete-order', revision: 2 },
+  });
+  expect(await removed.json()).toEqual({ deleted: true });
+  const late = await request.put('/map/places', {
+    headers: ingest,
+    data: completePlace({ externalId: 'e2e-delete-order', nostrPubkey: key, revision: 2 }),
+  });
+  expect(late.status()).toBe(409);
+  const moved = await request.post('/map/places', {
+    headers: ingest,
+    data: completePlace({ externalId: 'e2e-delete-moved', nostrPubkey: key }),
+  });
+  expect(moved.status()).toBe(409);
+  expect(await moved.json()).toEqual({ error: 'nostrPubkey belongs to another place' });
+});
+
+async function shopWithKey(
+  request: import('@playwright/test').APIRequestContext,
+  externalId: string,
+): Promise<string> {
+  const key = keyFor(`dfx/${externalId}`);
+  const res = await request.put('/map/places', {
+    headers: ingest,
+    data: completePlace({ externalId, name: `Photo Shop ${externalId}`, nostrPubkey: key }),
+  });
+  expect(res.status()).toBe(201);
+  return key;
+}
+
+test('Function: normalizePhotoUpload — PUT /map/places/photos rejects a malformed envelope and an unknown shop', async ({
+  request,
+}) => {
+  const key = await shopWithKey(request, 'e2e-photo-envelope');
+  const bad = await request.put('/map/places/photos', {
+    headers: ingest,
+    data: { origin: 'dfx', nostrPubkey: key, photos: 'x' },
+  });
+  expect(bad.status()).toBe(400);
+  expect(await bad.json()).toEqual({ error: 'Photos must be a list of at most 10' });
+  const unknown = await request.put('/map/places/photos', {
+    headers: ingest,
+    data: { origin: 'spar', nostrPubkey: key, photos: [] },
+  });
+  expect(unknown.status()).toBe(404);
+  const unauthorized = await request.put('/map/places/photos', { data: {} });
+  expect(unauthorized.status()).toBe(401);
+});
+
+test('Function: stripPhotoMetadata — a stored photo keeps only the EXIF orientation and carries no GPS, text or trailing bytes', async ({
+  request,
+}) => {
+  const key = await shopWithKey(request, 'e2e-photo-strip');
+  const withGps = jpeg(
+    [
+      jpegSegment(0xe1, bytesOf('Exif\0\0', exifTiff('MM', 6))),
+      jpegSegment(0xe1, bytesOf('http://ns.adobe.com/xap/1.0/\0', 'GPSLatitude 47.3')),
+      jpegSegment(0xfe, 'shot by Alice'),
+      jpegSegment(0xdb, new Uint8Array(65)),
+      sof(40, 30),
+      scan(),
+    ],
+    [0x99, 0x98, 0x97],
+  );
+  const stored = await request.put('/map/places/photos', {
+    headers: ingest,
+    data: {
+      origin: 'dfx',
+      nostrPubkey: key,
+      photos: [{ contentType: 'image/jpeg', data: base64(withGps), caption: 'Front' }],
+    },
+  });
+  expect(stored.status()).toBe(200);
+  const json = (await stored.json()) as {
+    photos: Array<{ url: string; width: number; height: number; caption: string }>;
+    skipped: unknown[];
+  };
+  expect(json.skipped).toEqual([]);
+  expect(json.photos[0]).toMatchObject({ width: 30, height: 40, caption: 'Front' });
+  expect(json.photos[0]?.url).toMatch(
+    /^https:\/\/api\.e2e\.test\/map\/photos\/[0-9a-f]{64}\.jpg$/u,
+  );
+  const served = await request.get(new URL(json.photos[0]?.url ?? '').pathname);
+  expect(served.status()).toBe(200);
+  const body = Buffer.from(await served.body());
+  expect(body.includes('GPSLatitude')).toBe(false);
+  expect(body.includes('Alice')).toBe(false);
+  expect(body.includes(Buffer.from([0x99, 0x98, 0x97]))).toBe(false);
+  expect(body.subarray(-2)).toEqual(Buffer.from([0xff, 0xd9]));
+});
+
+test('Function: stripPhotoMetadata — a WebP whose VP8X canvas hides an oversized frame is skipped', async ({
+  request,
+}) => {
+  const key = await shopWithKey(request, 'e2e-photo-webp-canvas');
+  const stored = await request.put('/map/places/photos', {
+    headers: ingest,
+    data: {
+      origin: 'dfx',
+      nostrPubkey: key,
+      photos: [
+        {
+          contentType: 'image/webp',
+          data: base64(
+            webp([webpChunk('VP8X', vp8x(0, 1, 1)), webpChunk('VP8 ', vp8(16383, 16383))]),
+          ),
+        },
+        {
+          contentType: 'image/webp',
+          data: base64(
+            webp([webpChunk('VP8X', vp8x(0, 1, 1)), webpChunk('VP8L', vp8l(16384, 16384))]),
+          ),
+        },
+        {
+          contentType: 'image/webp',
+          data: base64(webp([webpChunk('VP8X', vp8x(0, 6, 5)), webpChunk('VP8 ', vp8(6, 5))])),
+        },
+      ],
+    },
+  });
+  expect(stored.status()).toBe(200);
+  const json = (await stored.json()) as { photos: Array<{ url: string }>; skipped: unknown[] };
+  expect(json.skipped).toEqual([
+    { index: 0, error: 'Photo 1 could not be read' },
+    { index: 1, error: 'Photo 2 could not be read' },
+  ]);
+  expect(json.photos).toHaveLength(1);
+  expect(json.photos[0]?.url.endsWith('.webp')).toBe(true);
+});
+
+test('Function: stripPhotoMetadata — a JPEG whose small first SOF hides an oversized second SOF is skipped', async ({
+  request,
+}) => {
+  const key = await shopWithKey(request, 'e2e-photo-jpeg-sof');
+  const dqt = jpegSegment(0xdb, new Uint8Array(65));
+  const stored = await request.put('/map/places/photos', {
+    headers: ingest,
+    data: {
+      origin: 'dfx',
+      nostrPubkey: key,
+      photos: [
+        {
+          contentType: 'image/jpeg',
+          data: base64(jpeg([dqt, sof(1, 1), sof(65535, 65535), scan()])),
+        },
+        { contentType: 'image/jpeg', data: base64(jpeg([dqt, sof(0, 1), sof(2, 1), scan()])) },
+        { contentType: 'image/jpeg', data: base64(jpeg([dqt, sof(6, 5), scan()])) },
+      ],
+    },
+  });
+  expect(stored.status()).toBe(200);
+  const json = (await stored.json()) as { photos: Array<{ url: string }>; skipped: unknown[] };
+  expect(json.skipped).toEqual([
+    { index: 0, error: 'Photo 1 could not be read' },
+    { index: 1, error: 'Photo 2 could not be read' },
+  ]);
+  expect(json.photos).toHaveLength(1);
+  expect(json.photos[0]?.url.endsWith('.jpg')).toBe(true);
+});
+
+test('Function: stripPhotoMetadata — a JPEG whose small SOF hides a large DNL height is skipped', async ({
+  request,
+}) => {
+  const key = await shopWithKey(request, 'e2e-photo-jpeg-dnl');
+  const dqt = jpegSegment(0xdb, new Uint8Array(65));
+  const stored = await request.put('/map/places/photos', {
+    headers: ingest,
+    data: {
+      origin: 'dfx',
+      nostrPubkey: key,
+      photos: [
+        {
+          contentType: 'image/jpeg',
+          data: base64(jpeg([dqt, sof(6, 1), scan(), jpegSegment(0xdc, [0xff, 0xff])])),
+        },
+        { contentType: 'image/jpeg', data: base64(jpeg([dqt, sof(6, 5), scan()])) },
+      ],
+    },
+  });
+  expect(stored.status()).toBe(200);
+  const json = (await stored.json()) as { photos: Array<{ url: string }>; skipped: unknown[] };
+  expect(json.skipped).toEqual([{ index: 0, error: 'Photo 1 could not be read' }]);
+  expect(json.photos).toHaveLength(1);
+  expect(json.photos[0]?.url.endsWith('.jpg')).toBe(true);
+});
+
+test('Function: preparePhoto — a bad photo is skipped by index and the others are stored in order', async ({
+  request,
+}) => {
+  const key = await shopWithKey(request, 'e2e-photo-skip');
+  const stored = await request.put('/map/places/photos', {
+    headers: ingest,
+    data: {
+      origin: 'dfx',
+      nostrPubkey: key,
+      photos: [
+        { contentType: 'image/png', data: base64(simplePng(3, 2)) },
+        { contentType: 'image/png', data: base64(simpleJpeg()) },
+        { contentType: 'image/webp', data: base64(simpleWebp(4, 3)) },
+      ],
+    },
+  });
+  const json = (await stored.json()) as { photos: Array<{ url: string }>; skipped: unknown[] };
+  expect(json.skipped).toEqual([{ index: 1, error: 'Photo 2 does not match its content type' }]);
+  expect(json.photos.map((photo) => photo.url.slice(-4))).toEqual(['.png', 'webp']);
+});
+
+test('Function: toPublicMapPlaceDetail — the list shows the cover photo and the detail every photo', async ({
+  request,
+}) => {
+  const key = await shopWithKey(request, 'e2e-photo-detail');
+  const stored = (await (
+    await request.put('/map/places/photos', {
+      headers: ingest,
+      data: {
+        origin: 'dfx',
+        nostrPubkey: key,
+        photos: [
+          { contentType: 'image/png', data: base64(simplePng(3, 2)), caption: 'Front' },
+          { contentType: 'image/webp', data: base64(simpleWebp(4, 3)) },
+        ],
+      },
+    })
+  ).json()) as { photos: Array<{ url: string }> };
+  const listed = (await (await request.get('/map/places')).json()) as {
+    places: Array<{ id: string; coverPhoto: unknown }>;
+  };
+  expect(listed.places.find((row) => row.id === npubEncode(key))?.coverPhoto).toEqual({
+    url: stored.photos[0]?.url,
+    width: 3,
+    height: 2,
+  });
+  const detail = (await (await request.get(`/map/places/${npubEncode(key)}`)).json()) as {
+    place: { photos: Array<{ url: string; caption: string | null }> };
+  };
+  expect(detail.place.photos.map((photo) => photo.caption)).toEqual(['Front', null]);
+});
+
+test('Function: photoExtension — GET /map/photos/:file answers 404 for a wrong extension or an unknown file', async ({
+  request,
+}) => {
+  const literal = await request.get('/map/photos/:file');
+  expect(literal.status()).toBe(404);
+  expect(literal.headers()['cache-control']).toBe('no-store');
+  const key = await shopWithKey(request, 'e2e-photo-ext');
+  const stored = (await (
+    await request.put('/map/places/photos', {
+      headers: ingest,
+      data: {
+        origin: 'dfx',
+        nostrPubkey: key,
+        photos: [{ contentType: 'image/png', data: base64(simplePng()) }],
+      },
+    })
+  ).json()) as { photos: Array<{ url: string }> };
+  const path = new URL(stored.photos[0]?.url ?? '').pathname;
+  const ok = await request.get(path);
+  expect(ok.status()).toBe(200);
+  expect(ok.headers()['content-type']).toBe('image/png');
+  expect(ok.headers()['x-content-type-options']).toBe('nosniff');
+  expect(ok.headers()['cache-control']).toBe('public, max-age=31536000, immutable');
+  expect((await request.get(path.replace('.png', '.webp'))).status()).toBe(404);
+});
+
+test('Function: SqliteMapPlaceStore — a deleted shop no longer serves its photos', async ({
+  request,
+}) => {
+  const key = await shopWithKey(request, 'e2e-photo-delete');
+  const stored = (await (
+    await request.put('/map/places/photos', {
+      headers: ingest,
+      data: {
+        origin: 'dfx',
+        nostrPubkey: key,
+        photos: [{ contentType: 'image/png', data: base64(simplePng(7, 7)) }],
+      },
+    })
+  ).json()) as { photos: Array<{ url: string }> };
+  const path = new URL(stored.photos[0]?.url ?? '').pathname;
+  expect((await request.get(path)).status()).toBe(200);
+  await request.delete('/map/places', {
+    headers: ingest,
+    data: { origin: 'dfx', externalId: 'e2e-photo-delete' },
+  });
+  expect((await request.get(path)).status()).toBe(404);
+});
+
+test('Function: parsePublicBaseUrl — photo URLs use OCP_PUBLIC_BASE_URL, not the request host', async ({
+  request,
+}) => {
+  const key = await shopWithKey(request, 'e2e-photo-base');
+  const stored = (await (
+    await request.put('/map/places/photos', {
+      headers: { ...ingest, Host: 'evil.example' },
+      data: {
+        origin: 'dfx',
+        nostrPubkey: key,
+        photos: [{ contentType: 'image/png', data: base64(simplePng(9, 9)) }],
+      },
+    })
+  ).json()) as { photos: Array<{ url: string }> };
+  expect(stored.photos[0]?.url.startsWith('https://api.e2e.test/map/photos/')).toBe(true);
+});
+
+test('Function: photoTypeOf — a photo whose magic bytes name another type is skipped', async ({
+  request,
+}) => {
+  const key = await shopWithKey(request, 'e2e-photo-magic');
+  const stored = await request.put('/map/places/photos', {
+    headers: ingest,
+    data: {
+      origin: 'dfx',
+      nostrPubkey: key,
+      photos: [
+        { contentType: 'image/jpeg', data: base64(simplePng()) },
+        { contentType: 'image/webp', data: base64(simpleWebp()) },
+      ],
+    },
+  });
+  expect(stored.status()).toBe(200);
+  const json = (await stored.json()) as { photos: unknown[]; skipped: unknown[] };
+  expect(json.skipped).toEqual([{ index: 0, error: 'Photo 1 does not match its content type' }]);
+  expect(json.photos).toHaveLength(1);
+});
+
+test('Function: publicPhoto — the photo answer and the detail use the same URL', async ({
+  request,
+}) => {
+  const key = await shopWithKey(request, 'e2e-photo-url');
+  const stored = (await (
+    await request.put('/map/places/photos', {
+      headers: ingest,
+      data: {
+        origin: 'dfx',
+        nostrPubkey: key,
+        photos: [{ contentType: 'image/png', data: base64(simplePng(11, 5)) }],
+      },
+    })
+  ).json()) as { photos: Array<{ url: string }> };
+  const detail = (await (await request.get(`/map/places/${npubEncode(key)}`)).json()) as {
+    place: { photos: Array<{ url: string }> };
+  };
+  expect(detail.place.photos[0]?.url).toBe(stored.photos[0]?.url);
 });

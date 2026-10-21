@@ -21,6 +21,8 @@ const place: StoredMapPlace = {
   city: 'Triesen',
   country: 'LI',
   supports: [],
+  photos: [],
+  nostrPubkey: null,
   lastTransactionAt: null,
   activity: 'none',
   createdAt: '2026-09-26T00:00:00.000Z',

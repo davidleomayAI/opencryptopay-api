@@ -1,5 +1,11 @@
 import { execFileSync } from 'node:child_process';
-import { createPrivateKey, createPublicKey, generateKeyPairSync, sign } from 'node:crypto';
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  generateKeyPairSync,
+  sign,
+} from 'node:crypto';
 import type { KeyObject } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -7,6 +13,19 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { canonicalString, signAdminRequest } from '../src/lib/admin/signature';
+import { isNostrPubkey, npubEncode } from '../src/lib/map/nostr-key';
+
+/** A valid NIP-01 key derived from a label, so each test shop has its own. */
+function keyFor(label: string): string {
+  for (let round = 0; ; round += 1) {
+    const candidate = createHash('sha256')
+      .update(`${label}:${String(round)}`)
+      .digest('hex');
+    if (isNostrPubkey(candidate)) {
+      return candidate;
+    }
+  }
+}
 
 const DESCRIPTION =
   'SPAR supermarket in Triesen. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.';
@@ -31,6 +50,7 @@ const fremd = {
   postalCode: '9495',
   city: 'Triesen',
   country: 'LI',
+  nostrPubkey: '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d',
 };
 
 let replay:
@@ -50,6 +70,7 @@ function privateKey(): KeyObject {
 
 type AdminListedPlace = {
   id: string;
+  npub: string | null;
   origin: string;
   name: string;
   externalId: string;
@@ -202,7 +223,7 @@ test('Function: adminRoutes — GET /admin/places includes caller id and payment
   expect(row.name).toBe(fremd.name);
 });
 
-test('Function: adminRoutes — PUT /admin/places replaces a pin by its public id', async ({
+test('Function: adminRoutes — PUT /admin/places replaces a pin by its internal id', async ({
   request,
 }) => {
   const row = await listedPlace(request, fremd.externalId);
@@ -217,7 +238,13 @@ test('Function: adminRoutes — PUT /admin/places replaces a pin by its public i
     data: body,
   });
   expect(res.status()).toBe(200);
-  expect(await res.json()).toEqual({ created: false, id: row.id, btcmap: 'skipped' });
+  expect(await res.json()).toEqual({
+    created: false,
+    id: row.id,
+    npub: npubEncode(fremd.nostrPubkey),
+    btcmap: 'skipped',
+  });
+  expect(row.npub).toBe(npubEncode(fremd.nostrPubkey));
   const updated = await listedPlace(request, fremd.externalId);
   expect(updated.id).toBe(row.id);
   expect(updated.name).toBe('Fremde Filiale Nord');
@@ -229,7 +256,7 @@ test('Function: adminRoutes — PUT /admin/places with an unknown id inserts not
 }) => {
   const body = JSON.stringify({
     ...fremd,
-    id: 'missing-public-id',
+    id: 'missing-internal-id',
     name: 'Nope',
   });
   const res = await request.put('/admin/places', {
@@ -243,7 +270,7 @@ test('Function: adminRoutes — PUT /admin/places with an unknown id inserts not
 test('Function: adminRoutes — DELETE /admin/places with an unknown id deletes nothing', async ({
   request,
 }) => {
-  const body = JSON.stringify({ id: 'missing-public-id', origin: 'NOT AN ORIGIN' });
+  const body = JSON.stringify({ id: 'missing-internal-id', origin: 'NOT AN ORIGIN' });
   const res = await request.delete('/admin/places', {
     headers: signedHeaders('DELETE', PATH, Buffer.from(body)),
     data: body,
@@ -254,13 +281,14 @@ test('Function: adminRoutes — DELETE /admin/places with an unknown id deletes 
   expect(row.origin).toBe(fremd.origin);
 });
 
-test('Function: adminRoutes — DELETE /admin/places removes one pin by its public id', async ({
+test('Function: adminRoutes — DELETE /admin/places removes one pin by its internal id', async ({
   request,
 }) => {
   const created = {
     ...fremd,
     externalId: 'e2e-admin-by-id',
     name: 'By Id Shop',
+    nostrPubkey: keyFor('e2e-admin-by-id'),
   };
   const createBody = JSON.stringify(created);
   const createdRes = await request.put('/admin/places', {
@@ -299,7 +327,7 @@ test('Function: normalizeExternalId — a blank caller id on delete is rejected'
   expect(kept.id).toBe(row.id);
 });
 
-test('Function: adminRoutes — PUT /admin/places rewrites one public id and rejects a taken pair', async ({
+test('Function: adminRoutes — PUT /admin/places rewrites one internal id and rejects a taken pair', async ({
   request,
 }) => {
   const fremdBefore = await listedPlace(request, fremd.externalId);
@@ -311,12 +339,14 @@ test('Function: adminRoutes — PUT /admin/places rewrites one public id and rej
     origin: 'dfx',
     externalId: 'e2e-admin-rewrite',
     name: 'Rewrite Shop',
+    nostrPubkey: keyFor('e2e-admin-rewrite'),
   };
   const other = {
     ...fremd,
     origin: 'spar',
     externalId: 'e2e-admin-other',
     name: 'Other Shop',
+    nostrPubkey: keyFor('e2e-admin-other'),
   };
   const createdAt = '2020-05-01T00:00:00.000Z';
   try {
@@ -352,6 +382,7 @@ test('Function: adminRoutes — PUT /admin/places rewrites one public id and rej
     expect(await rewritten.json()).toEqual({
       created: false,
       id: dedicatedRow.id,
+      npub: npubEncode(dedicated.nostrPubkey),
       btcmap: 'skipped',
     });
     const moved = await listedPlace(request, 'e2e-admin-moved');
@@ -585,7 +616,19 @@ test('Function: ocp-admin CLI — list, put, and delete sign like the server', (
     writeFileSync(join(keyDir, 'e2e.key'), privateKeyPem, { mode: 0o600 });
 
     const placesFile = join(home, 'places.json');
-    writeFileSync(placesFile, JSON.stringify([{ ...fremd, origin: 'cli', externalId: 'cli-1' }]));
+    writeFileSync(
+      placesFile,
+      JSON.stringify([
+        { ...fremd, origin: 'cli', externalId: 'cli-1', nostrPubkey: keyFor('cli/cli-1') },
+        {
+          ...fremd,
+          origin: 'cli',
+          externalId: 'cli-2',
+          nostrPubkey: keyFor('cli/cli-2'),
+          revision: 1,
+        },
+      ]),
+    );
 
     const run = (...args: string[]): string =>
       execFileSync(
@@ -595,6 +638,36 @@ test('Function: ocp-admin CLI — list, put, and delete sign like the server', (
       );
 
     expect(run('put', placesFile)).toContain('ok cli-1');
+
+    let staleDeleteError: unknown;
+    try {
+      run('delete', 'cli', 'cli-2');
+    } catch (error) {
+      staleDeleteError = error;
+    }
+    expect(
+      typeof staleDeleteError === 'object' &&
+        staleDeleteError !== null &&
+        'stdout' in staleDeleteError &&
+        typeof staleDeleteError.stdout === 'string'
+        ? staleDeleteError.stdout
+        : '',
+    ).toBe('fail cli-2 409 Stale revision\n');
+    expect(run('delete', 'cli', 'cli-2', '--revision', '2')).toBe('ok cli-2\n');
+
+    let badRevisionError: unknown;
+    try {
+      run('delete', 'cli', 'cli-2', '--revision', '0');
+    } catch (error) {
+      badRevisionError = error;
+    }
+    expect(
+      typeof badRevisionError === 'object' &&
+        badRevisionError !== null &&
+        'status' in badRevisionError
+        ? badRevisionError.status
+        : undefined,
+    ).toBe(2);
     expect(run('list')).toContain('"origin":"cli"');
     expect(run('delete', 'cli', 'cli-1')).toBe('ok cli-1\n');
 

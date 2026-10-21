@@ -1,18 +1,20 @@
 # Shop identity, photos and shop page
 
-Status: **specified, not implemented**. Nothing here changes runtime behavior
-yet. A change that builds a part of this adds its routes to
+Status: **steps 1a, 2 and 1b implemented** (R7 enforced, R8, `id` = npub,
+`GET /map/places/{npub}`, photos). Step 3 lives in the sources' repositories
+and step 4 in openCryptoPay/landingPage. A change that builds a part of this adds its routes to
 [endpoints.md](../handbook/endpoints.md), its exported functions to
 [functions.md](../handbook/functions.md) and its columns and tables to
 [map-place.sql](../schema/map-place.sql) in that same change, and documents
-any new environment variable in the README. Step 1a adds R7 to
-[place-requirements.md](place-requirements.md) and records it as accepted,
-not enforced, in [place-requirements-gap.md](place-requirements-gap.md);
-step 1b updates that entry to enforced.
+any new environment variable in the README. R7 is in
+[place-requirements.md](place-requirements.md).
+[place-requirements-gap.md](place-requirements-gap.md) records it as met with
+#26 only in the code column; production, data and sources do not meet it yet.
 
 Every shop is registered with a NOSTR public key. That key is the shop's
-identifier everywhere: in the API, in the public page
-`https://opencryptopay.io/{npub}`, and in every new route. The
+public identifier: in every public API answer, in the public page
+`https://opencryptopay.io/{npub}`, and in every new route. Only the signed
+admin interface keeps the internal id (see Storage). The
 page shows everything the API knows about the shop, including its photos. The
 API stores the photos and serves them.
 
@@ -39,13 +41,14 @@ Every shop must state a NOSTR public key:
   point on the curve. An `npub` string, uppercase hex or any other form is
   rejected.
 - It is required. A body without it is rejected with **400** and nothing is
-  stored, as in R6. It is never defaulted, generated or derived by the API.
-  This rejection is switched on in step 1b of the order of work below, once
-  every source sends keys; step 1a already hides shops without a key and
-  stores the writes.
+  stored, as in R6 (`Place NOSTR public key is required`). It is never
+  defaulted, generated or derived by the API. Rows stored before step 1a
+  have no key; they stay out of the public list until a write adds one.
 - It is unique across all shops of all sources, also over time. Once a key
   has been stored for an `origin` + `externalId`, it stays reserved for that
-  pair, also after `DELETE /map/places`. A key reserved for another pair is
+  pair, also after `DELETE /map/places`. The one exception is a signed admin
+  `PUT /admin/places` by internal id that moves a place to another pair: the
+  place's own key moves with it (see below). A key reserved for another pair is
   rejected with **409** `{ "error": "nostrPubkey belongs to another place" }`.
   So an old shared `/{npub}` link can never lead to a different shop.
 - It is fixed once stored. A `POST` or `PUT` for the same `origin` +
@@ -75,8 +78,8 @@ Every shop must state a NOSTR public key:
   PR #22 (R2 to R5), whether the key arrives with a `PUT` or, as described
   above, with a `POST`.
 
-The npub is not stored. It is `nip19.npubEncode(nostrPubkey)` wherever it is
-shown.
+The npub is not stored. It is `npubEncode(nostrPubkey)`
+(`src/lib/map/nostr-key.ts`) wherever it is shown.
 
 ### Storage
 
@@ -87,7 +90,8 @@ uniqueness is a separate
 run after the column exists. SQLite allows several nulls under that index.
 
 The reservation lives in its own table, which a place `DELETE` does not
-touch and nothing ever deletes from:
+touch and nothing ever deletes from; only an admin move by internal id
+points a key's row at the place's new pair:
 
 ```sql
 CREATE TABLE IF NOT EXISTS map_pubkey_reservation (
@@ -103,16 +107,30 @@ Every write that stores a key that has no reservation row yet inserts one
 transaction, so each
 key a pair ever used stays reserved. The memory store keeps the same map.
 
-The column is nullable for old rows and, until step 1b, for writes without a
-key. A write without `nostrPubkey` never clears a key that is already stored:
-`PUT` replaces every other field and keeps the key, as it keeps `id` and
-`createdAt`. From step 1b on, the write path never stores a null.
+The column is nullable for rows stored before step 1a. Every source write
+carries a key (step 1b), so the write path never stores a null. A signed admin
+`PUT` by internal id may leave the key out to keep the stored one; on a row
+without a key it must send one.
 
 `origin` + `externalId` stay the source's own key for idempotent writes. Every
 public response and every new route uses the NOSTR key instead. The internal
-UUID no longer appears in any JSON: the `id` in the answers of `POST` and
-`PUT /map/places` is the npub, or `null` for a place without a key (step 1a
-only).
+UUID no longer appears in any public JSON: the `id` in the answers of `POST`
+and `PUT /map/places` is the npub.
+
+Only the signed admin interface still shows the internal UUID, because it
+must also reach places without a key. `GET /admin/places` returns it as `id`
+and the npub as `npub`. `PUT` and `DELETE /admin/places` with that `id` are
+admin corrections outside the source's write order. They reject an npub as
+`id` and a `revision`, and they neither check nor store a revision (R8).
+Such a `PUT` may move a place to another `origin` and `externalId`. The key is
+the one field it cannot change: it keeps a stored key, and it stores a sent
+key on a place without one under the same R7 rules as a source write, checked
+against the new pair. A pair that already has another place is refused (`409
+Place already exists`). On such a move the place's own key moves with it: its
+reservation now names the new pair, while the old pair keeps its revision and
+every other key it reserved. A `DELETE` by `id` moves nothing: the place's own
+key stays reserved for the old pair, which also keeps its revision, as after a
+source delete.
 
 ## R8 Request order
 
@@ -163,8 +181,7 @@ carry a revision:
   their stated order. `POST /map/places/transactions` carries no revision
   and is not affected.
 - `revision` is added to `ALLOWED_PLACE_KEYS` and to the allowed keys of the
-  photo route. `DELETE /map/places` today ignores unknown keys; from step 1a
-  it accepts exactly `origin`, `externalId` and `revision` and answers
+  photo route. `DELETE /map/places` accepts exactly `origin`, `externalId` and `revision` and answers
   **400** to any other key, like `POST`, `PUT /map/places` and the photo
   route. This check belongs to the `DELETE` route only:
   `POST /map/places/transactions` reads its key through the same
@@ -221,17 +238,23 @@ New endpoint `PUT /map/places/photos`, same bearer as the other write routes
   `index` is the 0-based position in the request; the `error` sentence
   numbers photos from 1, so `index` 2 reads `Photo 3 …`. `caption` is `null`
   when unset. `skipped` is `[]` when nothing was skipped.
-- `DELETE /map/places` drops the photos with the place. A source that
+- `DELETE /map/places`, and `DELETE /admin/places` by pair or by internal id,
+  drop the photos with the place. A source that
   registers the place again sends its photos again.
 
 Rules per photo. 21.gifts checks only size and magic bytes on its own
 uploads, so the header rules here are stricter:
 
 - `contentType` is `image/jpeg`, `image/png` or `image/webp`.
-- `data` is strict base64. The decoded size is at most 1 048 576 bytes.
+- `data` is strict base64. The decoded size is at most 1 048 576 bytes, and
+  so is the stored file after metadata removal (a written-back orientation
+  can add a few bytes).
 - The file type is read from the magic bytes and must equal `contentType`.
-- The markers or chunks must walk cleanly: a JPEG to its `EOI`, a PNG to
-  its `IEND`, with no segment or chunk length past the end of the file. For a
+- The markers or chunks must walk cleanly: a JPEG to its `EOI`, with
+  `SOI` only at the start and at least one `SOS` whose entropy-coded data
+  ends at a marker, a PNG to
+  its `IEND` with at least one `IDAT` before it, with no segment or chunk
+  length past the end of the file. For a
   WebP, 8 plus the RIFF size must not exceed the file length, and its chunks
   must end exactly at byte 8 plus the RIFF size. Otherwise the photo is
   skipped (`Photo N could not be read`), so metadata that cannot be found is
@@ -241,7 +264,10 @@ uploads, so the header rules here are stricter:
   skipped (`Photo N is animated`). A shop photo is a still
   picture, and this keeps the metadata walk to one level.
 - Width and height are read from the file header, which must parse. Each is
-  between 1 and 4096. The API returns the displayed size: for a JPEG whose
+  between 1 and 4096. A JPEG with a `DNL` segment is skipped
+  (`Photo N could not be read`), because `DNL` can set the number of lines
+  after the `SOF`, so the checked height would not be the height a decoder
+  shows. The API returns the displayed size: for a JPEG whose
   EXIF orientation is 5 to 8, width and height are swapped. Orientation
   values outside 2 to 8 count as 1.
 - `caption` is optional, 1–200 characters, no control characters.
@@ -255,37 +281,64 @@ The API removes metadata before storing. It does not rely on the source
 having re-encoded the image, because a phone photo can carry its GPS position:
 
 - JPEG, by allow-list:
-  - keep `APP0` only as a plain JFIF header: an `APP0` that starts with
+  - keep the first `APP0` that is a plain JFIF header: an `APP0` that starts with
     `JFIF\0` is rewritten with a thumbnail size of 0×0 and no thumbnail
     bytes; a `JFXX`, any other `APP0`, or a JFIF `APP0` whose content is
-    shorter than 14 bytes is dropped. This removes embedded previews of the
+    shorter than 14 bytes is dropped, and so is every later JFIF `APP0`. This removes embedded previews of the
     original;
-  - keep `APP14` only when it starts with `Adobe` and its content is at
+  - keep the first `APP14` that starts with `Adobe` and whose content is at
     least 12 bytes (needed for the color transform), cut to those fixed 12
     bytes (`Adobe`, version, two flag words, transform); drop any other
-    `APP14`, including a shorter `Adobe` one;
+    `APP14`, including a shorter or a later `Adobe` one;
   - drop every other `APPn` segment, which removes EXIF, XMP, MPF, ICC
     profiles and maker data, and every `COM` segment;
   - when the dropped EXIF held an orientation from 2 to 8, write back a
     minimal `APP1` EXIF with only that orientation tag and no other IFD
     entry, so portrait photos keep showing upright;
   - walk the markers through the whole image, also between the scans of a
-    progressive JPEG. Keep every marker other than `APPn` and `COM`, among
-    them `SOI`, `SOFn`, `DHT`, `DAC`, `DQT`, `DRI`, `DNL`, `SOS` with its
-    entropy-coded data, `RSTn` and `EOI`. Every `APPn` and `COM` goes
-    through the allow-list above. Cut every byte after the main image's
+    progressive JPEG. Keep only the image markers `SOI`, `SOFn`, `DHT`,
+    `DAC`, `DQT`, `DRI`, `SOS` with its entropy-coded data (including
+    its `RSTn`; fill bytes before an `RSTn` or a stuffed zero are written as
+    one `FF`) and
+    `EOI`. A `DRI` that is not 4 bytes long, a `DAC` of an odd length, a
+    `DNL` anywhere, or a second `SOFn` could not be read: a JPEG
+    has exactly one frame header, so the checked size is the size of the
+    served file and a small first frame cannot hide an oversized second one. Every `APPn` and `COM` goes
+    through the allow-list above; every other marker (`JPG`, `JPGn`, `DHP`,
+    `EXP`, reserved, and the length-free `TEM` and `RSTn` outside a scan) is
+    dropped. Cut every byte after the main image's
     `EOI`; this removes appended previews, depth maps and motion-photo
     videos.
 - PNG, by allow-list: keep `IHDR`, `PLTE`, `IDAT`, `IEND`, `tRNS`, `gAMA`,
   `cHRM`, `sRGB`, `cICP`, `sBIT`, `pHYs` and `bKGD`; drop every other
-  chunk, which removes `eXIf`, `iCCP`, text, time and C2PA chunks. Walk to
-  `IEND` and cut every byte after it.
+  chunk, which removes `eXIf`, `iCCP`, text, time and C2PA chunks. Drop a
+  kept chunk whose length the format fixes when it has another length
+  (`gAMA` 4, `cHRM` 32, `sRGB` 1, `cICP` 4, `pHYs` 9), and an `sBIT`,
+  `bKGD` or `tRNS` that does not fit the colour type (`sBIT` 1 for grey, 3
+  for RGB and indexed, 2 for grey with alpha, 4 for RGB with alpha; `bKGD` 2
+  for grey with or without alpha, 6 for RGB with or without alpha, 1 for
+  indexed; `tRNS` 2 for grey, 6 for RGB, 1 byte up to one per palette entry
+  for indexed, none with alpha), and an indexed `bKGD` that names no palette
+  entry. Keep `PLTE` only for an indexed image. Keep every ancillary chunk
+  and `PLTE` at most once and only before the first `IDAT`. `IHDR` must come
+  first, once, with 13 bytes, and `PLTE` must hold 1 to 256 entries of 3
+  bytes, for an indexed image at most 2 to the power of the bit depth,
+  otherwise the photo could not be read. Rebuild every kept chunk with a fresh CRC, write `IEND`
+  empty, walk to `IEND` and cut every byte after it.
 - WebP, by allow-list: keep `VP8 `, `VP8L`, `VP8X` and `ALPH`; drop every
   other chunk, each together with its pad byte when the chunk size is odd,
   which removes `EXIF`, `XMP `, `ICCP` and C2PA chunks. Walk to byte 8 plus
-  the RIFF size and cut every byte after it. Clear the ICC (`0x20`), EXIF
-  (`0x08`) and XMP (`0x04`) flags in `VP8X` and rewrite the RIFF size to the
-  new file length minus 8.
+  the RIFF size and cut every byte after it. When a `VP8X` is present, it must
+  be the first chunk and exactly 10 bytes, and its canvas width and height
+  must equal those of the kept frame, otherwise the photo could not be read;
+  a file of only `VP8 ` or `VP8L` has no canvas. Either way the 1 to 4096
+  limit is checked on the frame size. Keep only the
+  first frame chunk, and one `ALPH` only after `VP8X`, before the frame and
+  only with a `VP8 ` frame (a `VP8L` frame carries its own alpha). Rebuild every kept chunk
+  from its declared size with a zero pad byte, keep only the alpha flag
+  (`0x10`) of `VP8X`, which clears ICC (`0x20`), EXIF (`0x08`), XMP (`0x04`)
+  and the reserved bits, zero its three reserved bytes, and rewrite the RIFF
+  size to the new file length minus 8.
 - No format keeps an embedded ICC profile (JPEG `APP2`, PNG `iCCP`, WebP
   `ICCP`). Such a photo is shown as sRGB, or as its PNG `sRGB`, `cICP`,
   `gAMA` and `cHRM` chunks say; this is accepted so that no profile text
@@ -323,8 +376,10 @@ stored bytes are the stripped bytes.
   The second foreign key has no cascade, so a file that a shop still uses
   cannot be deleted.
 
-- `PUT /map/places` keeps the photos. `DELETE /map/places` removes them.
-- After `PUT /map/places/photos` and after `DELETE /map/places`, the same
+- `PUT /map/places` and `PUT /admin/places` keep the photos. `DELETE
+/map/places` and `DELETE /admin/places` (by pair or by internal id) remove
+  them.
+- After `PUT /map/places/photos` and after every place delete, the same
   transaction deletes every `map_photo` row that no `map_place_photo` row of
   any shop uses any more. The same file can belong to several shops, so the
   check runs across all shops.
@@ -475,24 +530,30 @@ shared link shows the shop's name and photo.
 
 ## Order of work
 
-The steps are named by label, in this order:
+The steps are named by label. Steps 1a, 2 and 1b land together in one pull
+request (#26); step 3 is deployed with it in the sources, and step 4 follows
+on the website:
 
 - **Step 1a, R7 accepted and R8:** `revision` checked and stored;
   `nostrPubkey` accepted, validated, unique and fixed; shops without a key
   are not complete and leave the public list; `id` = npub;
-  `GET /map/places/{npub}` without photos. A write without the key is still
-  stored, so no source breaks while it adds keys.
+  `GET /map/places/{npub}`.
 - **Step 2, photos:** photo endpoint, photo route, metadata removal,
   `coverPhoto` and `photos`.
-- **Step 3, sources,** after steps 1a and 2: 21.gifts sends its keys and
-  photos; DFX.swiss creates and sends keys for SPAR.
-- **Step 1b, R7 enforced:** once every source sends keys, a write without
-  `nostrPubkey` is rejected with **400**.
-- **Step 4, website,** any time after step 1a: shop page, map and table
-  links. Until step 2 is live the page treats missing `coverPhoto` and
-  `photos` as no photos.
+- **Step 1b, R7 enforced:** a `POST` or `PUT /map/places` without
+  `nostrPubkey` is rejected with **400**. A signed admin `PUT` by internal id
+  may leave it out and keeps the stored key; it gets **400** only when the row
+  has no stored key.
+- **Step 3, sources,** deployed together with #26: 21.gifts sends its keys
+  and photos; DFX.swiss creates and sends keys for SPAR.
+- **Step 4, website,** any time after #26 is live: shop page, map and table
+  links.
 
-Steps 1a, 2 and 1b are each one pull request with handbook entries, e2e tests
+Because the API before #26 rejects `nostrPubkey` as an unknown field, the
+sources can only send keys once it is live, and with step 1b it refuses their
+writes without a key: deploy it together with the step-3 changes of both
+sources (the 21.gifts outbox retries its writes; the SPAR import is run
+again), so that the gap between the deploys stays short. The pull request comes with handbook entries, e2e tests
 and the 100% coverage gate, as in [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ## Not part of this

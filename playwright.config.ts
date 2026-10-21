@@ -54,6 +54,7 @@ export default defineConfig({
       OCP_PLACE_INGEST_TOKEN: 'e2e-ingest',
       OCP_ADMIN_PUBLIC_KEYS: adminPublicLine,
       OCP_ADMIN_HOST: '127.0.0.1',
+      OCP_PUBLIC_BASE_URL: 'https://api.e2e.test',
       BTCMAP_ACCESS_TOKEN: '',
       BTCMAP_SUBMIT_URL: '',
     },

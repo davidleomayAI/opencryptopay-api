@@ -1,6 +1,6 @@
 # OpenCryptoPay API
 
-Map API. `GET /map/places` is the public list of complete places, each with a tech provider; `?origin=` limits that list to one origin. The list can also be limited by country, shopType (`SPAR` or `Others`), blockchain, and asset. For one release, `shopName` (`SPAR` or `others`) is a query alias for shopType and a read-only response field (`SPAR` or null) derived from shopType. Country is a stored ISO 3166-1 alpha-2 column. A place includes name, description, shopType, street, houseNumber, postalCode, city, country, and coordinates; all of those are required on write. A pin with support rows matches only those rows. A pin with none uses a hardcoded payment-link catalog: `21.gifts` is Lightning and BTC, and other pins use the DFX payment-link networks and assets. `GET /map/filters` lists shop types, the deprecated shop-name alias, countries of complete rows, and that catalog plus any stored values. `POST /map/places` adds a place once. `PUT /map/places` fully replaces a place. `DELETE /map/places` removes a place. Incomplete stored rows are not public. No stored field is derived from another field; the response field `shopName` is a read-only alias of `shopType` kept for one release.
+Map API. `GET /map/places` is the public list of complete places, each with a tech provider; `?origin=` limits that list to one origin. The list can also be limited by country, shopType (`SPAR` or `Others`), blockchain, and asset. For one release, `shopName` (`SPAR` or `others`) is a query alias for shopType and a read-only response field (`SPAR` or null) derived from shopType. Country is a stored ISO 3166-1 alpha-2 column. A place includes name, description, shopType, street, houseNumber, postalCode, city, country, and coordinates; all of those are required on write. A pin with support rows matches only those rows. A pin with none uses a hardcoded payment-link catalog: `21.gifts` is Lightning and BTC, and other pins use the DFX payment-link networks and assets. `GET /map/filters` lists shop types, the deprecated shop-name alias, countries of complete rows, and that catalog plus any stored values. `POST /map/places` adds a place once. `PUT /map/places` fully replaces a place. `DELETE /map/places` removes a place. A publicly listed shop has a NOSTR public key, and its id is the npub of that key (`docs/product/shop-identity.md`); a shop stored before keys existed stays unlisted until a write sends its `nostrPubkey`. `GET /map/places/{npub}` serves one shop with its photos, `PUT /map/places/photos` replaces a shop's photos, and `GET /map/photos/{sha256}.{ext}` serves a photo of a listed shop. A `POST` or `PUT /map/places` without `nostrPubkey` is rejected with 400. Incomplete stored rows are not public. No stored field is derived from another field; the response field `shopName` is a read-only alias of `shopType` kept for one release.
 
 The same `origin` and `externalId` returns the first pin and does not submit it again. When `BTCMAP_ACCESS_TOKEN` is set, a new pin is posted once to `https://api.btcmap.org/v4/place-submissions`. A missing token stores the pin and skips that call.
 
@@ -10,17 +10,20 @@ Requires [Bun](https://bun.sh).
 
 ```sh
 export OCP_PLACE_INGEST_TOKEN=replace-me
+export OCP_PUBLIC_BASE_URL=https://api.opencryptopay.io
 bun install
 bun run start
 ```
 
 The process listens on port `3000` unless `PORT` is set. The database file is `data/places.sqlite` unless `PLACE_DB` is set.
 
+`OCP_PUBLIC_BASE_URL` is required: the `https://` origin this API is reached at, without a trailing slash, for example `https://api.opencryptopay.io` in production and `https://dev-api.opencryptopay.io` on dev. Every shop photo URL in a JSON answer is built from it, never from the request's `Host` header. It is not a secret. The process refuses to start when it is missing or not such an origin.
+
 `GET /` returns a short HTML welcome page. `GET /healthz` returns `{ "ok": true }`.
 
 ## Admin
 
-A device signs admin requests with its own Ed25519 key. Allowed public keys are `OCP_ADMIN_PUBLIC_KEYS`. `OCP_ADMIN_HOST` is the hostname those signatures must name. The ingest routes are unchanged: `POST`, `PUT`, and `DELETE` `/map/places`, and `POST /map/places/transactions`, still require `Authorization: Bearer` equal to `OCP_PLACE_INGEST_TOKEN`.
+A device signs admin requests with its own Ed25519 key. Allowed public keys are `OCP_ADMIN_PUBLIC_KEYS`. `OCP_ADMIN_HOST` is the hostname those signatures must name. The ingest routes, `POST`, `PUT`, and `DELETE` `/map/places`, `PUT /map/places/photos`, and `POST /map/places/transactions`, require `Authorization: Bearer` equal to `OCP_PLACE_INGEST_TOKEN`.
 
 `OCP_ADMIN_PUBLIC_KEYS` is one environment value, not a secret. It is newline-separated. A blank line is ignored. A line whose first non-whitespace character is `#` is a comment and is ignored. Every other line is `ed25519`, the base64 of the raw 32-byte public key, and a name, or `ssh-ed25519`, the base64 of the OpenSSH wire blob, and a name. `ssh-ed25519` is allowed. Base64 may be padded or unpadded. The name matches `^[A-Za-z0-9._@-]{1,64}$` and must be unique. Line numbers count every line, including blanks and comments.
 
@@ -49,9 +52,10 @@ node scripts/ocp-admin.mjs keygen desk
 node scripts/ocp-admin.mjs list --base https://api.example.test --key desk
 node scripts/ocp-admin.mjs put places.json --base https://api.example.test --key desk
 node scripts/ocp-admin.mjs delete fremd shop-1 --base https://api.example.test --key desk
+node scripts/ocp-admin.mjs delete fremd shop-2 --base https://api.example.test --key desk --revision 8
 ```
 
-`--key` is the key name, not a path. A CLI key name must not start with `-`. The signed host is the hostname of `--base`, which must equal `OCP_ADMIN_HOST`. `list` signs `GET /admin/places`. `put` reads a JSON array and signs one `PUT /admin/places` per element. `delete` signs `DELETE /admin/places` with `origin` and `externalId`. The CLI sends a fresh nonce with every request. `delete` prints `missing <externalId>` and exits with status 1 when no pin had that origin and external id.
+`--key` is the key name, not a path. A CLI key name must not start with `-`. The signed host is the hostname of `--base`, which must equal `OCP_ADMIN_HOST`. `list` signs `GET /admin/places`. `put` reads a JSON array and signs one `PUT /admin/places` per element. `delete` signs `DELETE /admin/places` with `origin` and `externalId`, plus `revision` when `--revision` is given. A place whose source writes with revisions (R8 in `docs/product/shop-identity.md`) can only be deleted with a revision higher than its stored one; without it the CLI prints `fail <externalId> 409 Stale revision`. `--revision` must be an integer from 1 to 9007199254740991 and is only accepted by `delete`. The CLI sends a fresh nonce with every request. `delete` prints `missing <externalId>` and exits with status 1 when no pin had that origin and external id.
 
 ## Branches
 
