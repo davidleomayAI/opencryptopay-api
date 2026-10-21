@@ -808,6 +808,7 @@ test('Function: publicFilterResponse — filters include the payment-link catalo
     shopNames: string[];
     blockchains: string[];
     assets: string[];
+    activities: string[];
     techProviders: Array<{
       name: string;
       blockchains: string[];
@@ -817,6 +818,13 @@ test('Function: publicFilterResponse — filters include the payment-link catalo
   };
   expect(json.shopTypes).toEqual(['SPAR', 'Others']);
   expect(json.shopNames).toEqual(['SPAR', 'others']);
+  expect(json.activities).toEqual([
+    'daily',
+    'within7Days',
+    'within30Days',
+    'olderThan30Days',
+    'none',
+  ]);
   expect(json.blockchains).toContain('Lightning');
   expect(json.blockchains).toContain('BinancePay');
   expect(json.blockchains).not.toContain('Sepolia');
@@ -837,10 +845,21 @@ test('Function: publicFilterResponse — filters include the payment-link catalo
   });
   const ethereum = await request.get('/map/filters?blockchain=Ethereum');
   expect(ethereum.status()).toBe(200);
-  const ethereumJson = (await ethereum.json()) as { assets: string[]; blockchains: string[] };
+  const ethereumJson = (await ethereum.json()) as {
+    assets: string[];
+    blockchains: string[];
+    activities: string[];
+  };
   expect(ethereumJson.assets).toContain('ZCHF');
   expect(ethereumJson.assets).not.toContain('BTC');
   expect(ethereumJson.blockchains).toContain('Polygon');
+  expect(ethereumJson.activities).toEqual([
+    'daily',
+    'within7Days',
+    'within30Days',
+    'olderThan30Days',
+    'none',
+  ]);
 });
 
 test('Function: isCatalogBlockchain — BinancePay is a filter and Kraken is not', async ({

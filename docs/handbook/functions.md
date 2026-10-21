@@ -60,7 +60,7 @@
 
 - **Purpose:** Merge distinct stored filter values with the hardcoded payment-link catalog for `GET /map/filters`. `shopTypes` is always `["SPAR", "Others"]`. `shopNames` is the deprecated one-release alias `["SPAR", "others"]` and is removed in the release after the rollout. `?blockchain=` limits the top-level asset list. `techProviders` always contains the full `DFX.swiss` offer and the `21.gifts` offer of Lightning and BTC.
 - **Inputs:** Stored countries, blockchains, and assets, plus an optional blockchain query.
-- **Returns / side effects:** `{ shopTypes, shopNames, countries, blockchains, assets, techProviders }`. No I/O.
+- **Returns / side effects:** `{ shopTypes, shopNames, countries, blockchains, assets, activities, techProviders }`. `activities` is always `daily`, `within7Days`, `within30Days`, `olderThan30Days`, `none`, including when `?blockchain=` limits the asset list. No I/O.
 - **Used by:** `mapRoutes` on `GET /map/filters`.
 
 ## Function: normalizeMapPlaceKey
