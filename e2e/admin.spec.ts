@@ -627,6 +627,7 @@ test('Function: ocp-admin CLI — list, put, and delete sign like the server', (
           ...fremd,
           origin: 'cli',
           externalId: 'cli-2',
+          name: 'CLI Two',
           nostrPubkey: keyFor('cli/cli-2'),
           revision: 1,
         },

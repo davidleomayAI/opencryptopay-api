@@ -13,6 +13,7 @@ import {
 } from '@/lib/map/place';
 import {
   MAP_PLACE_SCHEMA_SQL,
+  placeNameConflict,
   placeWriteConflict,
   type MapPhotoFile,
   type MapPhotoWriteResult,
@@ -374,7 +375,9 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
 
   /**
    * Insert when the pair is new. An existing pair is returned unchanged, except
-   * that a row without a key stores the key this write carries.
+   * that a row without a key stores the key this write carries. A new pair
+   * whose exact name another row stores is refused and stores nothing. An
+   * existing pair does not check the name.
    *
    * @param input - Validated pin.
    * @param revision - Request revision (R8), when sent.
@@ -389,7 +392,8 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
    * position, category, payment methods, tech provider, shop type, address, supports).
    * The id, photos, timestamps, activity, and active flag stay, and the stored revision
    * changes only when one is sent. A stored key is kept; a row without a key stores the key
-   * this write carries.
+   * this write carries. A new or replacing write whose exact name another row stores is
+   * refused and leaves any existing row unchanged.
    *
    * @param input - Validated pin.
    * @param revision - Request revision (R8), when sent.
@@ -397,6 +401,30 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
    */
   upsert(input: MapPlaceInput, revision?: number): MapPlaceWriteResult {
     return this.#db.transaction(() => this.#write(input, revision, true))();
+  }
+
+  /**
+   * First id that stores this exact name. A row other than `selfId` wins, so a
+   * name already shared with another row is refused. The match is SQLite's
+   * default binary comparison: no COLLATE NOCASE and no unique index.
+   *
+   * @param name - Exact name the write would store.
+   * @param selfId - Id of the row being written, or null on insert.
+   * @returns That id, the row's own id when it is the only match, or null.
+   */
+  #nameOwnerId(name: string, selfId: string | null): string | null {
+    const rows = this.#db.query('SELECT id FROM map_place WHERE name = ?').all(name) as Array<{
+      id: string;
+    }>;
+    let own: string | null = null;
+    for (const row of rows) {
+      if (selfId !== null && row.id === selfId) {
+        own = row.id;
+        continue;
+      }
+      return row.id;
+    }
+    return own;
   }
 
   #storedRevision(origin: string, externalId: string): number | undefined {
@@ -451,6 +479,14 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
     });
     if (conflict !== null) {
       return { ok: false, error: conflict };
+    }
+    // A repeat insert keeps the stored name, so a foreign name in the payload is not a conflict.
+    if (replace || existing === null) {
+      const selfId = existing === null ? null : existing.id;
+      const nameConflict = placeNameConflict(this.#nameOwnerId(input.name, selfId), selfId);
+      if (nameConflict !== null) {
+        return { ok: false, error: nameConflict };
+      }
     }
     if (key !== undefined && reservation === null) {
       this.#db
@@ -597,14 +633,16 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
    * Runs in one transaction. A missing id writes nothing.
    * Another row with this origin and caller id writes nothing.
    * A key follows R7 against the new pair, and the row's key reservation moves
-   * to it. Revisions (R8) are neither checked nor stored.
+   * to it. Another row with this exact name writes nothing. The row's own name
+   * is allowed. Revisions (R8) are neither checked nor stored.
    * A UNIQUE failure rolls back, including support rows, and returns conflict.
    * `activity_until` is updated here even though it is not in `MAP_PLACE_COLUMNS`.
    * `active` is written on every replace.
    *
    * @param input - Id, validated pin, timestamps, activity write, and clock.
    * @returns The stored row when updated, otherwise missing, conflict, or
-   * `{ status: 'keyConflict', error }` with the R7 409 text.
+   * `{ status: 'keyConflict', error }` with the R7 text or
+   * `Place name belongs to another place`.
    */
   replaceById(input: ReplaceByIdInput): ReplaceByIdResult {
     const techProvider = input.content.techProvider ?? 'DFX.swiss';
@@ -649,6 +687,13 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
       });
       if (keyConflict !== null) {
         return { status: 'keyConflict', error: keyConflict };
+      }
+      const nameConflict = placeNameConflict(
+        this.#nameOwnerId(input.content.name, existing.id),
+        existing.id,
+      );
+      if (nameConflict !== null) {
+        return { status: 'keyConflict', error: nameConflict };
       }
       const nostrPubkey = existing.nostr_pubkey ?? key ?? null;
       if (nostrPubkey !== null) {

@@ -549,7 +549,12 @@ if (schemaOk && listAllOk && identityOk) {
     const keyB = keyFor('photo-b');
     const keyC = keyFor('photo-c');
     photoStore.insertIfNew({ ...COMPLETE, externalId: 'photo-a', nostrPubkey: keyA }, 1);
-    photoStore.insertIfNew({ ...COMPLETE, externalId: 'photo-b', nostrPubkey: keyB });
+    photoStore.insertIfNew({
+      ...COMPLETE,
+      externalId: 'photo-b',
+      name: 'Photo Two',
+      nostrPubkey: keyB,
+    });
     photoStore.insertIfNew({ ...COMPLETE, externalId: 'photo-c', name: '', nostrPubkey: keyC });
     const otherOrigin = photoStore.replacePhotos('spar', keyA, [front]);
     const stale = photoStore.replacePhotos('dfx', keyA, [front], 1);
@@ -659,8 +664,13 @@ if (schemaOk && listAllOk && identityOk && photosOk) {
       { ...COMPLETE, externalId: 'admin-0', nostrPubkey: keyA },
       5,
     );
-    const bare = adminStore.insertIfNew(keyless);
-    adminStore.insertIfNew({ ...COMPLETE, externalId: 'admin-2', nostrPubkey: keyB });
+    const bare = adminStore.insertIfNew({ ...keyless, name: 'Bare Shop' });
+    adminStore.insertIfNew({
+      ...COMPLETE,
+      externalId: 'admin-2',
+      name: 'Admin Two',
+      nostrPubkey: keyB,
+    });
     if (!placed.ok || !bare.ok) {
       throw new Error('admin seed failed');
     }
@@ -681,7 +691,11 @@ if (schemaOk && listAllOk && identityOk && photosOk) {
     });
     const reserved = replace(bare.place.id, { ...keyless, nostrPubkey: keyB });
     const taken = replace(bare.place.id, { ...keyless, externalId: 'admin-2' });
-    const added = replace(bare.place.id, { ...keyless, nostrPubkey: keyC });
+    const added = replace(bare.place.id, {
+      ...keyless,
+      name: bare.place.name,
+      nostrPubkey: keyC,
+    });
     const changed = replace(bare.place.id, { ...keyless, nostrPubkey: keyB });
     const photo = preparePhoto(
       { contentType: 'image/png', data: Buffer.from(simplePng(3, 2)).toString('base64') },

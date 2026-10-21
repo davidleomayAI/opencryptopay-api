@@ -91,11 +91,12 @@ export type MapPlaceListFilter = MapPlaceQueryFilter & {
   origin?: string;
 };
 
-/** Why a place write changed nothing (R7, R8). Each is a 409 body text. */
+/** Why a place write changed nothing (R7, R8, exact name). Each is a 409 body text. */
 export type MapPlaceWriteError =
   | 'Stale revision'
   | 'nostrPubkey belongs to another place'
-  | 'nostrPubkey of a place cannot change';
+  | 'nostrPubkey of a place cannot change'
+  | 'Place name belongs to another place';
 
 /** Outcome of `insertIfNew` and `upsert`. */
 export type MapPlaceWriteResult =
@@ -153,6 +154,53 @@ export function placeWriteConflict(check: {
     return 'nostrPubkey belongs to another place';
   }
   return null;
+}
+
+/**
+ * Decide whether a stored name blocks this write. The caller has already
+ * compared the exact stored text: this function does not trim and does not
+ * fold case. It does no I/O.
+ *
+ * @param ownerId - Id of a row that already stores this exact name, or null.
+ * @param selfId - Id of the row being written, or null when the write inserts.
+ * @returns The 409 text, or null when the write may store the name.
+ */
+export function placeNameConflict(
+  ownerId: string | null,
+  selfId: string | null,
+): MapPlaceWriteError | null {
+  if (ownerId === null || ownerId === selfId) {
+    return null;
+  }
+  return 'Place name belongs to another place';
+}
+
+/**
+ * First id that stores `name`. A row other than `selfId` wins, so a name that
+ * another row already has is refused even when this row has it too.
+ *
+ * @param rows - Stored places, in store order.
+ * @param name - Exact name the write would store.
+ * @param selfId - Id of the row being written, or null on insert.
+ * @returns That id, the row's own id when it is the only match, or null.
+ */
+function nameOwnerId(
+  rows: readonly { id: string; name: string }[],
+  name: string,
+  selfId: string | null,
+): string | null {
+  let own: string | null = null;
+  for (const row of rows) {
+    if (row.name !== name) {
+      continue;
+    }
+    if (selfId !== null && row.id === selfId) {
+      own = row.id;
+      continue;
+    }
+    return row.id;
+  }
+  return own;
 }
 
 function compareSupport(a: MapPlaceSupport, b: MapPlaceSupport): number {
@@ -447,7 +495,9 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
 
   /**
    * Insert when the pair is new. An existing pair is returned unchanged, except
-   * that a row without a key stores the key this write carries.
+   * that a row without a key stores the key this write carries. A new pair
+   * whose exact name another row stores is refused and stores nothing. An
+   * existing pair does not check the name.
    *
    * @param input - Validated pin.
    * @param revision - Request revision (R8), when sent.
@@ -462,7 +512,8 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
    * position, category, payment methods, tech provider, shop type, address, supports).
    * The id, photos, timestamps, activity, and active flag stay, and the stored revision
    * changes only when one is sent. A stored key is kept; a row without a key stores the key
-   * this write carries.
+   * this write carries. A new or replacing write whose exact name another row stores is
+   * refused and leaves any existing row unchanged.
    *
    * @param input - Validated pin.
    * @param revision - Request revision (R8), when sent.
@@ -494,6 +545,14 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
     });
     if (conflict !== null) {
       return { ok: false, error: conflict };
+    }
+    // A repeat insert keeps the stored name, so a foreign name in the payload is not a conflict.
+    if (replace || existing === undefined) {
+      const selfId = existing === undefined ? null : existing.id;
+      const nameConflict = placeNameConflict(nameOwnerId(this.#rows, input.name, selfId), selfId);
+      if (nameConflict !== null) {
+        return { ok: false, error: nameConflict };
+      }
     }
     if (input.nostrPubkey !== undefined && !this.#reservations.has(input.nostrPubkey)) {
       this.#reservations.set(input.nostrPubkey, {
@@ -538,6 +597,7 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
    * A key follows R7 as in a source write, checked against the new pair: a row
    * without a key stores the sent one unless it is reserved for another pair, and
    * a stored key cannot change. The row's key reservation moves to the new pair.
+   * Another row with this exact name writes nothing. The row's own name is allowed.
    * Revisions (R8) are neither checked nor stored.
    * `keep` does not change activity, the refresh deadline, or payment days.
    * `set` stores that token, clears the refresh deadline, and leaves payment days.
@@ -546,7 +606,7 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
    *
    * @param input - Id, validated pin, timestamps, activity write, and clock.
    * @returns A copy when updated, otherwise missing, conflict, or `{ status: 'keyConflict', error }`
-   * with the R7 409 text.
+   * with the R7 text or `Place name belongs to another place`.
    */
   replaceById(input: ReplaceByIdInput): ReplaceByIdResult {
     const existing = this.#rows.find((row) => row.id === input.id);
@@ -575,6 +635,13 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
     });
     if (keyConflict !== null) {
       return { status: 'keyConflict', error: keyConflict };
+    }
+    const nameConflict = placeNameConflict(
+      nameOwnerId(this.#rows, input.content.name, existing.id),
+      existing.id,
+    );
+    if (nameConflict !== null) {
+      return { status: 'keyConflict', error: nameConflict };
     }
     existing.nostrPubkey = existing.nostrPubkey ?? key ?? null;
     if (existing.nostrPubkey !== null) {
