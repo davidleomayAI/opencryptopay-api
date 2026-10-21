@@ -52,6 +52,16 @@ class MissingOnSetActive extends MemoryMapPlaceStore {
   }
 }
 
+class NullKeyOnReplace extends MemoryMapPlaceStore {
+  override replaceById(input: ReplaceByIdInput) {
+    const replaced = super.replaceById(input);
+    if (replaced.status === 'updated') {
+      replaced.place.nostrPubkey = null;
+    }
+    return replaced;
+  }
+}
+
 type Over = {
   host?: string;
   timestamp?: number;
@@ -1009,6 +1019,25 @@ describe('admin routes', () => {
     expect(calls).toEqual([]);
     expect(store.getById(created.place.id)?.active).toBe(true);
     expect(store.getById(created.place.id)?.name).toBe(pin.name);
+  });
+
+  it('answers npub null when replaceById returns a row with no key', async () => {
+    const store = new NullKeyOnReplace(() => new Date(NOW_MS));
+    const created = keyedStore(store).insertIfNew(withKey(pin));
+    const { calls, signed } = adminWithMap(store);
+    const response = await signed(
+      'PUT',
+      '/admin/places',
+      jsonBytes({ ...withKey(pin), id: created.place.id, name: 'Renamed Shop' }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      created: false,
+      id: created.place.id,
+      npub: null,
+      btcmap: 'skipped',
+    });
+    expect(calls).toEqual([]);
   });
 
   it('rejects createdAt, lastTransactionAt, and activity on PUT without an internal id', async () => {

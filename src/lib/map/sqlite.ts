@@ -795,9 +795,9 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
   }): { status: 'updated'; place: StoredMapPlace } | { status: 'missing' } {
     const apply = this.#db.transaction(
       (): { status: 'updated'; place: StoredMapPlace } | { status: 'missing' } => {
-        const existing = this.#db
-          .query('SELECT id FROM map_place WHERE id = ?')
-          .get(input.id) as { id: string } | null;
+        const existing = this.#db.query('SELECT id FROM map_place WHERE id = ?').get(input.id) as {
+          id: string;
+        } | null;
         if (existing === null) {
           return { status: 'missing' };
         }
