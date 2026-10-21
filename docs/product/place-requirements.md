@@ -123,7 +123,8 @@ the signed admin interface keeps the internal id. The full rules are in
   out and keeps the stored one. That 400 is for a content update that carries
   place fields, and only when the shop has no stored key. A body whose only
   own properties are `id` and a JSON boolean `active` is not that content
-  update.
+  update. `npub` is null exactly when the stored key is null, otherwise the
+  npub of that key, and this body does not call `normalizeMapPlace`.
 
 ## Deactivation
 

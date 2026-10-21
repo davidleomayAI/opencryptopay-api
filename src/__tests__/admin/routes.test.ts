@@ -46,6 +46,12 @@ class MissingOnReplace extends MemoryMapPlaceStore {
   }
 }
 
+class MissingOnSetActive extends MemoryMapPlaceStore {
+  override setActiveById(_input: { id: string; active: boolean }): { status: 'missing' } {
+    return { status: 'missing' };
+  }
+}
+
 type Over = {
   host?: string;
   timestamp?: number;
@@ -983,6 +989,25 @@ describe('admin routes', () => {
     expect(await response.json()).toEqual({ error: 'Place not found' });
     expect(calls).toEqual([]);
     expect(store.listAll()).toHaveLength(1);
+    expect(store.getById(created.place.id)?.name).toBe(pin.name);
+  });
+
+  it('returns 404 when setActiveById reports the id missing and writes nothing', async () => {
+    const store = new MissingOnSetActive(() => new Date(NOW_MS));
+    const created = store.insertIfNew(pin);
+    if (!created.ok) {
+      throw new Error(created.error);
+    }
+    const { calls, signed } = adminWithMap(store);
+    const response = await signed(
+      'PUT',
+      '/admin/places',
+      jsonBytes({ id: created.place.id, active: false }),
+    );
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: 'Place not found' });
+    expect(calls).toEqual([]);
+    expect(store.getById(created.place.id)?.active).toBe(true);
     expect(store.getById(created.place.id)?.name).toBe(pin.name);
   });
 

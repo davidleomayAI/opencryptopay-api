@@ -162,7 +162,7 @@ Name examples: `SPAR Maschlinastrasse 4, 9495 Triesen` (`spar`) and
 - **Code:** met with #26 (steps 1a and 1b of [shop-identity.md](shop-identity.md)).
   `POST` and `PUT /map/places` require and validate `nostrPubkey` (400 without
   it; a signed admin content update by internal id may leave it out and keeps the stored
-  key, 400 only when the row has none; a body whose only own properties are `id` and a JSON boolean `active` writes only that flag and is not that 400), reserve it for its origin and external id, and refuse a changed key or
+  key, 400 only when the row has none; a body whose only own properties are `id` and a JSON boolean `active` writes only that flag, is not that 400, answers with `npub` null exactly when the stored key is null and otherwise the npub of that key, and does not call `normalizeMapPlace`), reserve it for its origin and external id, and refuse a changed key or
   a key of another shop with 409. A row stored before step 1a has no key, is
   not complete, and stays out of `GET /map/places`, `GET /map/places/{npub}`
   and the countries of `GET /map/filters` until a write adds one.

@@ -79,8 +79,9 @@ Every shop must state a NOSTR public key:
   has `active` = 1, whether the key arrives with a `PUT` or, as described
   above, with a `POST`. `active` is not part of completeness.
 
-The npub is not stored. It is `npubEncode(nostrPubkey)`
-(`src/lib/map/nostr-key.ts`) wherever it is shown.
+The npub is not stored. A row without a key shows `npub` null, otherwise
+`npubEncode(nostrPubkey)` (`src/lib/map/nostr-key.ts`). The flag-only admin
+success follows the same rule and does not call `normalizeMapPlace`.
 
 ### Storage
 
@@ -113,7 +114,9 @@ carries a key (step 1b), so the write path never stores a null. A signed admin
 `PUT` by internal id may leave the key out to keep the stored one; on a row
 without a key a content update must send one. A body whose only own
 properties are `id` and a JSON boolean `active` writes only that flag, leaves
-a null key null, and is not that 400.
+a null key null, and is not that 400. `npub` is null exactly when the stored
+key is null, otherwise the npub of that key, and this body does not call
+`normalizeMapPlace`.
 
 `origin` + `externalId` stay the source's own key for idempotent writes. Every
 public response and every new route uses the NOSTR key instead. The internal
@@ -548,7 +551,9 @@ on the website:
   may leave it out and keeps the stored key; a content update gets **400**
   only when the row has no stored key. A body whose only own properties are
   `id` and a JSON boolean `active` writes only that flag, leaves a null key
-  null, and is not that 400.
+  null, and is not that 400. `npub` is null exactly when the stored key is
+  null, otherwise the npub of that key, and this body does not call
+  `normalizeMapPlace`.
 - **Step 3, sources,** deployed together with #26: 21.gifts sends its keys
   and photos; DFX.swiss creates and sends keys for SPAR.
 - **Step 4, website,** any time after #26 is live: shop page, map and table

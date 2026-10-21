@@ -9,7 +9,6 @@ import {
   normalizeMapPlace,
   normalizePlaceOrigin,
   toPublicMapPlace,
-  type MapPlaceInput,
   type PlaceActivity,
   type StoredMapPlace,
 } from '@/lib/map/place';
@@ -226,10 +225,10 @@ function adminReplaceBody(
  * It keeps a stored key, stores a sent key on a row without one (R7, checked against the new
  * pair), moves the key reservation with the row, and does not take a `revision` (R8).
  * A present `active` must be a JSON boolean. Anything else is `Place active is invalid`
- * and writes nothing. A body whose only own properties are `id` and that boolean stores
- * the flag on the stored fields, so a shop with no key can be hidden without inventing
- * one, and does not call `normalizeMapPlace`. Omitted `active` keeps the stored flag.
- * The body copy drops `active` before `normalizeMapPlace`.
+ * and writes nothing. A body whose only own properties are `id` and that boolean calls
+ * `setActiveById` and writes only `active`, so a shop with no key can be hidden without
+ * inventing one, and does not call `normalizeMapPlace`. Omitted `active` keeps the stored
+ * flag. The body copy drops `active` before `normalizeMapPlace`.
  * DELETE with `id` still rejects a different origin or caller id and needs no revision.
  * Without `id`, PUT and DELETE keep the origin and external id paths with the source rules.
  *
@@ -369,48 +368,31 @@ export function adminRoutes(deps: AdminRouteDeps): Hono<AdminEnv> {
       active = value;
     }
     // A stored shop with no key can be hidden without inventing a key.
-    const flagOnly =
+    if (
       Object.keys(parsedId.body).length === 2 &&
       Object.hasOwn(parsedId.body, 'id') &&
-      Object.hasOwn(parsedId.body, 'active');
-    let content: MapPlaceInput;
-    if (flagOnly) {
-      content = {
-        origin: stored.origin,
-        externalId: stored.externalId,
-        name: stored.name,
-        description: stored.description,
-        lat: stored.lat,
-        lon: stored.lon,
-        category: stored.category,
-        paymentMethods: stored.paymentMethods,
-        techProvider: stored.techProvider,
-        shopType: stored.shopType,
-        street: stored.street,
-        houseNumber: stored.houseNumber,
-        postalCode: stored.postalCode,
-        city: stored.city,
-        country: stored.country,
-        supports: stored.supports,
-      };
-      if (stored.nostrPubkey !== null) {
-        content.nostrPubkey = stored.nostrPubkey;
+      Object.hasOwn(parsedId.body, 'active')
+    ) {
+      const updated = deps.store.setActiveById({ id: parsedId.id, active });
+      if (updated.status === 'missing') {
+        return c.json({ error: 'Place not found' }, 404);
       }
-    } else {
-      const parsed = normalizeMapPlace(
-        adminReplaceBody(parsedId.body, identity.origin, identity.externalId, stored.nostrPubkey),
-      );
-      if (!parsed.ok) {
-        return c.json({ error: parsed.error }, 400);
-      }
-      content = parsed.value;
+      const key = updated.place.nostrPubkey;
+      const npub = key === null ? null : npubEncode(key);
+      return c.json({ created: false, id: updated.place.id, npub, btcmap: 'skipped' }, 200);
+    }
+    const parsed = normalizeMapPlace(
+      adminReplaceBody(parsedId.body, identity.origin, identity.externalId, stored.nostrPubkey),
+    );
+    if (!parsed.ok) {
+      return c.json({ error: parsed.error }, 400);
     }
     const replaced = deps.store.replaceById({
       id: parsedId.id,
-      content,
-      createdAt: flagOnly ? stored.createdAt : createdAt,
-      lastTransactionAt: flagOnly ? stored.lastTransactionAt : lastTransactionAt,
-      activity: flagOnly ? { kind: 'keep' } : activityWrite,
+      content: parsed.value,
+      createdAt,
+      lastTransactionAt,
+      activity: activityWrite,
       active,
       nowMs: now(),
     });

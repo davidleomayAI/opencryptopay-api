@@ -779,6 +779,47 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
   }
 
   /**
+   * Store only `active` on one internal id, in one transaction.
+   * A missing id writes nothing.
+   * The write is `UPDATE map_place SET active = ? WHERE id = ?` with 1 or 0.
+   * The row is then read the same way as other reads. No support rewrite, no
+   * reservation, no tech-provider default, and no other column.
+   * `activity` and `activity_until` stay.
+   *
+   * @param input - Internal id and the flag to store.
+   * @returns The stored row when updated, or `{ status: 'missing' }`.
+   */
+  setActiveById(input: {
+    id: string;
+    active: boolean;
+  }): { status: 'updated'; place: StoredMapPlace } | { status: 'missing' } {
+    const apply = this.#db.transaction(
+      (): { status: 'updated'; place: StoredMapPlace } | { status: 'missing' } => {
+        const existing = this.#db
+          .query('SELECT id FROM map_place WHERE id = ?')
+          .get(input.id) as { id: string } | null;
+        if (existing === null) {
+          return { status: 'missing' };
+        }
+        this.#db
+          .query('UPDATE map_place SET active = ? WHERE id = ?')
+          .run(input.active ? 1 : 0, input.id);
+        const updated = this.#db
+          .query(
+            `SELECT ${MAP_PLACE_COLUMNS}
+             FROM map_place WHERE id = ?`,
+          )
+          .get(input.id) as MapPlaceRow | null;
+        if (updated === null) {
+          throw new Error('map place active missing row');
+        }
+        return { status: 'updated', place: mapOne(this.#db, updated) };
+      },
+    );
+    return apply();
+  }
+
+  /**
    * Store a newer transaction instant for an existing pin and refresh its activity.
    *
    * @param origin - Pin origin.

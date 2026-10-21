@@ -443,6 +443,10 @@ export interface MapPlaceStore {
   insertIfNew(input: MapPlaceInput, revision?: number): MapPlaceWriteResult;
   upsert(input: MapPlaceInput, revision?: number): MapPlaceWriteResult;
   replaceById(input: ReplaceByIdInput): ReplaceByIdResult;
+  setActiveById(input: {
+    id: string;
+    active: boolean;
+  }): { status: 'updated'; place: StoredMapPlace } | { status: 'missing' };
   recordTransaction(
     origin: string,
     externalId: string,
@@ -685,6 +689,26 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
         this.#activityUntil.set(existing.id, classified.until);
       }
     }
+    return { status: 'updated', place: copyStoredPlace(existing) };
+  }
+
+  /**
+   * Store only `active` on one internal id.
+   * A missing id writes nothing and does not insert a row.
+   * Supports, photos, payment days, activity, timestamps, and the key stay.
+   *
+   * @param input - Internal id and the flag to store.
+   * @returns A copy when updated, or `{ status: 'missing' }`.
+   */
+  setActiveById(input: {
+    id: string;
+    active: boolean;
+  }): { status: 'updated'; place: StoredMapPlace } | { status: 'missing' } {
+    const existing = this.#rows.find((row) => row.id === input.id);
+    if (existing === undefined) {
+      return { status: 'missing' };
+    }
+    existing.active = input.active;
     return { status: 'updated', place: copyStoredPlace(existing) };
   }
 

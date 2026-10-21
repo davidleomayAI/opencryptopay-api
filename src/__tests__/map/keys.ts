@@ -68,6 +68,8 @@ export function keyedStore<T extends MapPlaceStore>(store: T) {
     filters: (blockchain?: string) => store.filters(blockchain),
     findPublicByPubkey: (pubkey: string) => store.findPublicByPubkey(pubkey),
     replaceById: (...args: Parameters<MapPlaceStore['replaceById']>) => store.replaceById(...args),
+    setActiveById: (...args: Parameters<MapPlaceStore['setActiveById']>) =>
+      store.setActiveById(...args),
     getById: (id: string) => store.getById(id),
     deleteById: (id: string) => store.deleteById(id),
     close: () => store.close(),
