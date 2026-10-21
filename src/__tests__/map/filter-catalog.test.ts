@@ -9,9 +9,10 @@ import {
 } from '@/lib/map/filter-catalog';
 import type { PlaceActivity } from '@/lib/map/place';
 
-type SameActivityList<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
-  ? true
-  : false;
+type SameActivityList<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
+    ? true
+    : false;
 
 const activityListMatchesPlace: SameActivityList<
   PlaceActivity,
