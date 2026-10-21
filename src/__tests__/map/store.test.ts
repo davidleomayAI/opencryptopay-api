@@ -1611,12 +1611,7 @@ describe('MemoryMapPlaceStore active', () => {
       throw new Error(created.error);
     }
     replace(store, created.place.id, { ...input, nostrPubkey: keyA }, false);
-    const recorded = store.recordTransaction(
-      'dfx',
-      'store-1',
-      '2026-10-08T12:00:00.000Z',
-      nowMs,
-    );
+    const recorded = store.recordTransaction('dfx', 'store-1', '2026-10-08T12:00:00.000Z', nowMs);
     expect(recorded?.active).toBe(false);
     expect(recorded?.activity).toBe('within7Days');
     expect(store.getById(created.place.id)?.active).toBe(false);
