@@ -10,14 +10,10 @@ import {
 import type { PlaceActivity } from '@/lib/map/place';
 
 type SameActivityList<A, B> =
-  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
-    ? true
-    : false;
+  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 
-const activityListMatchesPlace: SameActivityList<
-  PlaceActivity,
-  (typeof PLACE_ACTIVITIES)[number]
-> = true;
+const activityListMatchesPlace: SameActivityList<PlaceActivity, (typeof PLACE_ACTIVITIES)[number]> =
+  true;
 
 describe('payment-link filter catalog', () => {
   it('names the payment-link networks and assets, not test or inactive ones', () => {
