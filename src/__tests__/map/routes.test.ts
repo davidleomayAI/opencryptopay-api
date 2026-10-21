@@ -1045,7 +1045,7 @@ describe('map routes', () => {
     const other = await api.request('/map/places', {
       method: 'POST',
       headers: jsonHeaders,
-      body: JSON.stringify({ ...body, externalId: 'store-old' }),
+      body: JSON.stringify({ ...body, externalId: 'store-old', name: 'Store Old' }),
     });
     expect(other.status).toBe(201);
     const noneRes = await api.request('/map/places/transactions', {
@@ -1191,6 +1191,30 @@ describe('map routes NOSTR identity and request order', () => {
     const taken = await send(api, 'POST', { ...body, externalId: 'store-2', nostrPubkey: keyA });
     expect(taken.status).toBe(409);
     expect(await taken.json()).toEqual({ error: 'nostrPubkey belongs to another place' });
+  });
+
+  it('answers 409 for a second shop with the same name and keeps a put of the own name', async () => {
+    const api = rawApp({ token: 'secret' });
+    const first = await send(api, 'POST', {
+      ...body,
+      name: 'Shared Shop',
+      nostrPubkey: keyA,
+    });
+    expect(first.status).toBe(201);
+    const second = await send(api, 'POST', {
+      ...body,
+      externalId: 'store-2',
+      name: 'Shared Shop',
+      nostrPubkey: keyB,
+    });
+    expect(second.status).toBe(409);
+    expect(await second.json()).toEqual({ error: 'Place name belongs to another place' });
+    const kept = await send(api, 'PUT', { ...body, name: 'Shared Shop', nostrPubkey: keyA });
+    expect(kept.status).toBe(200);
+    const listed = (await (await api.request('/map/places')).json()) as {
+      places: Array<{ name: string }>;
+    };
+    expect(listed.places.filter((row) => row.name === 'Shared Shop')).toHaveLength(1);
   });
 
   it('answers 400 for an invalid key or revision before any 409', async () => {

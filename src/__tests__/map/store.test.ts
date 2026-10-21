@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MAP_PLACE_SCHEMA_SQL,
   MemoryMapPlaceStore,
+  placeNameConflict,
   placeProblems,
   placeWriteConflict,
 } from '@/lib/map/store';
@@ -72,7 +73,7 @@ describe('MemoryMapPlaceStore', () => {
     expect(second.created).toBe(false);
     expect(second.place.name).toBe('SPAR Triesen');
     expect(second.place.id).toBe(first.place.id);
-    const later = store.insertIfNew({ ...input, externalId: 'store-2' });
+    const later = store.insertIfNew({ ...input, externalId: 'store-2', name: 'SPAR Triesen 2' });
     const listed = store.list(10);
     expect(listed.map((row) => row.externalId)).toEqual(['store-2', 'store-1']);
     expect(store.list(1)).toHaveLength(1);
@@ -95,13 +96,13 @@ describe('MemoryMapPlaceStore', () => {
     const rising = keyedStore(
       new MemoryMapPlaceStore(() => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++))),
     );
-    rising.insertIfNew({ ...input, externalId: 'older' });
-    rising.insertIfNew({ ...input, externalId: 'newer' });
+    rising.insertIfNew({ ...input, externalId: 'older', name: 'Older' });
+    rising.insertIfNew({ ...input, externalId: 'newer', name: 'Newer' });
     expect(rising.list(10).map((row) => row.externalId)).toEqual(['newer', 'older']);
 
     const fixed = keyedStore(new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z')));
-    const a = fixed.insertIfNew({ ...input, externalId: 'a' });
-    const b = fixed.insertIfNew({ ...input, externalId: 'b' });
+    const a = fixed.insertIfNew({ ...input, externalId: 'a', name: 'Pin A' });
+    const b = fixed.insertIfNew({ ...input, externalId: 'b', name: 'Pin B' });
     const expected = [a.place.id, b.place.id].sort((left, right) => right.localeCompare(left));
     expect(fixed.list(10).map((row) => row.id)).toEqual(expected);
   });
@@ -113,6 +114,7 @@ describe('MemoryMapPlaceStore', () => {
     const labeled = store.insertIfNew({
       ...input,
       externalId: 'store-labeled',
+      name: 'Labeled Shop',
       techProvider: '21.gifts',
     });
     expect(labeled.created).toBe(true);
@@ -182,8 +184,8 @@ describe('MemoryMapPlaceStore', () => {
     const store = keyedStore(
       new MemoryMapPlaceStore(() => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++))),
     );
-    store.insertIfNew({ ...input, origin: 'spar', externalId: 'spar-1' });
-    store.insertIfNew({ ...input, origin: 'dfx', externalId: 'dfx-1' });
+    store.insertIfNew({ ...input, origin: 'spar', externalId: 'spar-1', name: 'Spar Origin' });
+    store.insertIfNew({ ...input, origin: 'dfx', externalId: 'dfx-1', name: 'Dfx Origin' });
     const listed = store.list(1, { origin: 'spar' });
     expect(listed).toHaveLength(1);
     expect(listed[0]?.origin).toBe('spar');
@@ -195,8 +197,20 @@ describe('MemoryMapPlaceStore', () => {
     const store = keyedStore(
       new MemoryMapPlaceStore(() => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++))),
     );
-    store.insertIfNew({ ...input, externalId: 'ch-old', country: 'CH', postalCode: '8001' });
-    store.insertIfNew({ ...input, externalId: 'de-new', country: 'DE', postalCode: '10115' });
+    store.insertIfNew({
+      ...input,
+      externalId: 'ch-old',
+      name: 'CH Old',
+      country: 'CH',
+      postalCode: '8001',
+    });
+    store.insertIfNew({
+      ...input,
+      externalId: 'de-new',
+      name: 'DE New',
+      country: 'DE',
+      postalCode: '10115',
+    });
     expect(store.list(1).map((row) => row.externalId)).toEqual(['de-new']);
     const listed = store.list(1, { country: 'CH' });
     expect(listed).toHaveLength(1);
@@ -209,8 +223,13 @@ describe('MemoryMapPlaceStore', () => {
     const store = keyedStore(
       new MemoryMapPlaceStore(() => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++))),
     );
-    store.insertIfNew({ ...input, externalId: 'spar-brand', shopType: 'SPAR' });
-    store.insertIfNew({ ...input, externalId: 'other-brand', shopType: 'Others' });
+    store.insertIfNew({ ...input, externalId: 'spar-brand', name: 'Spar Brand', shopType: 'SPAR' });
+    store.insertIfNew({
+      ...input,
+      externalId: 'other-brand',
+      name: 'Other Brand',
+      shopType: 'Others',
+    });
     const spar = store.list(10, { shopType: 'SPAR' });
     expect(spar.map((row) => row.externalId)).toEqual(['spar-brand']);
     const others = store.list(10, { shopType: 'Others' });
@@ -220,26 +239,30 @@ describe('MemoryMapPlaceStore', () => {
 
   it('uses the payment-link catalog when a pin has no support rows', () => {
     const store = keyedStore(new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z')));
-    store.insertIfNew({ ...input, externalId: 'dfx-open' });
+    store.insertIfNew({ ...input, externalId: 'dfx-open', name: 'Dfx Open' });
     store.insertIfNew({
       ...input,
       origin: '21gifts',
       externalId: 'gifts-open',
+      name: 'Gifts Open',
       techProvider: '21.gifts',
     });
     store.insertIfNew({
       ...input,
       origin: '21gifts',
       externalId: 'origin-only',
+      name: 'Origin Only',
     });
     store.insertIfNew({
       ...input,
       externalId: 'label-only',
+      name: 'Label Only',
       techProvider: '21.gifts',
     });
     store.insertIfNew({
       ...input,
       externalId: 'stated',
+      name: 'Stated Supports',
       supports: [{ blockchain: 'Polygon', asset: 'ZCHF' }],
     });
     const ids = (filter: { blockchain?: string; asset?: string; shopType?: ShopType }): string[] =>
@@ -393,13 +416,18 @@ describe('MemoryMapPlaceStore', () => {
     store.insertIfNew({ ...input, externalId: 'complete', country: 'LI' });
     const blanks: Array<Partial<MapPlaceInput> & { externalId: string }> = [
       { externalId: 'empty-name', name: '', country: 'CH' },
-      { externalId: 'empty-description', description: '', country: 'DE' },
-      { externalId: 'empty-street', street: '', country: 'AT' },
-      { externalId: 'empty-house', houseNumber: '', country: 'FR' },
-      { externalId: 'empty-postal', postalCode: '', country: 'IT' },
-      { externalId: 'empty-city', city: '', country: 'ES' },
-      { externalId: 'empty-country', country: '' },
-      { externalId: 'bad-type', shopType: 'Migros' as ShopType, country: 'NL' },
+      {
+        externalId: 'empty-description',
+        name: 'Empty Description',
+        description: '',
+        country: 'DE',
+      },
+      { externalId: 'empty-street', name: 'Empty Street', street: '', country: 'AT' },
+      { externalId: 'empty-house', name: 'Empty House', houseNumber: '', country: 'FR' },
+      { externalId: 'empty-postal', name: 'Empty Postal', postalCode: '', country: 'IT' },
+      { externalId: 'empty-city', name: 'Empty City', city: '', country: 'ES' },
+      { externalId: 'empty-country', name: 'Empty Country', country: '' },
+      { externalId: 'bad-type', name: 'Bad Type', shopType: 'Migros' as ShopType, country: 'NL' },
     ];
     for (const row of blanks) {
       store.insertIfNew({ ...input, ...row });
@@ -426,11 +454,12 @@ describe('MemoryMapPlaceStore', () => {
     store.insertIfNew({
       ...input,
       externalId: 'store-2',
+      name: 'Store Two',
       country: 'DE',
       postalCode: '10115',
       supports: [{ blockchain: 'Bitcoin', asset: 'BTC' }],
     });
-    store.insertIfNew({ ...input, externalId: 'none' });
+    store.insertIfNew({ ...input, externalId: 'none', name: 'No Supports' });
     store.insertIfNew({ ...input, externalId: 'hidden', name: '', country: 'FR' });
     expect(store.filters()).toEqual({
       countries: ['CH', 'DE', 'LI'],
@@ -458,6 +487,7 @@ describe('MemoryMapPlaceStore', () => {
       ...input,
       origin: 'spar',
       externalId: 'match',
+      name: 'Match Pin',
       country: 'CH',
       postalCode: '8001',
       shopType: 'SPAR',
@@ -467,6 +497,7 @@ describe('MemoryMapPlaceStore', () => {
       ...input,
       origin: 'spar',
       externalId: 'miss',
+      name: 'Miss Pin',
       country: 'DE',
       postalCode: '10115',
       shopType: 'SPAR',
@@ -685,7 +716,7 @@ describe('MemoryMapPlaceStore', () => {
       ...input,
       supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
     });
-    const other = store.insertIfNew({ ...input, externalId: 'store-2' });
+    const other = store.insertIfNew({ ...input, externalId: 'store-2', name: 'Store Two' });
     store.recordTransaction('dfx', 'store-1', '2026-10-08T12:00:00.000Z', nowMs);
     store.recordTransaction('dfx', 'store-2', '2026-10-08T12:00:00.000Z', nowMs);
     expect(store.getById('store-1')).toBeUndefined();
@@ -1046,7 +1077,7 @@ describe('MemoryMapPlaceStore.listAll', () => {
     );
     store.insertIfNew(input);
     store.insertIfNew({ ...input, externalId: 'blank', name: '' });
-    store.insertIfNew({ ...input, externalId: 'newer' });
+    store.insertIfNew({ ...input, externalId: 'newer', name: 'Newer' });
     expect(store.list(10).map((row) => row.externalId)).toEqual(['newer', 'store-1']);
     const all = store.listAll();
     expect(all.map((row) => row.externalId)).toEqual(['newer', 'blank', 'store-1']);
@@ -1140,6 +1171,180 @@ describe('placeWriteConflict', () => {
         reservedFor: { origin: 'dfx', externalId: 'store-1' },
       }),
     ).toBeNull();
+  });
+});
+
+describe('placeNameConflict', () => {
+  it('allows a missing owner and the row being written', () => {
+    expect(placeNameConflict(null, null)).toBeNull();
+    expect(placeNameConflict(null, 'place-1')).toBeNull();
+    expect(placeNameConflict('place-1', 'place-1')).toBeNull();
+  });
+
+  it('refuses another row, including when the write inserts', () => {
+    expect(placeNameConflict('place-2', 'place-1')).toBe('Place name belongs to another place');
+    expect(placeNameConflict('place-2', null)).toBe('Place name belongs to another place');
+  });
+});
+
+describe('MemoryMapPlaceStore exact name', () => {
+  const keyA = keyFor('exact-name-a');
+  const keyB = keyFor('exact-name-b');
+  const keyC = keyFor('exact-name-c');
+  const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
+  const nameError = 'Place name belongs to another place';
+
+  function written(result: ReturnType<MemoryMapPlaceStore['insertIfNew']>) {
+    if (!result.ok) {
+      throw new Error(result.error);
+    }
+    return result.place;
+  }
+
+  function replace(store: MemoryMapPlaceStore, id: string, content: MapPlaceInput) {
+    return store.replaceById({
+      id,
+      content,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      lastTransactionAt: null,
+      activity: { kind: 'keep' },
+      active: true,
+      nowMs,
+    });
+  }
+
+  it('stores a different case and surrounding spaces as other names', () => {
+    const store = new MemoryMapPlaceStore();
+    written(store.insertIfNew({ ...input, name: 'Shop', nostrPubkey: keyA }));
+    expect(
+      store.insertIfNew({ ...input, externalId: 'store-2', name: 'shop', nostrPubkey: keyB }).ok,
+    ).toBe(true);
+    expect(
+      store.insertIfNew({ ...input, externalId: 'store-3', name: 'Shop ', nostrPubkey: keyC }).ok,
+    ).toBe(true);
+    expect(store.listAll()).toHaveLength(3);
+  });
+
+  it('refuses a second new shop and stores no reservation or revision', () => {
+    const store = new MemoryMapPlaceStore();
+    written(store.insertIfNew({ ...input, name: 'Exact Shop', nostrPubkey: keyA }));
+    expect(
+      store.insertIfNew(
+        { ...input, externalId: 'store-2', name: 'Exact Shop', nostrPubkey: keyB },
+        4,
+      ),
+    ).toEqual({ ok: false, error: nameError });
+    expect(store.listAll().map((row) => row.externalId)).toEqual(['store-1']);
+    expect(
+      store.insertIfNew(
+        { ...input, externalId: 'store-3', name: 'Free Shop', nostrPubkey: keyB },
+        1,
+      ).ok,
+    ).toBe(true);
+    expect(store.listAll().some((row) => row.externalId === 'store-2')).toBe(false);
+  });
+
+  it('does not apply a foreign name when insertIfNew finds the pair', () => {
+    const store = new MemoryMapPlaceStore();
+    const first = written(store.insertIfNew({ ...input, name: 'Own Shop', nostrPubkey: keyA }));
+    written(
+      store.insertIfNew({
+        ...input,
+        externalId: 'store-2',
+        name: 'Foreign Shop',
+        nostrPubkey: keyB,
+      }),
+    );
+    const again = store.insertIfNew({ ...input, name: 'Foreign Shop', nostrPubkey: keyA });
+    expect(again).toMatchObject({ ok: true, created: false });
+    expect(again.ok && again.place.name).toBe('Own Shop');
+    expect(store.getById(first.id)?.name).toBe('Own Shop');
+  });
+
+  it('rejects an upsert onto another name and allows the own name and a free name', () => {
+    const store = new MemoryMapPlaceStore();
+    const own = written(store.upsert({ ...input, name: 'Own Shop', nostrPubkey: keyA }));
+    written(
+      store.insertIfNew({
+        ...input,
+        externalId: 'store-2',
+        name: 'Taken Shop',
+        nostrPubkey: keyB,
+      }),
+    );
+    const before = store.getById(own.id);
+    expect(store.upsert({ ...input, name: 'Taken Shop', nostrPubkey: keyA })).toEqual({
+      ok: false,
+      error: nameError,
+    });
+    expect(store.getById(own.id)).toEqual(before);
+    expect(store.upsert({ ...input, name: 'Own Shop', nostrPubkey: keyA })).toMatchObject({
+      ok: true,
+      created: false,
+    });
+    const renamed = store.upsert({ ...input, name: 'Free Shop', nostrPubkey: keyA });
+    expect(renamed.ok && renamed.place.name).toBe('Free Shop');
+    expect(
+      store.upsert({ ...input, externalId: 'store-3', name: 'Free Shop', nostrPubkey: keyC }),
+    ).toEqual({ ok: false, error: nameError });
+    expect(store.listAll().some((row) => row.externalId === 'store-3')).toBe(false);
+  });
+
+  it('reports a stale revision and a changed key before the name', () => {
+    const store = new MemoryMapPlaceStore();
+    const own = written(store.insertIfNew({ ...input, name: 'Own Shop', nostrPubkey: keyA }, 2));
+    written(
+      store.insertIfNew({
+        ...input,
+        externalId: 'store-2',
+        name: 'Taken Shop',
+        nostrPubkey: keyB,
+      }),
+    );
+    expect(store.upsert({ ...input, name: 'Taken Shop', nostrPubkey: keyA }, 2)).toEqual({
+      ok: false,
+      error: 'Stale revision',
+    });
+    expect(store.upsert({ ...input, name: 'Taken Shop', nostrPubkey: keyB }, 3)).toEqual({
+      ok: false,
+      error: 'nostrPubkey of a place cannot change',
+    });
+    expect(store.getById(own.id)?.name).toBe('Own Shop');
+  });
+
+  it('rejects replaceById onto another name and allows the own name and a free name', () => {
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const own = written(store.insertIfNew({ ...input, name: 'Own Shop', nostrPubkey: keyA }));
+    written(
+      store.insertIfNew({
+        ...input,
+        externalId: 'store-2',
+        name: 'Taken Shop',
+        nostrPubkey: keyB,
+      }),
+    );
+    const before = store.getById(own.id);
+    expect(replace(store, own.id, { ...input, name: 'Taken Shop', nostrPubkey: keyB })).toEqual({
+      status: 'keyConflict',
+      error: 'nostrPubkey of a place cannot change',
+    });
+    expect(replace(store, own.id, { ...input, name: 'Taken Shop', nostrPubkey: keyA })).toEqual({
+      status: 'keyConflict',
+      error: nameError,
+    });
+    expect(store.getById(own.id)).toEqual(before);
+    expect(replace(store, own.id, { ...input, name: 'Own Shop', nostrPubkey: keyA })).toMatchObject(
+      {
+        status: 'updated',
+        place: { name: 'Own Shop' },
+      },
+    );
+    expect(
+      replace(store, own.id, { ...input, name: 'Free Shop', nostrPubkey: keyA }),
+    ).toMatchObject({
+      status: 'updated',
+      place: { name: 'Free Shop' },
+    });
   });
 });
 
@@ -1305,7 +1510,7 @@ describe('MemoryMapPlaceStore photos', () => {
   it('serves a file only while a complete place uses it and drops unused files', () => {
     const store = new MemoryMapPlaceStore();
     store.insertIfNew({ ...input, nostrPubkey: keyA });
-    store.insertIfNew({ ...input, externalId: 'store-2', nostrPubkey: keyB });
+    store.insertIfNew({ ...input, externalId: 'store-2', name: 'Photo Two', nostrPubkey: keyB });
     store.replacePhotos('dfx', keyA, [first, second]);
     store.replacePhotos('dfx', keyB, [first]);
     expect(store.findPublicPhoto(first.sha256)?.contentType).toBe('image/png');
@@ -1407,7 +1612,7 @@ describe('MemoryMapPlaceStore admin writes by internal id', () => {
   it('stores a sent key on a row without one and refuses a change or a reserved key', () => {
     const store = new MemoryMapPlaceStore(() => new Date(nowMs));
     const keyless = inserted(store, input);
-    inserted(store, { ...input, externalId: 'store-2', nostrPubkey: keyB });
+    inserted(store, { ...input, externalId: 'store-2', name: 'Reserved Shop', nostrPubkey: keyB });
     expect(replace(store, keyless.id, { ...input, nostrPubkey: keyB })).toEqual({
       status: 'keyConflict',
       error: 'nostrPubkey belongs to another place',
@@ -1546,6 +1751,7 @@ describe('MemoryMapPlaceStore active', () => {
     store.insertIfNew({
       ...input,
       externalId: 'store-2',
+      name: 'Second Country Shop',
       nostrPubkey: keyB,
       country: 'CH',
       postalCode: '8001',
@@ -1570,6 +1776,7 @@ describe('MemoryMapPlaceStore active', () => {
     const publicShop = store.insertIfNew({
       ...input,
       externalId: 'store-2',
+      name: 'Public Photo Shop',
       nostrPubkey: keyB,
     });
     if (!hiddenShop.ok || !publicShop.ok) {

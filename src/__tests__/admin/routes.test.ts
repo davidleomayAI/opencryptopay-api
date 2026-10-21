@@ -1074,7 +1074,11 @@ describe('admin routes', () => {
   it('deletes by internal id and leaves a different row', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
     const first = keyedStore(store).insertIfNew(pin);
-    const second = keyedStore(store).insertIfNew({ ...pin, externalId: 'store-2' });
+    const second = keyedStore(store).insertIfNew({
+      ...pin,
+      externalId: 'store-2',
+      name: 'Second Row',
+    });
     const signed = bind(build({ store }));
     const removed = await signed(
       'DELETE',
@@ -1188,7 +1192,11 @@ describe('admin routes', () => {
   it('answers 400 for a missing key and 409 for a reserved or changed key on an internal-id write', async () => {
     const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
     const keyless = store.insertIfNew(pin);
-    const other = keyedStore(store).insertIfNew({ ...pin, externalId: 'store-2' });
+    const other = keyedStore(store).insertIfNew({
+      ...pin,
+      externalId: 'store-2',
+      name: 'Second Row',
+    });
     if (!keyless.ok) {
       throw new Error(keyless.error);
     }

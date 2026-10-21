@@ -162,7 +162,7 @@ test('Function: normalizeMapPlace — POST /map/places creates one pin', async (
 test('Function: toPublicMapPlace — the list hides the caller id', async ({ request }) => {
   const created = await request.post('/map/places', {
     headers: { Authorization: 'Bearer e2e-ingest' },
-    data: completePlace({ externalId: 'e2e-public' }),
+    data: completePlace({ externalId: 'e2e-public', name: 'Public List Pin' }),
   });
   expect(created.ok()).toBe(true);
   const res = await request.get('/map/places');
@@ -1055,7 +1055,12 @@ test('Function: placeWriteConflict — a changed key, a taken key and a stale re
   const key = keyFor('e2e-conflict');
   const first = await request.put('/map/places', {
     headers: ingest,
-    data: completePlace({ externalId: 'e2e-conflict', nostrPubkey: key, revision: 2 }),
+    data: completePlace({
+      externalId: 'e2e-conflict',
+      name: 'Conflict Pin',
+      nostrPubkey: key,
+      revision: 2,
+    }),
   });
   expect(first.status()).toBe(201);
   const changed = await request.put('/map/places', {
@@ -1082,13 +1087,60 @@ test('Function: placeWriteConflict — a changed key, a taken key and a stale re
   expect(await stale.json()).toEqual({ error: 'Stale revision' });
 });
 
+test('Function: placeNameConflict — a second shop with the same name is 409 and the own name still updates', async ({
+  request,
+}) => {
+  const firstKey = keyFor('e2e-name-1');
+  const created = await request.post('/map/places', {
+    headers: ingest,
+    data: completePlace({
+      externalId: 'e2e-name-1',
+      name: 'Exact Name Shop',
+      nostrPubkey: firstKey,
+    }),
+  });
+  expect(created.status()).toBe(201);
+  const duplicate = await request.post('/map/places', {
+    headers: ingest,
+    data: completePlace({
+      externalId: 'e2e-name-2',
+      name: 'Exact Name Shop',
+      nostrPubkey: keyFor('e2e-name-2'),
+    }),
+  });
+  expect(duplicate.status()).toBe(409);
+  expect(await duplicate.json()).toEqual({ error: 'Place name belongs to another place' });
+  const listed = (await (await request.get('/map/places')).json()) as {
+    places: Array<{ name: string }>;
+  };
+  expect(listed.places.filter((row) => row.name === 'Exact Name Shop')).toHaveLength(1);
+  const kept = await request.put('/map/places', {
+    headers: ingest,
+    data: completePlace({
+      externalId: 'e2e-name-1',
+      name: 'Exact Name Shop',
+      nostrPubkey: firstKey,
+    }),
+  });
+  expect(kept.status()).toBe(200);
+  const after = (await (await request.get('/map/places')).json()) as {
+    places: Array<{ name: string }>;
+  };
+  expect(after.places.filter((row) => row.name === 'Exact Name Shop')).toHaveLength(1);
+});
+
 test('Function: normalizeMapPlaceDelete — DELETE refuses another key, keeps the revision and the reservation', async ({
   request,
 }) => {
   const key = keyFor('e2e-delete-order');
   await request.put('/map/places', {
     headers: ingest,
-    data: completePlace({ externalId: 'e2e-delete-order', nostrPubkey: key, revision: 1 }),
+    data: completePlace({
+      externalId: 'e2e-delete-order',
+      name: 'Delete Order Pin',
+      nostrPubkey: key,
+      revision: 1,
+    }),
   });
   const extra = await request.delete('/map/places', {
     headers: ingest,

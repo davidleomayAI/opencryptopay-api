@@ -1,4 +1,5 @@
 -- Map pins keyed by origin and external id.
+-- `name` is not unique here. A write that stores a name refuses another row's exact name. Rows that already share a name must still open.
 CREATE TABLE IF NOT EXISTS map_place (
   id TEXT PRIMARY KEY,
   origin TEXT NOT NULL,
