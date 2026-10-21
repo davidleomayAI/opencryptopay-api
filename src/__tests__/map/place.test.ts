@@ -1179,6 +1179,7 @@ describe('toPublicMapPlace', () => {
       photos: [],
       lastTransactionAt: null,
       activity: 'none',
+      active: true,
       nostrPubkey: null,
       id: 'id-1',
       createdAt: '2026-09-26T00:00:00.000Z',
@@ -1206,6 +1207,7 @@ describe('toPublicMapPlace', () => {
     const hidden = toPublicMapPlace(stored, 'https://api.test');
     expect(hidden).not.toHaveProperty('externalId');
     expect(hidden).not.toHaveProperty('paymentMethods');
+    expect(Object.hasOwn(hidden, 'active')).toBe(false);
   });
 
   it('returns SPAR shopName, copies supports and uses the npub as id', () => {
@@ -1230,11 +1232,13 @@ describe('toPublicMapPlace', () => {
       photos: [],
       lastTransactionAt: null,
       activity: 'daily',
+      active: false,
       nostrPubkey: '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d',
       id: 'id-1',
       createdAt: '2026-09-26T00:00:00.000Z',
     };
     const publicPlace = toPublicMapPlace(stored, 'https://api.test');
+    expect(Object.hasOwn(publicPlace, 'active')).toBe(false);
     expect(publicPlace).toEqual({
       id: 'npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6',
       origin: 'dfx',

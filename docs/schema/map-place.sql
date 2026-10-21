@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS map_place (
   activity TEXT NOT NULL DEFAULT 'none',
   activity_until TEXT,
   nostr_pubkey TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
   UNIQUE (origin, external_id)
 );
 CREATE TABLE IF NOT EXISTS map_place_support (

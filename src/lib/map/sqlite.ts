@@ -25,9 +25,9 @@ import {
 } from '@/lib/map/store';
 
 const MAP_PLACE_COLUMNS =
-  'id, origin, external_id, name, description, lat, lon, category, payment_methods, created_at, tech_provider, country, street, house_number, postal_code, city, shop_type, last_transaction_at, activity, nostr_pubkey';
+  'id, origin, external_id, name, description, lat, lon, category, payment_methods, created_at, tech_provider, country, street, house_number, postal_code, city, shop_type, last_transaction_at, activity, nostr_pubkey, active';
 
-/** SQL predicate: a row is complete and may appear in GET /map/places and countries. */
+/** SQL predicate: a row is complete. Public reads also require `active` = 1. */
 const COMPLETE_PLACE_SQL = `(name IS NOT NULL AND name != ''
   AND description IS NOT NULL AND description != ''
   AND shop_type IN ('SPAR', 'Others')
@@ -38,6 +38,9 @@ const COMPLETE_PLACE_SQL = `(name IS NOT NULL AND name != ''
   AND country IS NOT NULL AND country != ''
   AND nostr_pubkey IS NOT NULL
   AND (last_transaction_at IS NULL OR julianday(last_transaction_at) IS NOT NULL))`;
+
+/** A complete row that is shown. Public list, detail, photo, and countries. */
+const PUBLIC_PLACE_SQL = `(${COMPLETE_PLACE_SQL} AND active = 1)`;
 
 const SUPPORT_ID_CHUNK = 500;
 
@@ -62,6 +65,7 @@ type MapPlaceRow = {
   last_transaction_at: string | null;
   activity: PlaceActivity;
   nostr_pubkey: string | null;
+  active: number;
 };
 
 function compareSupport(a: MapPlaceSupport, b: MapPlaceSupport): number {
@@ -127,6 +131,7 @@ function mapRow(
     shopType: asShopType(row.shop_type),
     lastTransactionAt: row.last_transaction_at,
     activity: row.activity,
+    active: row.active === 1,
     nostrPubkey: row.nostr_pubkey,
     supports: supports.map((item) => ({ blockchain: item.blockchain, asset: item.asset })),
     photos,
@@ -356,6 +361,9 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
         if (!columns.some((column) => column.name === 'nostr_pubkey')) {
           this.#db.exec('ALTER TABLE map_place ADD COLUMN nostr_pubkey TEXT');
         }
+        if (!columns.some((column) => column.name === 'active')) {
+          this.#db.exec('ALTER TABLE map_place ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
+        }
       }
     }
     if (addedActivity) {
@@ -379,8 +387,9 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
   /**
    * Insert when the pair is new, otherwise replace the pin's content (name, description,
    * position, category, payment methods, tech provider, shop type, address, supports).
-   * The id, photos, timestamps and activity stay, and the stored revision changes only when
-   * one is sent. A stored key is kept; a row without a key stores the key this write carries.
+   * The id, photos, timestamps, activity, and active flag stay, and the stored revision
+   * changes only when one is sent. A stored key is kept; a row without a key stores the key
+   * this write carries.
    *
    * @param input - Validated pin.
    * @param revision - Request revision (R8), when sent.
@@ -462,8 +471,8 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
           `INSERT INTO map_place (
              id, origin, external_id, name, description, lat, lon, category, payment_methods,
              created_at, tech_provider, country, street, house_number, postal_code, city,
-             shop_type, last_transaction_at, activity, activity_until, nostr_pubkey
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             shop_type, last_transaction_at, activity, activity_until, nostr_pubkey, active
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           id,
@@ -487,6 +496,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
           'none',
           null,
           key ?? null,
+          1,
         );
       insertSupportRows(this.#db, id, supports);
       return {
@@ -516,6 +526,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
           nostrPubkey: key ?? null,
           lastTransactionAt: null,
           activity: 'none',
+          active: true,
           id,
           createdAt,
         },
@@ -589,6 +600,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
    * to it. Revisions (R8) are neither checked nor stored.
    * A UNIQUE failure rolls back, including support rows, and returns conflict.
    * `activity_until` is updated here even though it is not in `MAP_PLACE_COLUMNS`.
+   * `active` is written on every replace.
    *
    * @param input - Id, validated pin, timestamps, activity write, and clock.
    * @returns The stored row when updated, otherwise missing, conflict, or
@@ -676,6 +688,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
         input.createdAt,
         input.lastTransactionAt,
         nostrPubkey,
+        input.active ? 1 : 0,
       ];
       if (input.activity.kind === 'set') {
         params.push(input.activity.activity, null);
@@ -694,7 +707,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
            SET origin = ?, external_id = ?, name = ?, description = ?, lat = ?, lon = ?,
                category = ?, payment_methods = ?, tech_provider = ?, country = ?, street = ?,
                house_number = ?, postal_code = ?, city = ?, shop_type = ?, created_at = ?,
-               last_transaction_at = ?, nostr_pubkey = ?${activitySql}
+               last_transaction_at = ?, nostr_pubkey = ?, active = ?${activitySql}
            WHERE id = ?`,
         )
         .run(...params);
@@ -896,10 +909,10 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * A photo file that a complete place uses.
+   * A photo file that a public place uses.
    *
    * @param sha256 - Hash of the stripped bytes.
-   * @returns The file, or undefined when no complete place shows it.
+   * @returns The file, or undefined when no public place shows it.
    */
   findPublicPhoto(sha256: string): MapPhotoFile | undefined {
     const row = this.#db
@@ -907,7 +920,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
         `SELECT content_type, data FROM map_photo
          WHERE sha256 = ? AND sha256 IN (
            SELECT sha256 FROM map_place_photo
-           WHERE place_id IN (SELECT id FROM map_place WHERE ${COMPLETE_PLACE_SQL})
+           WHERE place_id IN (SELECT id FROM map_place WHERE ${PUBLIC_PLACE_SQL})
          )`,
       )
       .get(sha256) as { content_type: PhotoType; data: Uint8Array } | null;
@@ -915,17 +928,17 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * The complete pin that carries this key.
+   * The public pin that carries this key.
    *
    * @param pubkey - 64 lowercase hex characters.
-   * @returns The row, or undefined when no complete row has the key.
+   * @returns The row, or undefined when no public row has the key.
    */
   findPublicByPubkey(pubkey: string): StoredMapPlace | undefined {
     const row = this.#db
       .query(
         `SELECT ${MAP_PLACE_COLUMNS}
          FROM map_place
-         WHERE nostr_pubkey = ? AND ${COMPLETE_PLACE_SQL}`,
+         WHERE nostr_pubkey = ? AND ${PUBLIC_PLACE_SQL}`,
       )
       .get(pubkey) as MapPlaceRow | null;
     return row === null ? undefined : mapOne(this.#db, row);
@@ -966,14 +979,14 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Newest complete pins first, then id descending.
+   * Newest public pins first, then id descending.
    *
    * @param limit - Maximum rows.
    * @param filter - Optional AND predicates, applied before sort and limit.
    * @returns Stored pins.
    */
   list(limit: number, filter?: MapPlaceListFilter): StoredMapPlace[] {
-    const where: string[] = [COMPLETE_PLACE_SQL];
+    const where: string[] = [PUBLIC_PLACE_SQL];
     const params: Array<string | number> = [];
     if (filter?.origin !== undefined) {
       where.push('origin = ?');
@@ -1038,7 +1051,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
    * Distinct stored filter values, sorted.
    *
    * @param blockchain - When set, only assets stored on that network.
-   * @returns Countries of complete rows, plus blockchains and assets from every row.
+   * @returns Countries of public rows, plus blockchains and assets from every row.
    */
   filters(blockchain?: string | undefined): {
     countries: string[];
@@ -1049,7 +1062,7 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
       .query(
         `SELECT DISTINCT country
          FROM map_place
-         WHERE ${COMPLETE_PLACE_SQL}
+         WHERE ${PUBLIC_PLACE_SQL}
          ORDER BY country`,
       )
       .all() as Array<{ country: string }>;

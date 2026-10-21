@@ -301,6 +301,7 @@ describe('admin routes', () => {
       paymentMethods: 'lightning',
       createdAt: new Date(NOW_MS).toISOString(),
       lastTransactionAt: null,
+      active: true,
       id: first.place.id,
       npub: npubEncode(first.place.nostrPubkey ?? ''),
       coverPhoto: null,
@@ -310,6 +311,7 @@ describe('admin routes', () => {
     }
     expect(Object.keys(complete).sort()).toEqual(
       [
+        'active',
         'activity',
         'category',
         'city',
@@ -1225,6 +1227,118 @@ describe('admin routes', () => {
       npub: npubEncode(keyFor('added')),
       btcmap: 'skipped',
     });
+  });
+
+  it('hides a shop from public reads when active is false and rejects a bad flag', async () => {
+    const store = new MemoryMapPlaceStore(() => new Date(NOW_MS));
+    const created = keyedStore(store).insertIfNew(pin);
+    const key = created.place.nostrPubkey;
+    if (key === null) {
+      throw new Error('missing key');
+    }
+    const npub = npubEncode(key);
+    const calls: string[] = [];
+    const api = createApp({
+      store,
+      env: { BTCMAP_ACCESS_TOKEN: 'map-token' },
+      fetchImpl: async (input: string) => {
+        calls.push(input);
+        return new Response('{}', { status: 201 });
+      },
+      now: () => NOW_MS,
+      adminKeys: [desk],
+      adminHost: ADMIN_HOST,
+      publicBaseUrl: 'https://api.test',
+      ingestToken: 'secret',
+    });
+    const signed = bind(api);
+    const before = await api.request('/map/places');
+    expect(before.status).toBe(200);
+    const beforeJson = (await before.json()) as { places: Array<Record<string, unknown>> };
+    const shown = beforeJson.places.find((place) => place['id'] === npub);
+    if (shown === undefined) {
+      throw new Error('missing public place');
+    }
+    expect(Object.hasOwn(shown, 'active')).toBe(false);
+    for (const active of [1, 'false', null] as const) {
+      const rejected = await signed(
+        'PUT',
+        '/admin/places',
+        jsonBytes({ ...pin, id: created.place.id, active, name: 'Should Not Stick' }),
+      );
+      expect(rejected.status).toBe(400);
+      expect(await rejected.json()).toEqual({ error: 'Place active is invalid' });
+    }
+    const invalid = await signed(
+      'PUT',
+      '/admin/places',
+      jsonBytes({ ...pin, id: created.place.id, active: false, lat: 999 }),
+    );
+    expect(invalid.status).toBe(400);
+    expect(store.getById(created.place.id)).toMatchObject({ active: true, name: pin.name });
+    const hidden = await signed(
+      'PUT',
+      '/admin/places',
+      jsonBytes({ ...pin, id: created.place.id, active: false }),
+    );
+    expect(hidden.status).toBe(200);
+    expect(await hidden.json()).toEqual({
+      created: false,
+      id: created.place.id,
+      npub,
+      btcmap: 'skipped',
+    });
+    expect(calls).toEqual([]);
+    const listed = await api.request('/map/places');
+    const listedJson = (await listed.json()) as { places: Array<{ id: string }> };
+    expect(listedJson.places.some((place) => place.id === npub)).toBe(false);
+    const detail = await api.request(`/map/places/${npub}`);
+    expect(detail.status).toBe(404);
+    expect(await detail.json()).toEqual({ error: 'Place not found' });
+    const hex = await api.request(`/map/places/${key}`);
+    expect(hex.status).toBe(404);
+    expect(await hex.json()).toEqual({ error: 'Place not found' });
+    const admin = await signed('GET', '/admin/places');
+    expect(admin.status).toBe(200);
+    const adminJson = (await admin.json()) as {
+      places: Array<{ id: string; active: boolean; complete: boolean }>;
+    };
+    expect(adminJson.places.find((place) => place.id === created.place.id)).toMatchObject({
+      active: false,
+      complete: true,
+    });
+    const kept = await signed(
+      'PUT',
+      '/admin/places',
+      jsonBytes({ ...pin, id: created.place.id, name: 'Still Hidden' }),
+    );
+    expect(kept.status).toBe(200);
+    expect(await kept.json()).toEqual({
+      created: false,
+      id: created.place.id,
+      npub,
+      btcmap: 'skipped',
+    });
+    expect(store.getById(created.place.id)).toMatchObject({ active: false, name: 'Still Hidden' });
+    const mapResponse = await api.request('/map/places', {
+      method: 'PUT',
+      headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...withKey(pin), active: true, name: 'Should Not Stick' }),
+    });
+    expect(mapResponse.status).toBe(400);
+    expect(await mapResponse.json()).toEqual({ error: 'Place field is not allowed: active' });
+    const adminResponse = await signed(
+      'PUT',
+      '/admin/places',
+      jsonBytes({ ...withKey(pin), active: false, name: 'Should Not Stick' }),
+    );
+    expect(adminResponse.status).toBe(400);
+    expect(await adminResponse.json()).toEqual({ error: 'Place field is not allowed: active' });
+    expect(store.getById(created.place.id)).toMatchObject({
+      active: false,
+      name: 'Still Hidden',
+    });
+    expect(calls).toEqual([]);
   });
 
   it('returns 404 for a signed unknown path', async () => {

@@ -29,6 +29,7 @@ Source: [src/lib/map/store.ts](../../../src/lib/map/store.ts)
 | `activity`            | ENUM                    | `TEXT`        | No       | `none`      | –          |
 | `activity_until`      | Free text               | `TEXT`        | Yes      | –           | –          |
 | `nostr_pubkey`        | Free text               | `TEXT`        | Yes      | –           | –          |
+| `active`              | Integer                 | `INTEGER`     | No       | `1`         | –          |
 
 ## Indexes
 
