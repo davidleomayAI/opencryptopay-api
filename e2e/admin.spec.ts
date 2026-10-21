@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { canonicalString, signAdminRequest } from '../src/lib/admin/signature';
 import { isNostrPubkey, npubEncode } from '../src/lib/map/nostr-key';
+import { base64, simplePng } from '../src/__tests__/map/photo-fixtures';
 
 /** A valid NIP-01 key derived from a label, so each test shop has its own. */
 function keyFor(label: string): string {
@@ -78,6 +79,8 @@ type AdminListedPlace = {
   createdAt: string;
   lastTransactionAt: string | null;
   activity: string;
+  active: boolean;
+  complete: boolean;
 };
 
 async function listedPlace(
@@ -701,4 +704,107 @@ test('Function: adminRoutes — a body above 64 KiB with Content-Length is 413',
 
   expect(response.status()).toBe(413);
   await expect(response.json()).resolves.toEqual({ error: 'Payload too large' });
+});
+
+test('Function: SqliteMapPlaceStore — a deactivated shop leaves the public list', async ({
+  request,
+}) => {
+  const key = keyFor('e2e-active-shop');
+  const npub = npubEncode(key);
+  const place = {
+    origin: 'fremd',
+    externalId: 'e2e-active-shop',
+    name: 'Hidden Filiale',
+    description: DESCRIPTION,
+    lat: 47.37,
+    lon: 8.54,
+    category: 'groceries',
+    paymentMethods: 'lightning',
+    shopType: 'SPAR',
+    street: 'Maschlinastrasse',
+    houseNumber: '4',
+    postalCode: '9495',
+    city: 'Triesen',
+    country: 'LI',
+    nostrPubkey: key,
+  };
+  const ingest = { Authorization: 'Bearer e2e-ingest' };
+  const created = await request.post('/map/places', { headers: ingest, data: place });
+  expect(created.status()).toBe(201);
+  const stored = await request.put('/map/places/photos', {
+    headers: ingest,
+    data: {
+      origin: place.origin,
+      nostrPubkey: key,
+      photos: [{ contentType: 'image/png', data: base64(simplePng(13, 6)) }],
+    },
+  });
+  expect(stored.status()).toBe(200);
+  const uploaded = (await stored.json()) as { photos: Array<{ url: string }> };
+  const photoUrl = uploaded.photos[0]?.url;
+  if (photoUrl === undefined) {
+    throw new Error('missing photo');
+  }
+  const photoPath = new URL(photoUrl).pathname;
+  const served = await request.get(photoPath);
+  expect(served.status()).toBe(200);
+  const row = await listedPlace(request, place.externalId);
+  expect(row.active).toBe(true);
+  expect(row.complete).toBe(true);
+  const hideBody = JSON.stringify({ ...place, id: row.id, active: false });
+  const hidden = await request.put('/admin/places', {
+    headers: signedHeaders('PUT', PATH, Buffer.from(hideBody)),
+    data: hideBody,
+  });
+  expect(hidden.status()).toBe(200);
+  expect(await hidden.json()).toEqual({
+    created: false,
+    id: row.id,
+    npub,
+    btcmap: 'skipped',
+  });
+  const omitted = (await (await request.get('/map/places')).json()) as {
+    places: Array<{ id: string }>;
+  };
+  expect(omitted.places.some((item) => item.id === npub)).toBe(false);
+  const detail = await request.get(`/map/places/${npub}`);
+  expect(detail.status()).toBe(404);
+  expect(await detail.json()).toEqual({ error: 'Place not found' });
+  const hex = await request.get(`/map/places/${key}`, { maxRedirects: 0 });
+  expect(hex.status()).toBe(404);
+  expect(await hex.json()).toEqual({ error: 'Place not found' });
+  const hiddenRow = await listedPlace(request, place.externalId);
+  expect(hiddenRow).toMatchObject({ id: row.id, active: false, complete: true });
+  const photoGone = await request.get(photoPath);
+  expect(photoGone.status()).toBe(404);
+  expect(await photoGone.json()).toEqual({ error: 'Photo not found' });
+  const source = await request.put('/map/places', {
+    headers: ingest,
+    data: { ...place, name: 'Still Hidden Filiale' },
+  });
+  expect(source.status()).toBe(200);
+  const stillHidden = (await (await request.get('/map/places')).json()) as {
+    places: Array<{ id: string }>;
+  };
+  expect(stillHidden.places.some((item) => item.id === npub)).toBe(false);
+  expect(await listedPlace(request, place.externalId)).toMatchObject({
+    active: false,
+    name: 'Still Hidden Filiale',
+  });
+  const showBody = JSON.stringify({ ...place, id: row.id, active: true });
+  const shown = await request.put('/admin/places', {
+    headers: signedHeaders('PUT', PATH, Buffer.from(showBody)),
+    data: showBody,
+  });
+  expect(shown.status()).toBe(200);
+  const listed = (await (await request.get('/map/places')).json()) as {
+    places: Array<{ id: string }>;
+  };
+  expect(listed.places.some((item) => item.id === npub)).toBe(true);
+  const detailAgain = await request.get(`/map/places/${npub}`);
+  expect(detailAgain.status()).toBe(200);
+  const photoAgain = await request.get(photoPath);
+  expect(photoAgain.status()).toBe(200);
+  expect(photoAgain.headers()['content-type']).toContain('image/png');
+  expect((await listedPlace(request, place.externalId)).active).toBe(true);
 });

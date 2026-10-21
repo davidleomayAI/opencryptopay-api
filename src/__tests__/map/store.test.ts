@@ -724,6 +724,7 @@ describe('MemoryMapPlaceStore', () => {
       createdAt: '2020-01-01T00:00:00.000Z',
       lastTransactionAt: '2020-01-02T00:00:00.000Z',
       activity: { kind: 'set', activity: 'daily' },
+      active: true,
       nowMs,
     });
     expect(result).toEqual({ status: 'missing' });
@@ -761,6 +762,7 @@ describe('MemoryMapPlaceStore', () => {
       createdAt: '2020-01-01T00:00:00.000Z',
       lastTransactionAt: null,
       activity: { kind: 'set', activity: 'daily' },
+      active: true,
       nowMs,
     });
     expect(result).toEqual({ status: 'conflict' });
@@ -805,6 +807,7 @@ describe('MemoryMapPlaceStore', () => {
       createdAt: '2024-01-01T00:00:00.000Z',
       lastTransactionAt: null,
       activity: { kind: 'keep' },
+      active: true,
       nowMs,
     });
     expect(updated.status).toBe('updated');
@@ -870,6 +873,7 @@ describe('MemoryMapPlaceStore', () => {
       createdAt: created.place.createdAt,
       lastTransactionAt: day('2026-10-08'),
       activity: { kind: 'set', activity: 'none' },
+      active: true,
       nowMs,
     });
     expect(updated).toMatchObject({
@@ -898,6 +902,7 @@ describe('MemoryMapPlaceStore', () => {
       createdAt: created.place.createdAt,
       lastTransactionAt: day('2026-10-08'),
       activity: { kind: 'set', activity: 'none' },
+      active: true,
       nowMs,
     });
     expect(cleared).toMatchObject({ status: 'updated', place: { activity: 'none' } });
@@ -907,6 +912,7 @@ describe('MemoryMapPlaceStore', () => {
       createdAt: created.place.createdAt,
       lastTransactionAt: null,
       activity: { kind: 'recompute' },
+      active: true,
       nowMs,
     });
     expect(updated).toMatchObject({
@@ -937,6 +943,7 @@ describe('MemoryMapPlaceStore', () => {
       createdAt: '2024-02-02T00:00:00.000Z',
       lastTransactionAt: null,
       activity: { kind: 'recompute' },
+      active: true,
       nowMs,
     });
     expect(updated).toMatchObject({
@@ -960,6 +967,7 @@ describe('MemoryMapPlaceStore', () => {
       createdAt: inserted.place.createdAt,
       lastTransactionAt: null,
       activity: { kind: 'recompute' },
+      active: true,
       nowMs,
     });
     expect(none).toMatchObject({
@@ -1346,7 +1354,12 @@ describe('MemoryMapPlaceStore admin writes by internal id', () => {
   const keyB = keyFor('admin-b');
   const keyC = keyFor('admin-c');
 
-  function replace(store: MemoryMapPlaceStore, id: string, content: MapPlaceInput) {
+  function replace(
+    store: MemoryMapPlaceStore,
+    id: string,
+    content: MapPlaceInput,
+    active: boolean = true,
+  ) {
     return store.replaceById({
       id,
       content,
@@ -1354,6 +1367,7 @@ describe('MemoryMapPlaceStore admin writes by internal id', () => {
       lastTransactionAt: null,
       activity: { kind: 'keep' },
       nowMs,
+      active,
     });
   }
 
@@ -1446,5 +1460,161 @@ describe('MemoryMapPlaceStore admin writes by internal id', () => {
       ok: false,
       error: 'Stale revision',
     });
+  });
+});
+
+describe('MemoryMapPlaceStore active', () => {
+  const nowMs = Date.parse('2026-10-08T12:00:00.000Z');
+  const keyA = keyFor('active-a');
+  const keyB = keyFor('active-b');
+
+  function photoOf(bytes: Uint8Array): PreparedPhoto {
+    const result = preparePhoto({ contentType: 'image/png', data: base64(bytes) }, 0);
+    if (!result.ok) {
+      throw new Error(result.error);
+    }
+    return result.photo;
+  }
+
+  function replace(
+    store: MemoryMapPlaceStore,
+    id: string,
+    content: MapPlaceInput,
+    active: boolean,
+  ) {
+    return store.replaceById({
+      id,
+      content,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      lastTransactionAt: null,
+      activity: { kind: 'keep' },
+      nowMs,
+      active,
+    });
+  }
+
+  it('stores a new row as active and lists it', () => {
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const created = store.insertIfNew({ ...input, nostrPubkey: keyA });
+    expect(created.ok && created.place.active).toBe(true);
+    expect(store.list(10).map((row) => row.externalId)).toEqual(['store-1']);
+    expect(store.list(10)[0]?.active).toBe(true);
+  });
+
+  it('hides a complete row, drops its country, and leaves problems unchanged', () => {
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const created = store.insertIfNew({
+      ...input,
+      nostrPubkey: keyA,
+      supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
+    });
+    if (!created.ok) {
+      throw new Error(created.error);
+    }
+    const before = placeProblems(created.place);
+    const hidden = replace(
+      store,
+      created.place.id,
+      {
+        ...input,
+        nostrPubkey: keyA,
+        supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
+      },
+      false,
+    );
+    expect(hidden).toMatchObject({ status: 'updated', place: { active: false } });
+    expect(store.list(10)).toEqual([]);
+    expect(store.filters().countries).toEqual([]);
+    expect(store.filters()).toMatchObject({ blockchains: ['Ethereum'], assets: ['ZCHF'] });
+    expect(store.findPublicByPubkey(keyA)).toBeUndefined();
+    expect(store.listAll().map((row) => row.externalId)).toEqual(['store-1']);
+    const stored = store.getById(created.place.id);
+    expect(stored?.active).toBe(false);
+    const problems = placeProblems(stored ?? created.place);
+    expect(problems).toEqual(before);
+    expect(problems.some((problem) => problem.includes('active'))).toBe(false);
+  });
+
+  it('keeps a country that still has another public shop', () => {
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const first = store.insertIfNew({
+      ...input,
+      nostrPubkey: keyA,
+      country: 'CH',
+      postalCode: '8001',
+    });
+    store.insertIfNew({
+      ...input,
+      externalId: 'store-2',
+      nostrPubkey: keyB,
+      country: 'CH',
+      postalCode: '8001',
+    });
+    if (!first.ok) {
+      throw new Error(first.error);
+    }
+    replace(
+      store,
+      first.place.id,
+      { ...input, nostrPubkey: keyA, country: 'CH', postalCode: '8001' },
+      false,
+    );
+    expect(store.filters().countries).toEqual(['CH']);
+    expect(store.list(10).map((row) => row.externalId)).toEqual(['store-2']);
+  });
+
+  it('serves a photo hash only while a public shop uses it', () => {
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const photo = photoOf(simplePng(3, 2));
+    const hiddenShop = store.insertIfNew({ ...input, nostrPubkey: keyA });
+    const publicShop = store.insertIfNew({
+      ...input,
+      externalId: 'store-2',
+      nostrPubkey: keyB,
+    });
+    if (!hiddenShop.ok || !publicShop.ok) {
+      throw new Error('seed failed');
+    }
+    expect(store.replacePhotos('dfx', keyA, [photo]).ok).toBe(true);
+    replace(store, hiddenShop.place.id, { ...input, nostrPubkey: keyA }, false);
+    expect(store.replacePhotos('dfx', keyA, [photo]).ok).toBe(true);
+    expect(store.findPublicPhoto(photo.sha256)).toBeUndefined();
+    expect(store.replacePhotos('dfx', keyB, [photo]).ok).toBe(true);
+    expect(store.findPublicPhoto(photo.sha256)?.contentType).toBe('image/png');
+    expect(store.findPublicPhoto(photo.sha256)?.data).toEqual(photo.data);
+  });
+
+  it('leaves active false on a later source write and lists the shop when set true', () => {
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const created = store.insertIfNew({ ...input, nostrPubkey: keyA });
+    if (!created.ok) {
+      throw new Error(created.error);
+    }
+    replace(store, created.place.id, { ...input, nostrPubkey: keyA }, false);
+    const updated = store.upsert({ ...input, nostrPubkey: keyA, name: 'Renamed' });
+    expect(updated.ok && updated.place.active).toBe(false);
+    expect(updated.ok && updated.place.name).toBe('Renamed');
+    const again = store.insertIfNew({ ...input, nostrPubkey: keyA, name: 'Ignored' });
+    expect(again.ok && again.place.active).toBe(false);
+    expect(store.getById(created.place.id)?.active).toBe(false);
+    expect(store.list(10)).toEqual([]);
+    const shown = replace(store, created.place.id, { ...input, nostrPubkey: keyA }, true);
+    expect(shown).toMatchObject({ status: 'updated', place: { active: true } });
+    expect(store.list(10).map((row) => row.externalId)).toEqual(['store-1']);
+    expect(store.findPublicByPubkey(keyA)?.externalId).toBe('store-1');
+  });
+
+  it('does not reactivate a shop when a transaction is recorded', () => {
+    const store = new MemoryMapPlaceStore(() => new Date(nowMs));
+    const created = store.insertIfNew({ ...input, nostrPubkey: keyA });
+    if (!created.ok) {
+      throw new Error(created.error);
+    }
+    replace(store, created.place.id, { ...input, nostrPubkey: keyA }, false);
+    const recorded = store.recordTransaction('dfx', 'store-1', '2026-10-08T12:00:00.000Z', nowMs);
+    expect(recorded?.active).toBe(false);
+    expect(recorded?.activity).toBe('within7Days');
+    expect(store.getById(created.place.id)?.active).toBe(false);
+    expect(store.list(10)).toEqual([]);
   });
 });

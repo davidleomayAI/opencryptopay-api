@@ -36,6 +36,7 @@ export const MAP_PLACE_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS map_place (
   activity TEXT NOT NULL DEFAULT 'none',
   activity_until TEXT,
   nostr_pubkey TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
   UNIQUE (origin, external_id)
 );
 CREATE TABLE IF NOT EXISTS map_place_support (
@@ -225,6 +226,7 @@ function storedPhotoOf(photo: PreparedPhoto): StoredPlacePhoto {
  * stored (R7), and
  * lastTransactionAt is null or a parseable instant with a four-digit year, which
  * matches SQLite `julianday()` for the canonical ISO instants this service writes.
+ * `active` is not part of this rule.
  *
  * @param place - Stored pin, including an incomplete row.
  * @returns The problems, in check order. No I/O.
@@ -270,6 +272,10 @@ export function placeProblems(place: StoredMapPlace): string[] {
 
 function isCompletePlace(row: StoredMapPlace): boolean {
   return placeProblems(row).length === 0;
+}
+
+function isPublicPlace(row: StoredMapPlace): boolean {
+  return isCompletePlace(row) && row.active;
 }
 
 function matchesFilter(row: StoredMapPlace, filter?: MapPlaceListFilter): boolean {
@@ -323,6 +329,7 @@ function toStoredPlace(input: MapPlaceInput, id: string, createdAt: string): Sto
     nostrPubkey: input.nostrPubkey ?? null,
     lastTransactionAt: null,
     activity: 'none',
+    active: true,
     id,
     createdAt,
   };
@@ -366,6 +373,8 @@ export type ReplaceByIdInput = {
   createdAt: string;
   lastTransactionAt: string | null;
   activity: AdminActivityWrite;
+  /** Always written. There is no keep. */
+  active: boolean;
   nowMs: number;
 };
 
@@ -451,8 +460,9 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
   /**
    * Insert when the pair is new, otherwise replace the pin's content (name, description,
    * position, category, payment methods, tech provider, shop type, address, supports).
-   * The id, photos, timestamps and activity stay, and the stored revision changes only when
-   * one is sent. A stored key is kept; a row without a key stores the key this write carries.
+   * The id, photos, timestamps, activity, and active flag stay, and the stored revision
+   * changes only when one is sent. A stored key is kept; a row without a key stores the key
+   * this write carries.
    *
    * @param input - Validated pin.
    * @param revision - Request revision (R8), when sent.
@@ -532,6 +542,7 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
    * `keep` does not change activity, the refresh deadline, or payment days.
    * `set` stores that token, clears the refresh deadline, and leaves payment days.
    * `recompute` leaves payment days and classifies from the written instant.
+   * `active` is stored as given.
    *
    * @param input - Id, validated pin, timestamps, activity write, and clock.
    * @returns A copy when updated, otherwise missing, conflict, or `{ status: 'keyConflict', error }`
@@ -590,6 +601,7 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
     existing.supports = storedSupports(input.content.supports);
     existing.createdAt = input.createdAt;
     existing.lastTransactionAt = input.lastTransactionAt;
+    existing.active = input.active;
     if (input.activity.kind === 'set') {
       existing.activity = input.activity.activity;
       this.#activityUntil.delete(existing.id);
@@ -787,15 +799,15 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * A photo file that a complete place uses.
+   * A photo file that a public place uses.
    *
    * @param sha256 - Hash of the stripped bytes.
-   * @returns A copy of the file, or undefined when no complete place shows it.
+   * @returns A copy of the file, or undefined when no public place shows it.
    */
   findPublicPhoto(sha256: string): MapPhotoFile | undefined {
     const file = this.#photoFiles.get(sha256);
     const shown = this.#rows.some(
-      (row) => isCompletePlace(row) && row.photos.some((photo) => photo.sha256 === sha256),
+      (row) => isPublicPlace(row) && row.photos.some((photo) => photo.sha256 === sha256),
     );
     return file === undefined || !shown
       ? undefined
@@ -803,13 +815,13 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * The complete pin that carries this key.
+   * The public pin that carries this key.
    *
    * @param pubkey - 64 lowercase hex characters.
-   * @returns A copy of the row, or undefined when no complete row has the key.
+   * @returns A copy of the row, or undefined when no public row has the key.
    */
   findPublicByPubkey(pubkey: string): StoredMapPlace | undefined {
-    const row = this.#rows.find((item) => item.nostrPubkey === pubkey && isCompletePlace(item));
+    const row = this.#rows.find((item) => item.nostrPubkey === pubkey && isPublicPlace(item));
     return row === undefined ? undefined : copyStoredPlace(row);
   }
 
@@ -847,14 +859,14 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
   }
 
   /**
-   * Newest complete pins first, then id descending.
+   * Newest public pins first, then id descending.
    *
    * @param limit - Maximum rows.
    * @param filter - Optional AND predicates, applied before sort and limit.
    * @returns A copy of the stored pins.
    */
   list(limit: number, filter?: MapPlaceListFilter): StoredMapPlace[] {
-    const rows = this.#rows.filter((row) => isCompletePlace(row) && matchesFilter(row, filter));
+    const rows = this.#rows.filter((row) => isPublicPlace(row) && matchesFilter(row, filter));
     return [...rows]
       .sort(compareNewest)
       .slice(0, limit)
@@ -874,7 +886,7 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
    * Distinct stored filter values, sorted.
    *
    * @param blockchain - When set, only assets stored on that network.
-   * @returns Countries of complete rows, plus blockchains and assets from every row.
+   * @returns Countries of public rows, plus blockchains and assets from every row.
    */
   filters(blockchain?: string | undefined): {
     countries: string[];
@@ -885,7 +897,7 @@ export class MemoryMapPlaceStore implements MapPlaceStore {
     const blockchainSet = new Set<string>();
     const assetSet = new Set<string>();
     for (const row of this.#rows) {
-      if (isCompletePlace(row)) {
+      if (isPublicPlace(row)) {
         countrySet.add(row.country);
       }
       for (const item of row.supports) {

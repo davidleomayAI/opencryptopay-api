@@ -195,14 +195,18 @@ try {
   store = new SqliteMapPlaceStore(filename);
   const columns = columnNames(filename);
   const listed = store.list(20);
+  const opened = store.listAll();
   const countries = store.filters().countries;
   const kept = placeCount(filename);
   if (
     columns.includes('description') &&
     columns.includes('shop_type') &&
     columns.includes('shop_name') &&
+    columns.includes('active') &&
     kept === 2 &&
     listed.length === 0 &&
+    opened.length === 2 &&
+    opened.every((row) => row.active === true) &&
     countries.length === 0
   ) {
     const published = store.upsert(COMPLETE);
@@ -264,6 +268,7 @@ try {
         columns,
         kept,
         listed: listed.map((row) => row.externalId),
+        opened: opened.map((row) => row.active),
         countries,
       })}\n`,
     );
@@ -646,6 +651,7 @@ if (schemaOk && listAllOk && identityOk && photosOk) {
         lastTransactionAt: null,
         activity: { kind: 'keep' },
         nowMs: Date.now(),
+        active: true,
       });
     const keyless: MapPlaceInput = { ...COMPLETE, externalId: 'admin-1' };
     delete keyless.nostrPubkey;

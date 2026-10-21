@@ -188,7 +188,7 @@ function isPlaceActivity(raw: unknown): raw is PlaceActivity {
 
 /**
  * Copy a place body for `normalizeMapPlace`.
- * Drops the internal id and the admin-only fields, sets the resolved pair, and
+ * Drops the internal id, `createdAt`, `lastTransactionAt`, `activity`, and `active`, sets the resolved pair, and
  * fills in the stored key when the body leaves it out.
  *
  * @param body - JSON object that includes `id`.
@@ -211,6 +211,7 @@ function adminReplaceBody(
   delete copy['createdAt'];
   delete copy['lastTransactionAt'];
   delete copy['activity'];
+  delete copy['active'];
   copy['origin'] = origin;
   copy['externalId'] = externalId;
   return copy;
@@ -222,12 +223,15 @@ function adminReplaceBody(
  * The body is read once and then parsed as JSON for PUT and DELETE.
  * Bodies above 64 KiB answer 413 before the signature is checked.
  * GET returns the public place with the internal id as `id` and the public id
- * as `npub`, and adds the caller id, payment methods, created time, and last
- * transaction time. It does not add the refresh deadline or payment days.
+ * as `npub`, and adds the caller id, payment methods, created time, last
+ * transaction time, and `active`. It does not add the refresh deadline or payment days.
  * A JSON object with an own property `id` addresses that internal id; an npub is rejected.
  * PUT with `id` replaces that row, including a new origin and caller id, and does not call BTC Map.
  * It keeps a stored key, stores a sent key on a row without one (R7, checked against the new
  * pair), moves the key reservation with the row, and does not take a `revision` (R8).
+ * A present `active` must be a JSON boolean. Anything else is `Place active is invalid`
+ * and writes nothing. Omitted `active` keeps the stored flag. The body copy drops `active`
+ * before `normalizeMapPlace`.
  * DELETE with `id` still rejects a different origin or caller id and needs no revision.
  * Without `id`, PUT and DELETE keep the origin and external id paths with the source rules.
  *
@@ -293,6 +297,7 @@ export function adminRoutes(deps: AdminRouteDeps): Hono<AdminEnv> {
         paymentMethods: place.paymentMethods,
         createdAt: place.createdAt,
         lastTransactionAt: place.lastTransactionAt,
+        active: place.active,
       };
     });
     return c.json({ places });
@@ -357,6 +362,14 @@ export function adminRoutes(deps: AdminRouteDeps): Hono<AdminEnv> {
     } else {
       activityWrite = { kind: 'keep' };
     }
+    let active = stored.active;
+    if (Object.hasOwn(parsedId.body, 'active')) {
+      const value = parsedId.body['active'];
+      if (typeof value !== 'boolean') {
+        return c.json({ error: 'Place active is invalid' }, 400);
+      }
+      active = value;
+    }
     const parsed = normalizeMapPlace(
       adminReplaceBody(parsedId.body, identity.origin, identity.externalId, stored.nostrPubkey),
     );
@@ -369,6 +382,7 @@ export function adminRoutes(deps: AdminRouteDeps): Hono<AdminEnv> {
       createdAt,
       lastTransactionAt,
       activity: activityWrite,
+      active,
       nowMs: now(),
     });
     if (replaced.status === 'missing') {

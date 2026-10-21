@@ -71,6 +71,8 @@ export type StoredMapPlace = Omit<MapPlaceInput, 'techProvider' | 'nostrPubkey'>
   techProvider: string;
   lastTransactionAt: string | null;
   activity: PlaceActivity;
+  /** Shown on the public map when true. Not part of completeness. */
+  active: boolean;
 };
 
 /** Fields the public map may show. The caller's own id stays off this list. */

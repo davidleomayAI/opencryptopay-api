@@ -121,3 +121,13 @@ the signed admin interface keeps the internal id. The full rules are in
   key is rejected with 400 (step 1b in shop-identity.md). A signed admin
   update by internal id may leave the key out and keeps the stored one; it is
   rejected with 400 only when the shop has no stored key.
+
+## Deactivation
+
+Deactivation is not deletion. A signed admin replace by internal id
+(`PUT /admin/places` whose JSON object has its own property `id`) may set
+`active` to false. The row stays stored. It leaves `GET /map/places`,
+`GET /map/places/{npub}`, a photo no other public shop uses, and the country
+aggregate of `GET /map/filters`. Completeness and `problems` ignore the flag.
+A source `POST` or `PUT /map/places` cannot set the flag. Setting `active`
+back to true is the same admin replace. Delete remains delete.

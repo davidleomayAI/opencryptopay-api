@@ -72,11 +72,12 @@ Every shop must state a NOSTR public key:
   stays out of `GET /map/places` and `GET /map/places/{npub}`, in the same
   way PR #22 handles the other fields. `GET /map/filters` keeps reading
   blockchains and assets from every row, as it does today for any
-  incomplete row. Its `countries` list comes from complete rows, so a
-  country whose only shops have no key drops out of it. An existing row
-  becomes public once it carries a key and passes the completeness check of
-  PR #22 (R2 to R5), whether the key arrives with a `PUT` or, as described
-  above, with a `POST`.
+  incomplete row. Its `countries` list comes from public rows, so a
+  country whose only shops have no key, or whose only public shop is
+  deactivated, drops out of it. An existing row becomes public once it
+  carries a key, passes the completeness check of PR #22 (R2 to R5), and
+  has `active` = 1, whether the key arrives with a `PUT` or, as described
+  above, with a `POST`. `active` is not part of completeness.
 
 The npub is not stored. It is `npubEncode(nostrPubkey)`
 (`src/lib/map/nostr-key.ts`) wherever it is shown.
