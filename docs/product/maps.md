@@ -22,20 +22,23 @@ switches to a table of the same places. The production hostnames call
 `https://api.opencryptopay.io`. The dev hostnames call
 `https://dev-api.opencryptopay.io`.
 
-`develop` (`8779418dda3eae201acf31bc8f437a5b0cf38462`) shows that same street
+`develop` (`738586ca013cfb19e23013963e12eb816e9742a2`) shows that same street
 map on `stores.html`, with the same hostname gate. That page opens on the map
-and can switch to the table. `shop.php` draws one pin for the shop on the
-page, at zoom 15, from coordinates already written into the page. It does not
-request the place list in the browser. `stores.html` and `shop.php` are not on
-`main` (`f5b2316540cb59f37ee1f5b8ed7cd300865a875a`). The homepage street map
-and the hostname gate are on `main`.
+and can switch to the table. The navigation lists Stores after Ecosystem.
+`shop.php` draws one pin for the shop on the page, at zoom 15, from
+coordinates already written into the page. It does not request the place list
+in the browser. `stores.html` and `shop.php` are not on `main`
+(`f5b2316540cb59f37ee1f5b8ed7cd300865a875a`). The homepage street map and the
+hostname gate are on `main`.
 
 ### DFX website
 
 Repository: `DFXswiss/landing-page`.
 
-The homepage draws the street map of the published place list. It opens on the
-map when the map starts, and a control switches to a table of the same places.
+The homepage draws the street map of published places whose `techProvider` is
+exactly `DFX.swiss`. It does not send a country query. The table still has a
+country column. It opens on the map when the map starts, and a control
+switches to a table of the same places.
 `dfx.swiss` and `www.dfx.swiss` call `https://api.opencryptopay.io`.
 `dev.dfx.swiss`, `www.dev.dfx.swiss`, and every other hostname call
 `https://dev-api.opencryptopay.io`.
@@ -54,6 +57,19 @@ street map and request
 The pages are on `develop` (`d347dee69d15147bd3d5b442decf4d0a59384dc9`). They
 are not on `main` (`ad4271104bfa402cadb995f1160a5c0d0de7b660`).
 
+### 21.gifts homepage
+
+Repository: `21gifts/app`.
+
+The homepage on `develop` (`1f6adf9623af1c58fa2405693c29444bc47a5558`) draws
+the street map under the hero and before How it works. It keeps published
+places whose `techProvider` is exactly `21.gifts`. A country selection is sent
+as the `country` query. It opens on the map, and a control switches to a table
+of the same places. `21.gifts` and `www.21.gifts` call
+`https://api.opencryptopay.io`. Every other hostname calls
+`https://dev-api.opencryptopay.io`. This homepage map is not on `main`
+(`90c84c65f974349c74715b5838784fe1eeede333`).
+
 ### DFX app
 
 Repository: `DFXswiss/app`.
@@ -63,7 +79,7 @@ are SPAR places in Switzerland. The page requests
 `GET /map/places?shopName=SPAR&country=CH` on `https://api.opencryptopay.io`.
 
 The map is on `develop` (`5d2ac468d644098859f69e8876010d988c3417c3`) and on
-`main` (`6246fb1a1a7acdc55c7931421e7d658613b9af69`).
+`main` (`390b060291edbcdd603015d3c2c14321b925c4cf`).
 
 ## Outline map
 
@@ -90,7 +106,7 @@ Repository: `21gifts/app`.
 `/shops#map` draws member shops with Google Maps. It does not use the
 OpenCryptoPay street map. A missing or unknown hash opens the post list.
 `ShopsScreen.tsx` is the same file on `develop`
-(`bb19efb8548e4760052ff11a7ff4e24d7013c8e2`) and on `main`
+(`1f6adf9623af1c58fa2405693c29444bc47a5558`) and on `main`
 (`90c84c65f974349c74715b5838784fe1eeede333`). `PlacesMapScreen.tsx` differs
 between those branches. Both draw Google Maps.
 
