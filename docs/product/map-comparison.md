@@ -1,7 +1,8 @@
 # How the place maps differ
 
-What the five known place maps share, and where they diverge. Where each one
-is shown is [maps.md](maps.md). This is a product note, not the API reference.
+What the five place maps compared here share, and where they diverge. Where
+each map is shown, including clients added after this comparison, is
+[maps.md](maps.md). This is a product note, not the API reference.
 
 Compared on 2026-10-12 from the `develop` commits below. A later commit can
 move a client without this note changing.
@@ -27,10 +28,22 @@ from the loaded places. It does not request `/map/filters` and has no country,
 name, blockchain, or asset control. Those controls are on `develop`.
 
 The RealUnit website pages are not on `main` (`ad4271104bfa402cadb995f1160a5c0d0de7b660`
-has no `public/pay/pay.js`). The DFX SPAR map is not on `main`. The RealUnit
-app screen is not on `main`. The two app files above match on `staging`
-(`713bc0ffd6bc0f5bc89b9111bbe46af71d48a97d`) and on `develop`. The 21.gifts
-file has the same contents on `main` and on `develop`.
+has no `public/pay/pay.js`). Checked again on 2026-10-23, the DFX SPAR map is
+on `main` (`6246fb1a1a7acdc55c7931421e7d658613b9af69`) and on `develop`. The
+RealUnit app screen is not on `main`
+(`4eca16a9302902b59d0884c45012bc4279e803c1`). `pay_locations.dart` and
+`pay_locations_page.dart` are the same files on `staging`
+(`413fe044814cafe375bd590e13d404919e1dc89a`) and on `develop`
+(`dbc3fdf59116b74f0abd6b9cbb9ff1b95ebc15d9`). `PlacesMapScreen.tsx` differs
+between `main` and `develop` of `21gifts/app`. Both draw Google Maps.
+`ShopsScreen.tsx` is the same file on both, and `/shops#map` opens that map.
+
+Clients shown since this comparison, and not described in the tables below,
+are in [maps.md](maps.md): the OpenCryptoPay stores page and shop page, and
+the DFX website homepage.
+
+In the sections below, the DFX page is the SPAR payment page in `DFXswiss/app`.
+It is not the DFX website.
 
 ## What all five share
 
