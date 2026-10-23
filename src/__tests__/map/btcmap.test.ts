@@ -6,12 +6,26 @@ const place: StoredMapPlace = {
   id: 'id-1',
   origin: 'dfx',
   externalId: 'store-1',
-  name: 'SPAR',
+  name: 'SPAR Triesen',
+  description:
+    'SPAR supermarket in Triesen. Customers can pay with Bitcoin and other crypto assets through OpenCryptoPay at the checkout.',
   lat: 47.37,
   lon: 8.54,
   category: 'groceries',
   paymentMethods: 'lightning',
   techProvider: 'DFX.swiss',
+  shopType: 'SPAR',
+  street: 'Maschlinastrasse',
+  houseNumber: '4',
+  postalCode: '9495',
+  city: 'Triesen',
+  country: 'LI',
+  supports: [],
+  photos: [],
+  nostrPubkey: null,
+  lastTransactionAt: null,
+  activity: 'none',
+  active: true,
   createdAt: '2026-09-26T00:00:00.000Z',
 };
 
@@ -37,7 +51,7 @@ describe('pushMapPlace', () => {
     const calls: string[] = [];
     const ok: FetchLike = async (input, init) => {
       calls.push(String(input));
-      expect(JSON.parse(String(init.body))).toMatchObject({ name: 'SPAR' });
+      expect(JSON.parse(String(init.body))).toMatchObject({ name: 'SPAR Triesen' });
       return new Response('{}', { status: 201 });
     };
     expect(

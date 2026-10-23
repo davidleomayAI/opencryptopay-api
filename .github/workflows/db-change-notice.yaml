@@ -1,0 +1,149 @@
+# Fails a pull request when the diff touches the database and the description
+# does not carry the required marker in the visible text. `edited` is a
+# trigger because editing the PR text must re-run this check. `ready_for_review`
+# is omitted on purpose: a Ready trigger would re-run the check needlessly.
+name: Database change notice
+
+# `pull_request_target`, not `pull_request`: this repository has no guard that holds workflow
+# changes, so the job must run the base branch's workflow definition. A pull request cannot replace
+# the evaluation step with a no-op. The pull request's files are checked out only as data.
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+    branches: [develop]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: db-change-notice-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  notice:
+    name: Database change notice
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # No pull request code runs in this job: source files are only read as text, the tests of the
+      # notice script run in ci.yaml, and the decision is made by the base branch's copy of
+      # db-change-notice.mjs, so a pull request cannot turn its own check green by editing the
+      # script. Without a base copy the job fails; the pull request's copy is never imported.
+      # The rules come from the current tip of the base branch (the default ref of
+      # pull_request_target); the base text of changed files comes from the pull request's base.
+      - name: Checkout rules
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          path: notice-rules
+          sparse-checkout: scripts
+
+      - name: Checkout base
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: notice-base
+          sparse-checkout: src
+
+      # A fork's files are checked out only to be read as text; nothing from notice-head is
+      # imported or executed, so the checkout of fork code under pull_request_target is safe here.
+      - name: Checkout pull request
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: notice-head
+          sparse-checkout: |
+            scripts
+            src
+
+      - name: Evaluate database change notice
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { existsSync, readFileSync } = require('node:fs');
+            // Pull request files are data: a symbolic link, anything that is not a regular file, a path
+            // that resolves outside the workspace, or a file over 1 MB is not read; the patch rules decide.
+            const { lstatSync, realpathSync } = require('node:fs');
+            const workspace = realpathSync(process.env.GITHUB_WORKSPACE);
+            const isReadableSource = (name) => {
+              try {
+                const stat = lstatSync(name);
+                return stat.isFile() && stat.size <= 1_000_000 && realpathSync(name).startsWith(`${workspace}/`);
+              } catch {
+                return false;
+              }
+            };
+            const { pathToFileURL } = require('node:url');
+            const basePath = `${process.env.GITHUB_WORKSPACE}/notice-rules/scripts/db-change-notice.mjs`;
+            // Only the base copy is ever imported: this job runs with the base repository's token, so
+            // pull request code must not run in it. Without a base copy there is nothing to decide with.
+            if (!existsSync(basePath)) {
+              core.setFailed('The base branch has no scripts/db-change-notice.mjs.');
+              return;
+            }
+            const { evaluate, MARKER } = await import(pathToFileURL(basePath).href);
+            const body = context.payload.pull_request.body ?? '';
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            // The files endpoint stops at 3000 entries without saying so. A list of 3000 or one shorter than the
+            // pull request's changed_files may hide triggers, so the notice is then required: an
+            // entry without a patch is the fail-closed trigger the script already knows.
+            const truncated =
+              files.length >= 3000 || files.length < context.payload.pull_request.changed_files;
+            const listed = truncated
+              ? [...files, { filename: 'src/(file list truncated by the GitHub API).ts' }]
+              : files;
+            const isSourceTypeScript = (name) =>
+              typeof name === 'string' && name.startsWith('src/') && name.endsWith('.ts');
+            for (const file of listed) {
+              if (
+                !isSourceTypeScript(file.filename) &&
+                !isSourceTypeScript(file.previous_filename)
+              ) {
+                continue;
+              }
+              const headFile = `${process.env.GITHUB_WORKSPACE}/notice-head/${file.filename}`;
+              const baseName = file.previous_filename ?? file.filename;
+              const baseFile = `${process.env.GITHUB_WORKSPACE}/notice-base/${baseName}`;
+              try {
+                // Head and base text together: removing the only database import changes access too.
+                const texts = [headFile, baseFile]
+                  .filter((name) => isReadableSource(name))
+                  .map((name) => readFileSync(name, 'utf8'));
+                if (texts.length > 0) file.content = texts.join('\n');
+              } catch {
+                // Leave content unset so the existing patch rules decide, including fail-closed.
+              }
+            }
+            const { required, ok, triggers } = evaluate({ body, files: listed });
+            const triggerList =
+              triggers.length === 0
+                ? '(none)'
+                : triggers.map((file) => `- ${file}`).join('\n');
+            core.summary
+              .addHeading('Database change notice')
+              .addRaw(
+                `Required: ${required ? 'yes' : 'no'}\n\nRules from: base branch\n\nTrigger files:\n\n${triggerList}\n`,
+              );
+            await core.summary.write();
+            if (required && !ok) {
+              const shown = triggers.slice(0, 20);
+              const rest = triggers.length - shown.length;
+              const more = rest > 0 ? ` and ${rest} more` : '';
+              core.setFailed(
+                [
+                  MARKER,
+                  'Put the marker line in the visible part of the PR description, not inside <details>.',
+                  `Trigger files: ${shown.join(', ')}${more}`,
+                ].join('\n'),
+              );
+            }

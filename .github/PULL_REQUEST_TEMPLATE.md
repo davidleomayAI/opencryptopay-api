@@ -1,3 +1,5 @@
+<!-- Changes the database or database access? Put the exact line "⚠️ 🗄️ Attention: database change" in the visible summary below (not inside <details>), or the "Database change notice" check fails. -->
+
 ## Summary
 
 <!-- One or two sentences describing the change. -->
@@ -13,6 +15,8 @@
 - [ ] `bun run handbook:check`
 - [ ] `bun run e2e:check`
 - [ ] `bun run test:coverage` (100% threshold respected)
+- [ ] `bun run test:schema` (docs/database matches the schema)
+- [ ] `node --test scripts/db-change-notice.test.mjs`
 - [ ] `bun run build`
 - [ ] `bun run e2e`
 - [ ] Manual smoke: `GET /healthz` returns `200 {"ok":true}`

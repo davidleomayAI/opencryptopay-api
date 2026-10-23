@@ -1,8 +1,11 @@
 import { Hono } from 'hono';
+import type { AdminPublicKey } from '@/lib/admin/keys';
 import type { FetchLike } from '@/lib/map/btcmap';
 import type { MapPlaceStore } from '@/lib/map/store';
+import { adminRoutes } from '@/routes/admin';
 import { healthRoutes } from '@/routes/health';
 import { mapRoutes } from '@/routes/map';
+import { welcomeRoutes } from '@/routes/welcome';
 
 export type AppDeps = {
   store: MapPlaceStore;
@@ -10,18 +13,32 @@ export type AppDeps = {
   ingestToken?: string;
   env: Record<string, string | undefined>;
   fetchImpl: FetchLike;
+  /** Request clock. Unset means `Date.now`. */
+  now?: () => number;
+  /** Allowed admin devices. Empty or omitted disables `/admin`. */
+  adminKeys?: readonly AdminPublicKey[];
+  /** Public host this instance answers as. Blank or omitted disables `/admin`. */
+  adminHost?: string;
+  /** `OCP_PUBLIC_BASE_URL`, validated by `parsePublicBaseUrl`: the origin of every photo URL. */
+  publicBaseUrl: string;
 };
 
 /**
- * HTTP API. `GET /healthz` and `GET /map/places` are public.
+ * HTTP API. `GET /` is the welcome page. `GET /healthz`, `GET /map/places`,
+ * `GET /map/places/{npub}` and `GET /map/filters` are public.
  * `POST /map/places` creates a pin once. `PUT /map/places` updates a pin.
- * `DELETE /map/places` removes a pin.
+ * `DELETE /map/places` removes a pin. `PUT /map/places/photos` replaces a shop's photos,
+ * and `GET /map/photos/{sha256}.{ext}` serves a photo of a listed shop.
+ * `/admin` maintains places with a per-device signature. It answers 503 when
+ * admin keys or the admin host are missing.
  *
- * @param deps - Store, ingest token, and the BTC Map environment.
+ * @param deps - Store, ingest token, admin keys and host, the BTC Map environment, the public
+ * base URL of photo URLs, and an optional clock.
  * @returns The application.
  */
 export function createApp(deps: AppDeps): Hono {
   const app = new Hono();
+  app.route('/', welcomeRoutes());
   app.route('/healthz', healthRoutes());
   app.route(
     '/map',
@@ -29,7 +46,21 @@ export function createApp(deps: AppDeps): Hono {
       store: deps.store,
       env: deps.env,
       fetchImpl: deps.fetchImpl,
+      publicBaseUrl: deps.publicBaseUrl,
       ...(deps.ingestToken === undefined ? {} : { ingestToken: deps.ingestToken }),
+      ...(deps.now === undefined ? {} : { now: deps.now }),
+    }),
+  );
+  app.route(
+    '/admin',
+    adminRoutes({
+      store: deps.store,
+      env: deps.env,
+      fetchImpl: deps.fetchImpl,
+      keys: deps.adminKeys ?? [],
+      host: deps.adminHost ?? '',
+      publicBaseUrl: deps.publicBaseUrl,
+      ...(deps.now === undefined ? {} : { now: deps.now }),
     }),
   );
   return app;

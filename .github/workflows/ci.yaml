@@ -45,6 +45,13 @@ jobs:
       - name: Test with 100% coverage gate
         run: bun run test:coverage
 
+      - name: Database schema reference
+        run: bun run test:schema
+
+      # The notice workflow runs no pull request code, so the tests of its script run here.
+      - name: Test database change notice
+        run: node --test scripts/db-change-notice.test.mjs
+
       - name: Build
         run: bun run build
 
