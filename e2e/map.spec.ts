@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { expect, test } from '@playwright/test';
+import { publicPlaceSupports } from '../src/lib/map/filter-catalog';
 import { isNostrPubkey, npubEncode } from '../src/lib/map/nostr-key';
 import {
   base64,
@@ -312,7 +313,7 @@ test('Function: SqliteMapPlaceStore — a pair is one support row', async ({ req
     return json.places.map((row) => row.name);
   };
 
-  expect(await names('blockchain=Ethereum&asset=ZCHF')).not.toContain('Split Pair Pin');
+  expect(await names('blockchain=Ethereum&asset=ZCHF')).toContain('Split Pair Pin');
   expect(await names('blockchain=Ethereum&asset=ETH')).toContain('Split Pair Pin');
   expect(await names('blockchain=Polygon&asset=ZCHF')).toContain('Split Pair Pin');
 });
@@ -460,7 +461,7 @@ test('Function: SqliteMapPlaceStore — PUT replaces every field of an existing 
   expect(updated?.street).toBe('Other Street');
   expect(updated?.shopType).toBe('Others');
   expect(updated?.shopName).toBeNull();
-  expect(updated?.supports).toEqual([]);
+  expect(updated?.supports).toEqual(publicPlaceSupports('DFX.swiss'));
   expect(updated?.techProvider).toBe('DFX.swiss');
 
   const omitted = await request.put('/map/places', {
@@ -642,7 +643,7 @@ test('Function: SqliteMapPlaceStore — limit is applied after the country filte
   expect(chJson.places[0]?.name).toBe('Limit Older CH');
 });
 
-test('Function: SqliteMapPlaceStore — delete removes the pin and its support from filters', async ({
+test('Function: SqliteMapPlaceStore — deleting a pin leaves the offer filter', async ({
   request,
 }) => {
   const pin = completePlace({
@@ -683,7 +684,7 @@ test('Function: SqliteMapPlaceStore — delete removes the pin and its support f
     assets: string[];
   };
   expect(filterJson.blockchains).toContain('Plasma');
-  expect(filterJson.assets).toContain('ONDO');
+  expect(filterJson.assets).not.toContain('ONDO');
 
   const deleted = await request.delete('/map/places', {
     headers: { Authorization: 'Bearer e2e-ingest' },
@@ -700,10 +701,12 @@ test('Function: SqliteMapPlaceStore — delete removes the pin and its support f
     blockchains: string[];
     assets: string[];
   };
-  expect(afterFilterJson.blockchains).not.toContain('Plasma');
+  expect(afterFilterJson.blockchains).toContain('Plasma');
+  expect(afterFilterJson.assets).not.toContain('ONDO');
   const plasmaFilters = await request.get('/map/filters?blockchain=Plasma');
   expect(plasmaFilters.status()).toBe(200);
   const plasmaJson = (await plasmaFilters.json()) as { assets: string[] };
+  expect(plasmaJson.assets).toContain('USDT');
   expect(plasmaJson.assets).not.toContain('ONDO');
 
   const afterDelete = (await (await request.get('/map/places')).json()) as {
@@ -766,7 +769,7 @@ test('Function: unstatedPaymentSql — a pin without supports uses the payment-l
   };
 
   expect(await names('blockchain=Ethereum')).toContain('Catalog DFX Pin');
-  expect(await names('blockchain=Ethereum')).not.toContain('Catalog Gifts Pin');
+  expect(await names('blockchain=Ethereum')).toContain('Catalog Gifts Pin');
   expect(await names('blockchain=Lightning&asset=BTC')).toEqual(
     expect.arrayContaining(['Catalog DFX Pin', 'Catalog Gifts Pin']),
   );
@@ -779,15 +782,98 @@ test('Function: unstatedPaymentSql — a pin without supports uses the payment-l
   expect(await names('asset=dEURO')).toContain('Catalog DFX Pin');
   expect(await names('asset=LINK')).not.toContain('Catalog DFX Pin');
   expect(await names('blockchain=Plasma')).not.toContain('Catalog DFX Pin');
+  expect(await names('blockchain=Plasma&asset=USDT')).toContain('Catalog Gifts Pin');
+  expect(await names('blockchain=Arc&asset=USDC')).toContain('Catalog Gifts Pin');
+  expect(await names('blockchain=Arc&asset=USDC')).not.toContain('Catalog DFX Pin');
+  expect(await names('blockchain=Bitcoin')).not.toContain('Catalog Gifts Pin');
+  expect(await names('blockchain=Spark&asset=BTC')).toContain('Catalog Gifts Pin');
   expect(await names('shopName=others')).toContain('Catalog Gifts Pin');
   expect(await names('shopType=SPAR')).toContain('Catalog DFX Pin');
   expect(await names('shopType=SPAR')).not.toContain('Catalog Gifts Pin');
   expect(await names('shopName=SPAR')).not.toContain('Catalog Gifts Pin');
 });
 
-test('Function: matchesUnstatedPayment — 21.gifts stays on Lightning and BTC', async ({
+test('Function: publicPlaceSupports — the tech provider offer is the public list', async ({
   request,
 }) => {
+  const dfx = completePlace({
+    externalId: 'e2e-offer-dfx',
+    name: 'Offer DFX Pin',
+  });
+  const gifts = completePlace({
+    origin: '21gifts',
+    externalId: 'e2e-offer-gifts',
+    name: 'Offer Gifts Pin',
+    lat: 14.6,
+    lon: 121.0,
+    category: 'shopping',
+    techProvider: '21.gifts',
+    shopType: 'Others',
+    street: 'Rizal',
+    houseNumber: '2',
+    postalCode: '1000',
+    city: 'Manila',
+    country: 'PH',
+  });
+  const stated = completePlace({
+    externalId: 'e2e-offer-stated',
+    name: 'Offer Stated Pin',
+    supports: [{ blockchain: 'Ethereum', asset: 'USDT' }],
+  });
+  const giftsOrigin = completePlace({
+    origin: '21gifts',
+    externalId: 'e2e-offer-gifts-origin',
+    name: 'Offer Gifts Origin Pin',
+    techProvider: 'DFX.swiss',
+    lat: 14.61,
+    lon: 120.98,
+    category: 'shopping',
+    shopType: 'Others',
+    street: 'Rizal',
+    houseNumber: '3',
+    postalCode: '1000',
+    city: 'Manila',
+    country: 'PH',
+  });
+  const giftsLabel = completePlace({
+    externalId: 'e2e-offer-gifts-label',
+    name: 'Offer Gifts Label Pin',
+    techProvider: '21.gifts',
+    supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
+  });
+  for (const pin of [dfx, gifts, stated, giftsOrigin, giftsLabel]) {
+    expect(
+      (
+        await request.post('/map/places', {
+          headers: { Authorization: 'Bearer e2e-ingest' },
+          data: pin,
+        })
+      ).status(),
+    ).toBe(201);
+  }
+
+  const listed = await request.get('/map/places');
+  expect(listed.status()).toBe(200);
+  const json = (await listed.json()) as {
+    places: Array<{
+      name: string;
+      supports: Array<{ blockchain: string; asset: string }>;
+    }>;
+  };
+  const byName = (name: string) => json.places.find((row) => row.name === name);
+  const dfxRow = byName('Offer DFX Pin');
+  const giftsRow = byName('Offer Gifts Pin');
+  const statedRow = byName('Offer Stated Pin');
+  const giftsOriginRow = byName('Offer Gifts Origin Pin');
+  const giftsLabelRow = byName('Offer Gifts Label Pin');
+  expect(dfxRow?.supports).toEqual(publicPlaceSupports('DFX.swiss'));
+  expect(giftsOriginRow?.supports).toEqual(publicPlaceSupports('DFX.swiss'));
+  expect(giftsRow?.supports).toEqual(publicPlaceSupports('21.gifts'));
+  expect(giftsLabelRow?.supports).toEqual(publicPlaceSupports('21.gifts'));
+  expect(statedRow?.supports).toEqual(publicPlaceSupports('DFX.swiss'));
+});
+
+test('Function: matchesUnstatedPayment — 21.gifts follows its own offer', async ({ request }) => {
   const listed = await request.get('/map/places?blockchain=Lightning&asset=BTC');
   expect(listed.status()).toBe(200);
   const json = (await listed.json()) as { places: Array<{ name: string }> };
@@ -827,7 +913,11 @@ test('Function: publicFilterResponse — filters include the payment-link catalo
   ]);
   expect(json.blockchains).toContain('Lightning');
   expect(json.blockchains).toContain('BinancePay');
+  expect(json.blockchains).toContain('Plasma');
+  expect(json.blockchains).toContain('Arc');
   expect(json.blockchains).not.toContain('Sepolia');
+  expect(json.blockchains).not.toContain('Gnosis');
+  expect(json.blockchains).not.toContain('Zano');
   expect(json.assets).toContain('ckBTC');
   expect(json.assets).not.toContain('USDC.e');
   expect(json.assets).not.toContain('USDbC');
@@ -837,12 +927,14 @@ test('Function: publicFilterResponse — filters include the payment-link catalo
   expect(dfx?.pairs).toContainEqual({ blockchain: 'Polygon', asset: 'ZCHF' });
   expect(dfx?.pairs).not.toContainEqual({ blockchain: 'Ethereum', asset: 'BTC' });
   expect(dfx?.blockchains).not.toContain('Plasma');
-  expect(gifts).toEqual({
-    name: '21.gifts',
-    blockchains: ['Lightning'],
-    assets: ['BTC'],
-    pairs: [{ blockchain: 'Lightning', asset: 'BTC' }],
-  });
+  expect(dfx?.blockchains).not.toContain('Gnosis');
+  expect(dfx?.blockchains).not.toContain('Zano');
+  expect(gifts?.name).toBe('21.gifts');
+  expect(gifts?.pairs).toEqual(publicPlaceSupports('21.gifts'));
+  expect(gifts?.pairs).toContainEqual({ blockchain: 'Lightning', asset: 'BTC' });
+  expect(gifts?.pairs).toContainEqual({ blockchain: 'Spark', asset: 'BTC' });
+  expect(gifts?.pairs).toContainEqual({ blockchain: 'Ethereum', asset: 'USDT' });
+  expect(gifts?.pairs).not.toContainEqual({ blockchain: 'Bitcoin', asset: 'BTC' });
   const ethereum = await request.get('/map/filters?blockchain=Ethereum');
   expect(ethereum.status()).toBe(200);
   const ethereumJson = (await ethereum.json()) as {
@@ -851,6 +943,7 @@ test('Function: publicFilterResponse — filters include the payment-link catalo
     activities: string[];
   };
   expect(ethereumJson.assets).toContain('ZCHF');
+  expect(ethereumJson.assets).toContain('USDT');
   expect(ethereumJson.assets).not.toContain('BTC');
   expect(ethereumJson.blockchains).toContain('Polygon');
   expect(ethereumJson.activities).toEqual([

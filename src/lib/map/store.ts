@@ -340,14 +340,7 @@ function matchesFilter(row: StoredMapPlace, filter?: MapPlaceListFilter): boolea
     return false;
   }
   if (filter.blockchain !== undefined || filter.asset !== undefined) {
-    const match =
-      row.supports.length > 0
-        ? row.supports.some(
-            (item) =>
-              (filter.blockchain === undefined || item.blockchain === filter.blockchain) &&
-              (filter.asset === undefined || item.asset === filter.asset),
-          )
-        : matchesUnstatedPayment(row.origin, row.techProvider, filter.blockchain, filter.asset);
+    const match = matchesUnstatedPayment(row.techProvider, filter.blockchain, filter.asset);
     if (!match) {
       return false;
     }
