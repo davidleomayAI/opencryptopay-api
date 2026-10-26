@@ -3,11 +3,7 @@
  * Coordinates are rounded to six decimal places.
  */
 
-import {
-  isCatalogAsset,
-  isCatalogBlockchain,
-  publicPlaceSupports,
-} from '@/lib/map/filter-catalog';
+import { isCatalogAsset, isCatalogBlockchain, publicPlaceSupports } from '@/lib/map/filter-catalog';
 import { isNostrPubkey, npubEncode } from '@/lib/map/nostr-key';
 import { photoExtension, type PhotoType } from '@/lib/map/photo-strip';
 
