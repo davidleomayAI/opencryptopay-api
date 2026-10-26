@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { expect, test } from '@playwright/test';
+import { publicPlaceSupports } from '../src/lib/map/filter-catalog';
 import { isNostrPubkey, npubEncode } from '../src/lib/map/nostr-key';
 import {
   base64,
@@ -460,7 +461,7 @@ test('Function: SqliteMapPlaceStore — PUT replaces every field of an existing 
   expect(updated?.street).toBe('Other Street');
   expect(updated?.shopType).toBe('Others');
   expect(updated?.shopName).toBeNull();
-  expect(updated?.supports).toEqual([]);
+  expect(updated?.supports).toEqual(publicPlaceSupports('dfx', 'DFX.swiss', []));
   expect(updated?.techProvider).toBe('DFX.swiss');
 
   const omitted = await request.put('/map/places', {
