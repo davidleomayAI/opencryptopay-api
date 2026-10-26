@@ -785,6 +785,62 @@ test('Function: unstatedPaymentSql — a pin without supports uses the payment-l
   expect(await names('shopName=SPAR')).not.toContain('Catalog Gifts Pin');
 });
 
+test('Function: publicPlaceSupports — an empty stored list emits the offer, including ZCHF', async ({
+  request,
+}) => {
+  const dfx = completePlace({
+    externalId: 'e2e-offer-dfx',
+    name: 'Offer DFX Pin',
+  });
+  const gifts = completePlace({
+    origin: '21gifts',
+    externalId: 'e2e-offer-gifts',
+    name: 'Offer Gifts Pin',
+    lat: 14.6,
+    lon: 121.0,
+    category: 'shopping',
+    techProvider: '21.gifts',
+    shopType: 'Others',
+    street: 'Rizal',
+    houseNumber: '2',
+    postalCode: '1000',
+    city: 'Manila',
+    country: 'PH',
+  });
+  const stated = completePlace({
+    externalId: 'e2e-offer-stated',
+    name: 'Offer Stated Pin',
+    supports: [{ blockchain: 'Ethereum', asset: 'USDT' }],
+  });
+  for (const pin of [dfx, gifts, stated]) {
+    expect(
+      (
+        await request.post('/map/places', {
+          headers: { Authorization: 'Bearer e2e-ingest' },
+          data: pin,
+        })
+      ).status(),
+    ).toBe(201);
+  }
+
+  const listed = await request.get('/map/places');
+  expect(listed.status()).toBe(200);
+  const json = (await listed.json()) as {
+    places: Array<{
+      name: string;
+      supports: Array<{ blockchain: string; asset: string }>;
+    }>;
+  };
+  const byName = (name: string) => json.places.find((row) => row.name === name);
+  const dfxRow = byName('Offer DFX Pin');
+  const giftsRow = byName('Offer Gifts Pin');
+  const statedRow = byName('Offer Stated Pin');
+  expect(dfxRow?.supports).toContainEqual({ blockchain: 'Ethereum', asset: 'ZCHF' });
+  expect(dfxRow?.supports).toContainEqual({ blockchain: 'Polygon', asset: 'ZCHF' });
+  expect(giftsRow?.supports).toEqual([{ blockchain: 'Lightning', asset: 'BTC' }]);
+  expect(statedRow?.supports).toEqual([{ blockchain: 'Ethereum', asset: 'USDT' }]);
+});
+
 test('Function: matchesUnstatedPayment — 21.gifts stays on Lightning and BTC', async ({
   request,
 }) => {
