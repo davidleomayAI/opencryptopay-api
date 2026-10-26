@@ -5,6 +5,7 @@ import {
   matchesUnstatedPayment,
   PLACE_ACTIVITIES,
   publicFilterResponse,
+  publicPlaceSupports,
   unstatedPaymentSql,
 } from '@/lib/map/filter-catalog';
 import type { PlaceActivity } from '@/lib/map/place';
@@ -142,5 +143,58 @@ describe('payment-link filter catalog', () => {
       assets: ['BTC'],
       pairs: [{ blockchain: 'Lightning', asset: 'BTC' }],
     });
+  });
+
+  it('copies stored pairs, including a pair that is not in the catalog', () => {
+    const stored = [
+      { blockchain: 'Kraken', asset: 'BTC' },
+      { blockchain: 'Ethereum', asset: 'ZCHF' },
+    ];
+    expect(publicPlaceSupports('dfx', 'DFX.swiss', stored)).toEqual([
+      { blockchain: 'Kraken', asset: 'BTC' },
+      { blockchain: 'Ethereum', asset: 'ZCHF' },
+    ]);
+  });
+
+  it('does not let a mutated return change the next call with the same stored list', () => {
+    const stored = [{ blockchain: 'Kraken', asset: 'BTC' }];
+    const returned = publicPlaceSupports('dfx', 'DFX.swiss', stored);
+    const pair = returned[0];
+    if (pair === undefined) {
+      throw new Error('stored pair missing');
+    }
+    pair.asset = 'ETH';
+    returned.push({ blockchain: 'Ethereum', asset: 'ZCHF' });
+    expect(publicPlaceSupports('dfx', 'DFX.swiss', stored)).toEqual([
+      { blockchain: 'Kraken', asset: 'BTC' },
+    ]);
+    expect(stored).toEqual([{ blockchain: 'Kraken', asset: 'BTC' }]);
+  });
+
+  it('emits the DFX catalog, including ZCHF, when a DFX.swiss pin stores nothing', () => {
+    const supports = publicPlaceSupports('dfx', 'DFX.swiss', []);
+    const dfx = publicFilterResponse({
+      countries: [],
+      blockchains: [],
+      assets: [],
+    }).techProviders.find((provider) => provider.name === 'DFX.swiss');
+    if (dfx === undefined) {
+      throw new Error('DFX.swiss catalog missing');
+    }
+    expect(supports).toContainEqual({ blockchain: 'Ethereum', asset: 'ZCHF' });
+    expect(supports).toContainEqual({ blockchain: 'Polygon', asset: 'ZCHF' });
+    expect(supports).toHaveLength(dfx.pairs.length);
+  });
+
+  it('emits only Lightning and BTC for origin 21gifts when the stored list is empty', () => {
+    expect(publicPlaceSupports('21gifts', 'DFX.swiss', [])).toEqual([
+      { blockchain: 'Lightning', asset: 'BTC' },
+    ]);
+  });
+
+  it('emits only Lightning and BTC for tech provider 21.gifts when the stored list is empty', () => {
+    expect(publicPlaceSupports('dfx', '21.gifts', [])).toEqual([
+      { blockchain: 'Lightning', asset: 'BTC' },
+    ]);
   });
 });

@@ -3,7 +3,11 @@
  * Coordinates are rounded to six decimal places.
  */
 
-import { isCatalogAsset, isCatalogBlockchain } from '@/lib/map/filter-catalog';
+import {
+  isCatalogAsset,
+  isCatalogBlockchain,
+  publicPlaceSupports,
+} from '@/lib/map/filter-catalog';
 import { isNostrPubkey, npubEncode } from '@/lib/map/nostr-key';
 import { photoExtension, type PhotoType } from '@/lib/map/photo-strip';
 
@@ -1258,10 +1262,7 @@ export function toPublicMapPlace(place: StoredMapPlace, baseUrl: string): Public
     postalCode: place.postalCode,
     city: place.city,
     country: place.country,
-    supports: place.supports.map((item) => ({
-      blockchain: item.blockchain,
-      asset: item.asset,
-    })),
+    supports: publicPlaceSupports(place.origin, place.techProvider, place.supports),
     activity: place.activity,
     coverPhoto:
       cover === undefined

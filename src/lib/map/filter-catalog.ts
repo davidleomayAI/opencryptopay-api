@@ -286,3 +286,29 @@ export function publicFilterResponse(
     ],
   };
 }
+
+/**
+ * Public support pairs for one pin.
+ *
+ * A non-empty stored list is copied in the same order and is not extended.
+ * An empty list is the hardcoded offer: Lightning and BTC for 21.gifts,
+ * otherwise the DFX catalog.
+ *
+ * @param origin - Stored origin.
+ * @param techProvider - Stored tech provider.
+ * @param stored - Stored blockchain and asset pairs.
+ * @returns A new array of pairs. The stored rows are not changed.
+ */
+export function publicPlaceSupports(
+  origin: string,
+  techProvider: string,
+  stored: readonly { blockchain: string; asset: string }[],
+): { blockchain: string; asset: string }[] {
+  if (stored.length > 0) {
+    return stored.map((pair) => ({ blockchain: pair.blockchain, asset: pair.asset }));
+  }
+  if (origin === GIFTS_ORIGIN || techProvider === GIFTS_TECH_PROVIDER) {
+    return [{ blockchain: GIFTS_BLOCKCHAIN, asset: GIFTS_ASSET }];
+  }
+  return DFX_PAIRS.map((pair) => ({ blockchain: pair.blockchain, asset: pair.asset }));
+}

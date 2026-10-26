@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { publicPlaceSupports } from '@/lib/map/filter-catalog';
 import {
   normalizeMapPlace,
   normalizeMapPlaceDelete,
@@ -1200,7 +1201,7 @@ describe('toPublicMapPlace', () => {
       houseNumber: '4',
       postalCode: '9495',
       city: 'Triesen',
-      supports: [],
+      supports: publicPlaceSupports('dfx', 'DFX.swiss', []),
       activity: 'none',
       coverPhoto: null,
     });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { publicFilterResponse } from '@/lib/map/filter-catalog';
+import { publicFilterResponse, publicPlaceSupports } from '@/lib/map/filter-catalog';
 import { npubEncode } from '@/lib/map/nostr-key';
 import { normalizeMapPlace, type MapPlaceInput } from '@/lib/map/place';
 import { MemoryMapPlaceStore, type MapPhotoFile } from '@/lib/map/store';
@@ -45,7 +45,7 @@ const publicPin = {
   houseNumber: '4',
   postalCode: '9495',
   city: 'Triesen',
-  supports: [] as Array<{ blockchain: string; asset: string }>,
+  supports: publicPlaceSupports('dfx', 'DFX.swiss', []),
   activity: 'none',
   coverPhoto: null,
 };
@@ -481,7 +481,7 @@ describe('map routes', () => {
       houseNumber: '12',
       postalCode: '8001',
       city: 'Zürich',
-      supports: [],
+      supports: publicPlaceSupports('dfx', 'DFX.swiss', []),
       activity: 'none',
       coverPhoto: null,
     });
@@ -610,7 +610,7 @@ describe('map routes', () => {
     expect(listed.places[0]).toEqual({
       id: createdBody.id,
       ...publicPin,
-      supports: [],
+      supports: publicPlaceSupports('dfx', 'DFX.swiss', []),
     });
   });
 

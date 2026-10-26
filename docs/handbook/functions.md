@@ -63,6 +63,13 @@
 - **Returns / side effects:** `{ shopTypes, shopNames, countries, blockchains, assets, activities, techProviders }`. `activities` is always `daily`, `within7Days`, `within30Days`, `olderThan30Days`, `none`, including when `?blockchain=` limits the asset list. No I/O.
 - **Used by:** `mapRoutes` on `GET /map/filters`.
 
+## Function: publicPlaceSupports
+
+- **Purpose:** Copy stored support pairs for the public pin. When the stored list has at least one pair, the copy keeps that order and adds nothing. An empty list is the hardcoded catalog. The DFX catalog includes ZCHF on Ethereum and Polygon. Origin `21gifts` or tech provider `21.gifts` is only Lightning and BTC.
+- **Inputs:** The stored origin, the stored tech provider, and the stored pairs `{ blockchain, asset }`.
+- **Returns / side effects:** A new array of `{ blockchain, asset }`. Mutating it does not change the stored list or the next call. No I/O.
+- **Used by:** `toPublicMapPlace`.
+
 ## Function: normalizeMapPlaceKey
 
 - **Purpose:** Validate origin and external id of a pin. An own property `id` is rejected with `Place field is not allowed: id` before origin and external id are checked. Other extra JSON fields are ignored. The body does not need coordinates or a name.
@@ -128,7 +135,7 @@
 
 ## Function: toPublicMapPlace
 
-- **Purpose:** Strip the caller id and payment methods before a pin is shown on the public map. `id` is the shop's npub (`npubEncode` of the stored key), or null for a row without a key, which only `adminRoutes` shows; the internal UUID is not returned here. The tech provider, description, shop type, street, house number, postal code, city, country, and supports stay on the public row. `shopName` is derived for one release as `'SPAR'` when `shopType` is `'SPAR'`, otherwise null, and is removed in the release after the rollout. Address parts on a public row are strings. `activity` is copied from the stored pin. A read does not reclassify. `coverPhoto` is the first stored photo as `{ url, width, height }` with an absolute `url` from `OCP_PUBLIC_BASE_URL`, or null. `GET /admin/places` sets `id` to the internal id and adds `npub` (this function's `id`), `externalId`, `paymentMethods`, `createdAt`, `lastTransactionAt`, and `active` beside this result. This function does not copy `active` and omits those other admin fields. It does not add `activityUntil` or payment days.
+- **Purpose:** Strip the caller id and payment methods before a pin is shown on the public map. `id` is the shop's npub (`npubEncode` of the stored key), or null for a row without a key, which only `adminRoutes` shows; the internal UUID is not returned here. The tech provider, description, shop type, street, house number, postal code, city, country, and supports stay on the public row. An empty stored supports list is emitted as `publicPlaceSupports`, not as []. `shopName` is derived for one release as `'SPAR'` when `shopType` is `'SPAR'`, otherwise null, and is removed in the release after the rollout. Address parts on a public row are strings. `activity` is copied from the stored pin. A read does not reclassify. `coverPhoto` is the first stored photo as `{ url, width, height }` with an absolute `url` from `OCP_PUBLIC_BASE_URL`, or null. `GET /admin/places` sets `id` to the internal id and adds `npub` (this function's `id`), `externalId`, `paymentMethods`, `createdAt`, `lastTransactionAt`, and `active` beside this result. This function does not copy `active` and omits those other admin fields. It does not add `activityUntil` or payment days.
 - **Inputs:** A stored map pin and `OCP_PUBLIC_BASE_URL`. Public map callers pass a complete row; `adminRoutes` may pass an incomplete row.
 - **Returns / side effects:** `id`, `origin`, `name`, `description`, `lat`, `lon`, `category`, `techProvider`, `shopType`, `shopName`, `country`, `street`, `houseNumber`, `postalCode`, `city`, `supports`, `activity`, and `coverPhoto`. No I/O.
 - **Used by:** `mapRoutes` on `GET /map/places`, `toPublicMapPlaceDetail`, and `adminRoutes` on `GET /admin/places`.
