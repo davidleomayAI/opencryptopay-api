@@ -268,19 +268,24 @@ describe('MemoryMapPlaceStore', () => {
     const ids = (filter: { blockchain?: string; asset?: string; shopType?: ShopType }): string[] =>
       store.list(10, filter).map((row) => row.externalId);
 
-    expect(ids({ blockchain: 'Ethereum' }).sort()).toEqual(['dfx-open']);
+    const dfxIds = ['dfx-open', 'origin-only', 'stated'];
+    const bothIds = ['dfx-open', 'gifts-open', 'label-only', 'origin-only', 'stated'];
+    expect(ids({ blockchain: 'Ethereum' }).sort()).toEqual(bothIds);
     expect(ids({ blockchain: 'Lightning', asset: 'BTC' }).sort()).toEqual([
       'dfx-open',
       'gifts-open',
       'label-only',
       'origin-only',
+      'stated',
     ]);
     expect(ids({ blockchain: 'Ethereum', asset: 'BTC' })).toEqual([]);
-    expect(ids({ blockchain: 'Plasma' })).toEqual([]);
-    expect(ids({ blockchain: 'BinancePay' }).sort()).toEqual(['dfx-open']);
-    expect(ids({ asset: 'ckBTC' }).sort()).toEqual(['dfx-open']);
-    expect(ids({ blockchain: 'Bitcoin' }).sort()).toEqual(['dfx-open']);
-    expect(ids({ blockchain: 'Polygon', asset: 'ZCHF' }).sort()).toEqual(['dfx-open', 'stated']);
+    expect(ids({ blockchain: 'Ethereum', asset: 'USDT' }).sort()).toEqual(bothIds);
+    expect(ids({ blockchain: 'Plasma' }).sort()).toEqual(['gifts-open', 'label-only']);
+    expect(ids({ blockchain: 'Arc', asset: 'USDC' }).sort()).toEqual(['gifts-open', 'label-only']);
+    expect(ids({ blockchain: 'BinancePay' }).sort()).toEqual(dfxIds);
+    expect(ids({ asset: 'ckBTC' }).sort()).toEqual(dfxIds);
+    expect(ids({ blockchain: 'Bitcoin' }).sort()).toEqual(dfxIds);
+    expect(ids({ blockchain: 'Polygon', asset: 'ZCHF' }).sort()).toEqual(dfxIds);
     expect(ids({ shopType: 'SPAR' }).sort()).toEqual([
       'dfx-open',
       'gifts-open',
@@ -291,7 +296,7 @@ describe('MemoryMapPlaceStore', () => {
     expect(ids({ shopType: 'Others' })).toEqual([]);
   });
 
-  it('requires blockchain and asset to match the same support row', () => {
+  it('keeps the tech-provider offer when stored rows name other pairs', () => {
     const store = keyedStore(new MemoryMapPlaceStore(() => new Date('2026-09-26T00:00:00.000Z')));
     store.insertIfNew({
       ...input,
@@ -300,9 +305,9 @@ describe('MemoryMapPlaceStore', () => {
         { blockchain: 'Ethereum', asset: 'ETH' },
       ],
     });
-    expect(store.list(10, { blockchain: 'Ethereum', asset: 'ZCHF' })).toHaveLength(0);
-    expect(store.list(10, { blockchain: 'Bitcoin' })).toHaveLength(0);
-    expect(store.list(10, { asset: 'BTC' })).toHaveLength(0);
+    expect(store.list(10, { blockchain: 'Ethereum', asset: 'ZCHF' })).toHaveLength(1);
+    expect(store.list(10, { blockchain: 'Bitcoin' })).toHaveLength(1);
+    expect(store.list(10, { asset: 'BTC' })).toHaveLength(1);
     expect(store.list(10, { blockchain: 'Ethereum' }).map((row) => row.externalId)).toEqual([
       'store-1',
     ]);
