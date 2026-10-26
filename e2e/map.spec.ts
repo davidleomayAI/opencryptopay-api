@@ -871,9 +871,7 @@ test('Function: publicPlaceSupports — the tech provider offer is the public li
   expect(statedRow?.supports).toEqual(publicPlaceSupports('DFX.swiss'));
 });
 
-test('Function: matchesUnstatedPayment — 21.gifts follows its own offer', async ({
-  request,
-}) => {
+test('Function: matchesUnstatedPayment — 21.gifts follows its own offer', async ({ request }) => {
   const listed = await request.get('/map/places?blockchain=Lightning&asset=BTC');
   expect(listed.status()).toBe(200);
   const json = (await listed.json()) as { places: Array<{ name: string }> };
