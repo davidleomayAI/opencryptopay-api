@@ -1047,21 +1047,12 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
     }
     if (filter !== undefined && (filter.blockchain !== undefined || filter.asset !== undefined)) {
       const payment = unstatedPaymentSql(filter.blockchain, filter.asset);
-      if (payment !== null) {
-        where.push(payment.sql);
-        params.push(...payment.params);
-      } else if (filter.blockchain !== undefined && filter.asset !== undefined) {
-        where.push(
-          'id IN (SELECT place_id FROM map_place_support WHERE blockchain = ? AND asset = ?)',
-        );
-        params.push(filter.blockchain, filter.asset);
-      } else if (filter.blockchain !== undefined) {
-        where.push('id IN (SELECT place_id FROM map_place_support WHERE blockchain = ?)');
-        params.push(filter.blockchain);
-      } else if (filter.asset !== undefined) {
-        where.push('id IN (SELECT place_id FROM map_place_support WHERE asset = ?)');
-        params.push(filter.asset);
+      /* v8 ignore next 3 -- @preserve a blockchain or asset query always has a predicate */
+      if (payment === null) {
+        throw new Error('A blockchain or asset filter has no predicate');
       }
+      where.push(payment.sql);
+      params.push(...payment.params);
     }
     const whereSql = `WHERE ${where.join(' AND ')}`;
     const rows = this.#db

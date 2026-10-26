@@ -1258,7 +1258,7 @@ export function toPublicMapPlace(place: StoredMapPlace, baseUrl: string): Public
     postalCode: place.postalCode,
     city: place.city,
     country: place.country,
-    supports: publicPlaceSupports(place.origin, place.techProvider, place.supports),
+    supports: publicPlaceSupports(place.techProvider),
     activity: place.activity,
     coverPhoto:
       cover === undefined

@@ -7,8 +7,8 @@
  * is read from the payment service.
  */
 
-const GIFTS_ORIGIN = '21gifts';
 const GIFTS_TECH_PROVIDER = '21.gifts';
+const DFX_TECH_PROVIDER = 'DFX.swiss';
 const GIFTS_BLOCKCHAIN = 'Lightning';
 const GIFTS_ASSET = 'BTC';
 
@@ -138,33 +138,6 @@ function offerFlags(
   return { gifts, dfx };
 }
 
-function supportSql(
-  blockchain: string | undefined,
-  asset: string | undefined,
-): { sql: string; params: string[] } {
-  if (blockchain !== undefined && asset !== undefined) {
-    return {
-      sql: 'id IN (SELECT place_id FROM map_place_support WHERE blockchain = ? AND asset = ?)',
-      params: [blockchain, asset],
-    };
-  }
-  if (blockchain !== undefined) {
-    return {
-      sql: 'id IN (SELECT place_id FROM map_place_support WHERE blockchain = ?)',
-      params: [blockchain],
-    };
-  }
-  /* v8 ignore start -- @preserve a matching offer always names a blockchain or an asset */
-  if (asset === undefined) {
-    return { sql: '0', params: [] };
-  }
-  /* v8 ignore stop -- @preserve */
-  return {
-    sql: 'id IN (SELECT place_id FROM map_place_support WHERE asset = ?)',
-    params: [asset],
-  };
-}
-
 function assetsFor(blockchain: string | undefined): string[] {
   if (blockchain === undefined) {
     return [...ASSET_SET];
@@ -199,16 +172,15 @@ export function isCatalogAsset(value: string): boolean {
 }
 
 /**
- * Whether a pin with no support rows matches a payment filter.
+ * Whether a tech provider's offer includes a payment filter.
  *
- * @param origin - Stored origin.
- * @param techProvider - Stored tech provider.
+ * @param techProvider - Stored tech provider. Origin is not an input.
  * @param blockchain - Requested network, if any.
  * @param asset - Requested asset, if any.
- * @returns True when the hardcoded offer for that pin includes the request.
+ * @returns True when that provider's offer includes the request. An omitted
+ *   filter matches. A provider other than DFX.swiss or 21.gifts matches none.
  */
 export function matchesUnstatedPayment(
-  origin: string,
   techProvider: string,
   blockchain: string | undefined,
   asset: string | undefined,
@@ -217,38 +189,35 @@ export function matchesUnstatedPayment(
     return true;
   }
   const offer = offerFlags(blockchain, asset);
-  if (origin === GIFTS_ORIGIN || techProvider === GIFTS_TECH_PROVIDER) {
+  if (techProvider === GIFTS_TECH_PROVIDER) {
     return offer.gifts;
   }
-  return offer.dfx;
+  if (techProvider === DFX_TECH_PROVIDER) {
+    return offer.dfx;
+  }
+  return false;
 }
 
 /**
- * SQL for a blockchain or asset filter, including pins with no support rows.
+ * SQL for a blockchain or asset filter. The predicate is the tech provider only.
  *
  * @param blockchain - Requested network, if any.
  * @param asset - Requested asset, if any.
  * @returns A parenthesised predicate and its bound parameters, or null when
- *   only stored support rows can match.
+ *   the query sets neither network nor asset.
  */
 export function unstatedPaymentSql(
   blockchain?: string | undefined,
   asset?: string | undefined,
 ): { sql: string; params: string[] } | null {
-  const offer = offerFlags(blockchain, asset);
-  if (!offer.gifts && !offer.dfx) {
+  if (blockchain === undefined && asset === undefined) {
     return null;
   }
-  const support = supportSql(blockchain, asset);
-  const giftsFlag = offer.gifts ? '1' : '0';
-  let dfxFlag = '1';
-  /* v8 ignore next 3 -- @preserve gifts offers are a subset of the DFX catalog */
-  if (!offer.dfx) {
-    dfxFlag = '0';
-  }
+  const giftsFlag = matchesUnstatedPayment(GIFTS_TECH_PROVIDER, blockchain, asset) ? '1' : '0';
+  const dfxFlag = matchesUnstatedPayment(DFX_TECH_PROVIDER, blockchain, asset) ? '1' : '0';
   return {
-    sql: `(${support.sql} OR (NOT EXISTS (SELECT 1 FROM map_place_support WHERE place_id = map_place.id) AND (((tech_provider = '21.gifts' OR origin = '21gifts') AND ? = '1') OR (NOT (tech_provider = '21.gifts' OR origin = '21gifts') AND ? = '1'))))`,
-    params: [...support.params, giftsFlag, dfxFlag],
+    sql: `((tech_provider = '21.gifts' AND ? = '1') OR (tech_provider = 'DFX.swiss' AND ? = '1'))`,
+    params: [giftsFlag, dfxFlag],
   };
 }
 
@@ -288,27 +257,21 @@ export function publicFilterResponse(
 }
 
 /**
- * Public support pairs for one pin.
+ * Public support pairs for one pin. The tech provider is the whole rule.
  *
- * A non-empty stored list is copied in the same order and is not extended.
- * An empty list is the hardcoded offer: Lightning and BTC for 21.gifts,
- * otherwise the DFX catalog.
+ * DFX.swiss is the DFX catalog, including ZCHF on Ethereum and Polygon.
+ * 21.gifts is Lightning and BTC. Any other provider is an empty list.
+ * Origin and stored support rows are not inputs.
  *
- * @param origin - Stored origin.
  * @param techProvider - Stored tech provider.
- * @param stored - Stored blockchain and asset pairs.
- * @returns A new array of pairs. The stored rows are not changed.
+ * @returns A new array of pairs.
  */
-export function publicPlaceSupports(
-  origin: string,
-  techProvider: string,
-  stored: readonly { blockchain: string; asset: string }[],
-): { blockchain: string; asset: string }[] {
-  if (stored.length > 0) {
-    return stored.map((pair) => ({ blockchain: pair.blockchain, asset: pair.asset }));
-  }
-  if (origin === GIFTS_ORIGIN || techProvider === GIFTS_TECH_PROVIDER) {
+export function publicPlaceSupports(techProvider: string): { blockchain: string; asset: string }[] {
+  if (techProvider === GIFTS_TECH_PROVIDER) {
     return [{ blockchain: GIFTS_BLOCKCHAIN, asset: GIFTS_ASSET }];
   }
-  return DFX_PAIRS.map((pair) => ({ blockchain: pair.blockchain, asset: pair.asset }));
+  if (techProvider === DFX_TECH_PROVIDER) {
+    return DFX_PAIRS.map((pair) => ({ blockchain: pair.blockchain, asset: pair.asset }));
+  }
+  return [];
 }

@@ -313,7 +313,7 @@ test('Function: SqliteMapPlaceStore — a pair is one support row', async ({ req
     return json.places.map((row) => row.name);
   };
 
-  expect(await names('blockchain=Ethereum&asset=ZCHF')).not.toContain('Split Pair Pin');
+  expect(await names('blockchain=Ethereum&asset=ZCHF')).toContain('Split Pair Pin');
   expect(await names('blockchain=Ethereum&asset=ETH')).toContain('Split Pair Pin');
   expect(await names('blockchain=Polygon&asset=ZCHF')).toContain('Split Pair Pin');
 });
@@ -461,7 +461,7 @@ test('Function: SqliteMapPlaceStore — PUT replaces every field of an existing 
   expect(updated?.street).toBe('Other Street');
   expect(updated?.shopType).toBe('Others');
   expect(updated?.shopName).toBeNull();
-  expect(updated?.supports).toEqual(publicPlaceSupports('dfx', 'DFX.swiss', []));
+  expect(updated?.supports).toEqual(publicPlaceSupports('DFX.swiss'));
   expect(updated?.techProvider).toBe('DFX.swiss');
 
   const omitted = await request.put('/map/places', {
@@ -786,7 +786,7 @@ test('Function: unstatedPaymentSql — a pin without supports uses the payment-l
   expect(await names('shopName=SPAR')).not.toContain('Catalog Gifts Pin');
 });
 
-test('Function: publicPlaceSupports — an empty stored list emits the offer, including ZCHF', async ({
+test('Function: publicPlaceSupports — the tech provider offer is the public list', async ({
   request,
 }) => {
   const dfx = completePlace({
@@ -813,7 +813,28 @@ test('Function: publicPlaceSupports — an empty stored list emits the offer, in
     name: 'Offer Stated Pin',
     supports: [{ blockchain: 'Ethereum', asset: 'USDT' }],
   });
-  for (const pin of [dfx, gifts, stated]) {
+  const giftsOrigin = completePlace({
+    origin: '21gifts',
+    externalId: 'e2e-offer-gifts-origin',
+    name: 'Offer Gifts Origin Pin',
+    techProvider: 'DFX.swiss',
+    lat: 14.61,
+    lon: 120.98,
+    category: 'shopping',
+    shopType: 'Others',
+    street: 'Rizal',
+    houseNumber: '3',
+    postalCode: '1000',
+    city: 'Manila',
+    country: 'PH',
+  });
+  const giftsLabel = completePlace({
+    externalId: 'e2e-offer-gifts-label',
+    name: 'Offer Gifts Label Pin',
+    techProvider: '21.gifts',
+    supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
+  });
+  for (const pin of [dfx, gifts, stated, giftsOrigin, giftsLabel]) {
     expect(
       (
         await request.post('/map/places', {
@@ -836,10 +857,13 @@ test('Function: publicPlaceSupports — an empty stored list emits the offer, in
   const dfxRow = byName('Offer DFX Pin');
   const giftsRow = byName('Offer Gifts Pin');
   const statedRow = byName('Offer Stated Pin');
-  expect(dfxRow?.supports).toContainEqual({ blockchain: 'Ethereum', asset: 'ZCHF' });
-  expect(dfxRow?.supports).toContainEqual({ blockchain: 'Polygon', asset: 'ZCHF' });
-  expect(giftsRow?.supports).toEqual([{ blockchain: 'Lightning', asset: 'BTC' }]);
-  expect(statedRow?.supports).toEqual([{ blockchain: 'Ethereum', asset: 'USDT' }]);
+  const giftsOriginRow = byName('Offer Gifts Origin Pin');
+  const giftsLabelRow = byName('Offer Gifts Label Pin');
+  expect(dfxRow?.supports).toEqual(publicPlaceSupports('DFX.swiss'));
+  expect(giftsOriginRow?.supports).toEqual(publicPlaceSupports('DFX.swiss'));
+  expect(giftsRow?.supports).toEqual(publicPlaceSupports('21.gifts'));
+  expect(giftsLabelRow?.supports).toEqual(publicPlaceSupports('21.gifts'));
+  expect(statedRow?.supports).toEqual(publicPlaceSupports('DFX.swiss'));
 });
 
 test('Function: matchesUnstatedPayment — 21.gifts stays on Lightning and BTC', async ({

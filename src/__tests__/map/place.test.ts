@@ -1201,7 +1201,7 @@ describe('toPublicMapPlace', () => {
       houseNumber: '4',
       postalCode: '9495',
       city: 'Triesen',
-      supports: publicPlaceSupports('dfx', 'DFX.swiss', []),
+      supports: publicPlaceSupports('DFX.swiss'),
       activity: 'none',
       coverPhoto: null,
     });
@@ -1211,7 +1211,7 @@ describe('toPublicMapPlace', () => {
     expect(Object.hasOwn(hidden, 'active')).toBe(false);
   });
 
-  it('returns SPAR shopName, copies supports and uses the npub as id', () => {
+  it('returns SPAR shopName, the tech-provider offer and the npub as id', () => {
     const supports = [{ blockchain: 'Ethereum', asset: 'ZCHF' }];
     const stored: StoredMapPlace = {
       origin: 'dfx',
@@ -1256,7 +1256,7 @@ describe('toPublicMapPlace', () => {
       houseNumber: '4',
       postalCode: '9495',
       city: 'Triesen',
-      supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
+      supports: publicPlaceSupports('DFX.swiss'),
       activity: 'daily',
       coverPhoto: null,
     });

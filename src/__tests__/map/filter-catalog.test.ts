@@ -38,47 +38,51 @@ describe('payment-link filter catalog', () => {
     expect(isCatalogAsset('ckbtc')).toBe(false);
   });
 
-  it('matches an unstated pin from the catalog for its tech provider', () => {
-    expect(matchesUnstatedPayment('dfx', 'DFX.swiss', undefined, undefined)).toBe(true);
-    expect(matchesUnstatedPayment('dfx', 'DFX.swiss', 'Ethereum', undefined)).toBe(true);
-    expect(matchesUnstatedPayment('dfx', 'DFX.swiss', 'Ethereum', 'ZCHF')).toBe(true);
-    expect(matchesUnstatedPayment('dfx', 'DFX.swiss', 'Ethereum', 'BTC')).toBe(false);
-    expect(matchesUnstatedPayment('dfx', 'DFX.swiss', 'Polygon', 'ZCHF')).toBe(true);
-    expect(matchesUnstatedPayment('dfx', 'DFX.swiss', 'Arbitrum', 'AAVE')).toBe(false);
-    expect(matchesUnstatedPayment('dfx', 'DFX.swiss', 'Gnosis', 'xDAI')).toBe(false);
-    expect(matchesUnstatedPayment('dfx', 'DFX.swiss', 'Plasma', undefined)).toBe(false);
-    expect(matchesUnstatedPayment('dfx', 'DFX.swiss', 'BinancePay', undefined)).toBe(true);
-    expect(matchesUnstatedPayment('dfx', 'DFX.swiss', undefined, 'ckBTC')).toBe(true);
-    expect(matchesUnstatedPayment('dfx', 'DFX.swiss', undefined, 'AAAA')).toBe(false);
-    expect(matchesUnstatedPayment('dfx', 'DFX.swiss', 'Lightning', 'BTC')).toBe(true);
+  it('matches a payment filter from the tech provider alone', () => {
+    expect(matchesUnstatedPayment('DFX.swiss', undefined, undefined)).toBe(true);
+    expect(matchesUnstatedPayment('DFX.swiss', 'Ethereum', undefined)).toBe(true);
+    expect(matchesUnstatedPayment('DFX.swiss', 'Ethereum', 'ZCHF')).toBe(true);
+    expect(matchesUnstatedPayment('DFX.swiss', 'Ethereum', 'BTC')).toBe(false);
+    expect(matchesUnstatedPayment('DFX.swiss', 'Polygon', 'ZCHF')).toBe(true);
+    expect(matchesUnstatedPayment('DFX.swiss', 'Arbitrum', 'AAVE')).toBe(false);
+    expect(matchesUnstatedPayment('DFX.swiss', 'Gnosis', 'xDAI')).toBe(false);
+    expect(matchesUnstatedPayment('DFX.swiss', 'Plasma', undefined)).toBe(false);
+    expect(matchesUnstatedPayment('DFX.swiss', 'BinancePay', undefined)).toBe(true);
+    expect(matchesUnstatedPayment('DFX.swiss', undefined, 'ckBTC')).toBe(true);
+    expect(matchesUnstatedPayment('DFX.swiss', undefined, 'AAAA')).toBe(false);
+    expect(matchesUnstatedPayment('DFX.swiss', 'Lightning', 'BTC')).toBe(true);
 
-    expect(matchesUnstatedPayment('21gifts', 'DFX.swiss', 'Ethereum', undefined)).toBe(false);
-    expect(matchesUnstatedPayment('dfx', '21.gifts', 'Ethereum', undefined)).toBe(false);
-    expect(matchesUnstatedPayment('21gifts', '21.gifts', 'Lightning', undefined)).toBe(true);
-    expect(matchesUnstatedPayment('21gifts', '21.gifts', undefined, 'BTC')).toBe(true);
-    expect(matchesUnstatedPayment('21gifts', '21.gifts', 'Lightning', 'BTC')).toBe(true);
-    expect(matchesUnstatedPayment('21gifts', '21.gifts', 'Lightning', 'ZCHF')).toBe(false);
-    expect(matchesUnstatedPayment('21gifts', '21.gifts', undefined, 'ZCHF')).toBe(false);
-    expect(matchesUnstatedPayment('21gifts', '21.gifts', undefined, 'ckBTC')).toBe(false);
+    expect(matchesUnstatedPayment('21.gifts', 'Ethereum', undefined)).toBe(false);
+    expect(matchesUnstatedPayment('21.gifts', 'Lightning', undefined)).toBe(true);
+    expect(matchesUnstatedPayment('21.gifts', undefined, 'BTC')).toBe(true);
+    expect(matchesUnstatedPayment('21.gifts', 'Lightning', 'BTC')).toBe(true);
+    expect(matchesUnstatedPayment('21.gifts', 'Lightning', 'ZCHF')).toBe(false);
+    expect(matchesUnstatedPayment('21.gifts', undefined, 'ZCHF')).toBe(false);
+    expect(matchesUnstatedPayment('21.gifts', undefined, 'ckBTC')).toBe(false);
+    expect(matchesUnstatedPayment('Other', 'Ethereum', 'ZCHF')).toBe(false);
+    expect(matchesUnstatedPayment('Other', 'Lightning', 'BTC')).toBe(false);
   });
 
-  it('builds a stored-row predicate only when the catalog cannot match', () => {
+  it('builds a tech-provider predicate and never a stored-row predicate', () => {
     expect(unstatedPaymentSql()).toBeNull();
-    expect(unstatedPaymentSql('Plasma')).toBeNull();
-    expect(unstatedPaymentSql('Ethereum', 'BTC')).toBeNull();
-    expect(unstatedPaymentSql(undefined, 'AAAA')).toBeNull();
+
+    const none = unstatedPaymentSql('Plasma');
+    expect(none?.params).toEqual(['0', '0']);
+    expect(none?.sql).not.toContain('map_place_support');
+    expect(none?.sql).not.toContain('origin');
+    expect(unstatedPaymentSql('Ethereum', 'BTC')?.params).toEqual(['0', '0']);
+    expect(unstatedPaymentSql(undefined, 'AAAA')?.params).toEqual(['0', '0']);
 
     const chain = unstatedPaymentSql('Ethereum');
-    expect(chain?.params).toEqual(['Ethereum', '0', '1']);
-    expect(chain?.sql).toContain('NOT EXISTS');
+    expect(chain?.params).toEqual(['0', '1']);
     expect(chain?.sql).toContain("tech_provider = '21.gifts'");
-    expect(chain?.sql).toContain("origin = '21gifts'");
+    expect(chain?.sql).toContain("tech_provider = 'DFX.swiss'");
 
-    expect(unstatedPaymentSql('Lightning', 'BTC')?.params).toEqual(['Lightning', 'BTC', '1', '1']);
-    expect(unstatedPaymentSql(undefined, 'ckBTC')?.params).toEqual(['ckBTC', '0', '1']);
-    expect(unstatedPaymentSql(undefined, 'BTC')?.params).toEqual(['BTC', '1', '1']);
-    expect(unstatedPaymentSql('BinancePay')?.params).toEqual(['BinancePay', '0', '1']);
-    expect(unstatedPaymentSql('Ethereum', 'ZCHF')?.params).toEqual(['Ethereum', 'ZCHF', '0', '1']);
+    expect(unstatedPaymentSql('Lightning', 'BTC')?.params).toEqual(['1', '1']);
+    expect(unstatedPaymentSql(undefined, 'ckBTC')?.params).toEqual(['0', '1']);
+    expect(unstatedPaymentSql(undefined, 'BTC')?.params).toEqual(['1', '1']);
+    expect(unstatedPaymentSql('BinancePay')?.params).toEqual(['0', '1']);
+    expect(unstatedPaymentSql('Ethereum', 'ZCHF')?.params).toEqual(['0', '1']);
   });
 
   it('unions stored filter values with the catalog and keeps provider offers whole', () => {
@@ -145,34 +149,8 @@ describe('payment-link filter catalog', () => {
     });
   });
 
-  it('copies stored pairs, including a pair that is not in the catalog', () => {
-    const stored = [
-      { blockchain: 'Kraken', asset: 'BTC' },
-      { blockchain: 'Ethereum', asset: 'ZCHF' },
-    ];
-    expect(publicPlaceSupports('dfx', 'DFX.swiss', stored)).toEqual([
-      { blockchain: 'Kraken', asset: 'BTC' },
-      { blockchain: 'Ethereum', asset: 'ZCHF' },
-    ]);
-  });
-
-  it('does not let a mutated return change the next call with the same stored list', () => {
-    const stored = [{ blockchain: 'Kraken', asset: 'BTC' }];
-    const returned = publicPlaceSupports('dfx', 'DFX.swiss', stored);
-    const pair = returned[0];
-    if (pair === undefined) {
-      throw new Error('stored pair missing');
-    }
-    pair.asset = 'ETH';
-    returned.push({ blockchain: 'Ethereum', asset: 'ZCHF' });
-    expect(publicPlaceSupports('dfx', 'DFX.swiss', stored)).toEqual([
-      { blockchain: 'Kraken', asset: 'BTC' },
-    ]);
-    expect(stored).toEqual([{ blockchain: 'Kraken', asset: 'BTC' }]);
-  });
-
-  it('emits the DFX catalog, including ZCHF, when a DFX.swiss pin stores nothing', () => {
-    const supports = publicPlaceSupports('dfx', 'DFX.swiss', []);
+  it('emits the DFX catalog for DFX.swiss, including ZCHF', () => {
+    const supports = publicPlaceSupports('DFX.swiss');
     const dfx = publicFilterResponse({
       countries: [],
       blockchains: [],
@@ -183,18 +161,17 @@ describe('payment-link filter catalog', () => {
     }
     expect(supports).toContainEqual({ blockchain: 'Ethereum', asset: 'ZCHF' });
     expect(supports).toContainEqual({ blockchain: 'Polygon', asset: 'ZCHF' });
-    expect(supports).toHaveLength(dfx.pairs.length);
+    expect(supports).toEqual(dfx.pairs);
   });
 
-  it('emits only Lightning and BTC for origin 21gifts when the stored list is empty', () => {
-    expect(publicPlaceSupports('21gifts', 'DFX.swiss', [])).toEqual([
-      { blockchain: 'Lightning', asset: 'BTC' },
-    ]);
+  it('emits only Lightning and BTC for tech provider 21.gifts', () => {
+    expect(publicPlaceSupports('21.gifts')).toEqual([{ blockchain: 'Lightning', asset: 'BTC' }]);
   });
 
-  it('emits only Lightning and BTC for tech provider 21.gifts when the stored list is empty', () => {
-    expect(publicPlaceSupports('dfx', '21.gifts', [])).toEqual([
-      { blockchain: 'Lightning', asset: 'BTC' },
-    ]);
+  it('emits nothing for a tech provider outside the two offers', () => {
+    expect(publicPlaceSupports('Other')).toEqual([]);
+    const returned = publicPlaceSupports('DFX.swiss');
+    returned.pop();
+    expect(publicPlaceSupports('DFX.swiss').length).toBeGreaterThan(0);
   });
 });

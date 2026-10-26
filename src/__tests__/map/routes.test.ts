@@ -45,7 +45,7 @@ const publicPin = {
   houseNumber: '4',
   postalCode: '9495',
   city: 'Triesen',
-  supports: publicPlaceSupports('dfx', 'DFX.swiss', []),
+  supports: publicPlaceSupports('DFX.swiss'),
   activity: 'none',
   coverPhoto: null,
 };
@@ -481,7 +481,7 @@ describe('map routes', () => {
       houseNumber: '12',
       postalCode: '8001',
       city: 'Zürich',
-      supports: publicPlaceSupports('dfx', 'DFX.swiss', []),
+      supports: publicPlaceSupports('DFX.swiss'),
       activity: 'none',
       coverPhoto: null,
     });
@@ -505,7 +505,6 @@ describe('map routes', () => {
     expect(listed.places[0]).toEqual({
       id: createdBody.id,
       ...publicPin,
-      supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
     });
     const omittedCountry = await api.request('/map/places', {
       method: 'PUT',
@@ -561,7 +560,6 @@ describe('map routes', () => {
     expect(after.places[0]).toEqual({
       id: createdBody.id,
       ...publicPin,
-      supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
     });
     const again = await api.request('/map/places', {
       method: 'POST',
@@ -582,7 +580,6 @@ describe('map routes', () => {
     expect(afterInsert.places[0]).toEqual({
       id: createdBody.id,
       ...publicPin,
-      supports: [{ blockchain: 'Ethereum', asset: 'ZCHF' }],
     });
   });
 
@@ -610,7 +607,7 @@ describe('map routes', () => {
     expect(listed.places[0]).toEqual({
       id: createdBody.id,
       ...publicPin,
-      supports: publicPlaceSupports('dfx', 'DFX.swiss', []),
+      supports: publicPlaceSupports('DFX.swiss'),
     });
   });
 
@@ -812,7 +809,7 @@ describe('map routes', () => {
     });
   });
 
-  it('does not treat blockchain and asset on different support rows as one pair', async () => {
+  it('lists a DFX.swiss pin for a catalog pair even when stored rows differ', async () => {
     const api = app({ token: 'secret' });
     const created = await api.request('/map/places', {
       method: 'POST',
@@ -830,7 +827,7 @@ describe('map routes', () => {
     const mismatch = await api.request('/map/places?blockchain=Ethereum&asset=ZCHF');
     expect(mismatch.status).toBe(200);
     const mismatchJson = (await mismatch.json()) as { places: unknown[] };
-    expect(mismatchJson.places).toHaveLength(0);
+    expect(mismatchJson.places).toHaveLength(1);
     const eth = await api.request('/map/places?blockchain=Ethereum&asset=ETH');
     expect(eth.status).toBe(200);
     const ethJson = (await eth.json()) as { places: Array<{ name: string }> };
@@ -860,7 +857,7 @@ describe('map routes', () => {
       places: Array<{ supports: Array<{ blockchain: string; asset: string }> }>;
     };
     expect(json.places).toHaveLength(1);
-    expect(json.places[0]?.supports).toEqual([{ blockchain: 'Ethereum', asset: 'dEURO' }]);
+    expect(json.places[0]?.supports).toEqual(publicPlaceSupports('DFX.swiss'));
   });
 
   it('returns GET /map/filters from stored rows and rejects a bad blockchain', async () => {
