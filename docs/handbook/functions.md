@@ -44,7 +44,7 @@
 
 ## Function: matchesUnstatedPayment
 
-- **Purpose:** Decide whether a tech provider's offer includes a blockchain or asset filter. `21.gifts` matches Lightning/BTC, Spark/BTC, and its USDT and USDC pairs, including a chain or asset that appears in one of those pairs. `DFX.swiss` matches a catalog network, a catalog asset, or a catalog pair. Any other provider matches none. Origin is not an input. An omitted filter matches.
+- **Purpose:** Decide whether a tech provider's offer includes a blockchain or asset filter. `21.gifts` matches Lightning/BTC, Spark/BTC, and its USDT and USDC pairs, including a chain or asset that appears in one of those pairs. `DFX.swiss` matches a chain from its pairs, a catalog asset, or a catalog pair. Gnosis and Zano stay catalog networks and do not match, because they have no pair. Any other provider matches none. Origin is not an input. An omitted filter matches.
 - **Inputs:** Stored tech provider, and the optional blockchain and asset from the query.
 - **Returns / side effects:** True when the pin stays in the list. No I/O.
 - **Used by:** `MemoryMapPlaceStore.list`. The SQLite driver uses `unstatedPaymentSql` for the same rule.
