@@ -643,7 +643,7 @@ test('Function: SqliteMapPlaceStore — limit is applied after the country filte
   expect(chJson.places[0]?.name).toBe('Limit Older CH');
 });
 
-test('Function: SqliteMapPlaceStore — delete removes the pin and its support from filters', async ({
+test('Function: SqliteMapPlaceStore — deleting a pin leaves the offer filter', async ({
   request,
 }) => {
   const pin = completePlace({
@@ -684,7 +684,7 @@ test('Function: SqliteMapPlaceStore — delete removes the pin and its support f
     assets: string[];
   };
   expect(filterJson.blockchains).toContain('Plasma');
-  expect(filterJson.assets).toContain('ONDO');
+  expect(filterJson.assets).not.toContain('ONDO');
 
   const deleted = await request.delete('/map/places', {
     headers: { Authorization: 'Bearer e2e-ingest' },
@@ -701,10 +701,12 @@ test('Function: SqliteMapPlaceStore — delete removes the pin and its support f
     blockchains: string[];
     assets: string[];
   };
-  expect(afterFilterJson.blockchains).not.toContain('Plasma');
+  expect(afterFilterJson.blockchains).toContain('Plasma');
+  expect(afterFilterJson.assets).not.toContain('ONDO');
   const plasmaFilters = await request.get('/map/filters?blockchain=Plasma');
   expect(plasmaFilters.status()).toBe(200);
   const plasmaJson = (await plasmaFilters.json()) as { assets: string[] };
+  expect(plasmaJson.assets).toContain('USDT');
   expect(plasmaJson.assets).not.toContain('ONDO');
 
   const afterDelete = (await (await request.get('/map/places')).json()) as {
@@ -911,7 +913,11 @@ test('Function: publicFilterResponse — filters include the payment-link catalo
   ]);
   expect(json.blockchains).toContain('Lightning');
   expect(json.blockchains).toContain('BinancePay');
+  expect(json.blockchains).toContain('Plasma');
+  expect(json.blockchains).toContain('Arc');
   expect(json.blockchains).not.toContain('Sepolia');
+  expect(json.blockchains).not.toContain('Gnosis');
+  expect(json.blockchains).not.toContain('Zano');
   expect(json.assets).toContain('ckBTC');
   expect(json.assets).not.toContain('USDC.e');
   expect(json.assets).not.toContain('USDbC');
@@ -921,6 +927,8 @@ test('Function: publicFilterResponse — filters include the payment-link catalo
   expect(dfx?.pairs).toContainEqual({ blockchain: 'Polygon', asset: 'ZCHF' });
   expect(dfx?.pairs).not.toContainEqual({ blockchain: 'Ethereum', asset: 'BTC' });
   expect(dfx?.blockchains).not.toContain('Plasma');
+  expect(dfx?.blockchains).not.toContain('Gnosis');
+  expect(dfx?.blockchains).not.toContain('Zano');
   expect(gifts?.name).toBe('21.gifts');
   expect(gifts?.pairs).toEqual(publicPlaceSupports('21.gifts'));
   expect(gifts?.pairs).toContainEqual({ blockchain: 'Lightning', asset: 'BTC' });
@@ -935,6 +943,7 @@ test('Function: publicFilterResponse — filters include the payment-link catalo
     activities: string[];
   };
   expect(ethereumJson.assets).toContain('ZCHF');
+  expect(ethereumJson.assets).toContain('USDT');
   expect(ethereumJson.assets).not.toContain('BTC');
   expect(ethereumJson.blockchains).toContain('Polygon');
   expect(ethereumJson.activities).toEqual([

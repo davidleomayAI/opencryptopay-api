@@ -46,6 +46,8 @@ describe('payment-link filter catalog', () => {
     expect(matchesUnstatedPayment('DFX.swiss', 'Polygon', 'ZCHF')).toBe(true);
     expect(matchesUnstatedPayment('DFX.swiss', 'Arbitrum', 'AAVE')).toBe(false);
     expect(matchesUnstatedPayment('DFX.swiss', 'Gnosis', 'xDAI')).toBe(false);
+    expect(matchesUnstatedPayment('DFX.swiss', 'Gnosis', undefined)).toBe(false);
+    expect(matchesUnstatedPayment('DFX.swiss', 'Zano', undefined)).toBe(false);
     expect(matchesUnstatedPayment('DFX.swiss', 'Plasma', undefined)).toBe(false);
     expect(matchesUnstatedPayment('DFX.swiss', 'BinancePay', undefined)).toBe(true);
     expect(matchesUnstatedPayment('DFX.swiss', undefined, 'ckBTC')).toBe(true);
@@ -84,6 +86,8 @@ describe('payment-link filter catalog', () => {
     expect(none?.sql).not.toContain('origin');
     expect(unstatedPaymentSql('Ethereum', 'BTC')?.params).toEqual(['0', '0']);
     expect(unstatedPaymentSql(undefined, 'AAAA')?.params).toEqual(['0', '0']);
+    expect(unstatedPaymentSql('Gnosis')?.params).toEqual(['0', '0']);
+    expect(unstatedPaymentSql('Zano')?.params).toEqual(['0', '0']);
     expect(unstatedPaymentSql('Plasma')?.params).toEqual(['1', '0']);
     expect(unstatedPaymentSql('Plasma', 'USDT')?.params).toEqual(['1', '0']);
     expect(unstatedPaymentSql('Arc', 'USDC')?.params).toEqual(['1', '0']);
@@ -103,7 +107,7 @@ describe('payment-link filter catalog', () => {
     expect(unstatedPaymentSql('Bitcoin')?.params).toEqual(['0', '1']);
   });
 
-  it('unions stored filter values with the catalog and keeps provider offers whole', () => {
+  it('builds filter lists from the two offers and keeps provider offers whole', () => {
     const merged = publicFilterResponse({
       countries: ['CH'],
       blockchains: ['Plasma'],
@@ -120,12 +124,18 @@ describe('payment-link filter catalog', () => {
       'none',
     ]);
     expect(merged.countries).toEqual(['CH']);
+    const offered = publicFilterResponse({ countries: [], blockchains: [], assets: [] });
+    expect(offered.blockchains).toContain('Plasma');
+    expect(offered.assets).not.toContain('ONDO');
     expect(merged.blockchains).toContain('Plasma');
+    expect(merged.blockchains).toContain('Arc');
     expect(merged.blockchains).toContain('Lightning');
     expect(merged.blockchains).not.toContain('Sepolia');
+    expect(merged.blockchains).not.toContain('Gnosis');
+    expect(merged.blockchains).not.toContain('Zano');
     expect(merged.blockchains[0]).toBe('Arbitrum');
     expect(merged.assets.filter((asset) => asset === 'ZCHF')).toHaveLength(1);
-    expect(merged.assets).toContain('ONDO');
+    expect(merged.assets).not.toContain('ONDO');
     expect(merged.assets).toContain('BTC');
     expect(merged.assets).toContain('ckBTC');
 
@@ -133,8 +143,9 @@ describe('payment-link filter catalog', () => {
       { countries: [], blockchains: ['Plasma', 'Ethereum'], assets: ['AAAA'] },
       'Ethereum',
     );
-    expect(ethereum.assets).toContain('AAAA');
+    expect(ethereum.assets).not.toContain('AAAA');
     expect(ethereum.assets).toContain('ZCHF');
+    expect(ethereum.assets).toContain('USDT');
     expect(ethereum.assets).not.toContain('ONDO');
     expect(ethereum.assets).not.toContain('BTC');
     expect(ethereum.blockchains).toContain('Plasma');
@@ -144,14 +155,15 @@ describe('payment-link filter catalog', () => {
       { countries: [], blockchains: ['Plasma'], assets: ['ONDO'] },
       'Plasma',
     );
-    expect(plasma.assets).toEqual(['ONDO']);
+    expect(plasma.assets).toEqual(['USDT']);
 
     const dfx = merged.techProviders.find((provider) => provider.name === 'DFX.swiss');
     const gifts = merged.techProviders.find((provider) => provider.name === '21.gifts');
     expect(dfx?.blockchains).not.toContain('Plasma');
     expect(dfx?.blockchains).not.toContain('Sepolia');
     expect(dfx?.blockchains).toContain('BinancePay');
-    expect(dfx?.blockchains).toContain('Zano');
+    expect(dfx?.blockchains).not.toContain('Zano');
+    expect(dfx?.blockchains).not.toContain('Gnosis');
     expect(dfx?.assets).not.toContain('XPL');
     expect(dfx?.pairs).toContainEqual({ blockchain: 'Ethereum', asset: 'ZCHF' });
     expect(dfx?.pairs).toContainEqual({ blockchain: 'Polygon', asset: 'ZCHF' });

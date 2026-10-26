@@ -123,6 +123,7 @@ const GIFTS_PAIRS: readonly { blockchain: string; asset: string }[] = [
 ];
 
 const CHAIN_SET: ReadonlySet<string> = new Set(DFX_BLOCKCHAINS);
+const DFX_CHAIN_SET: ReadonlySet<string> = new Set(DFX_PAIRS.map((pair) => pair.blockchain));
 const GIFTS_CHAIN_SET: ReadonlySet<string> = new Set(GIFTS_PAIRS.map((pair) => pair.blockchain));
 const GIFTS_ASSET_SET: ReadonlySet<string> = new Set(GIFTS_PAIRS.map((pair) => pair.asset));
 const GIFTS_PAIR_KEYS: ReadonlySet<string> = new Set(
@@ -171,7 +172,7 @@ function offerFlags(
   if (blockchain !== undefined && asset !== undefined) {
     dfx = PAIR_KEYS.has(`${blockchain}\0${asset}`);
   } else if (blockchain !== undefined) {
-    dfx = CHAIN_SET.has(blockchain);
+    dfx = DFX_CHAIN_SET.has(blockchain);
   } else if (asset !== undefined) {
     dfx = ASSET_SET.has(asset);
   }
@@ -179,16 +180,18 @@ function offerFlags(
 }
 
 function assetsFor(blockchain: string | undefined): string[] {
-  if (blockchain === undefined) {
-    return [...ASSET_SET];
-  }
   const values: string[] = [];
   for (const pair of DFX_PAIRS) {
-    if (pair.blockchain === blockchain) {
+    if (blockchain === undefined || pair.blockchain === blockchain) {
       values.push(pair.asset);
     }
   }
-  return values;
+  for (const pair of GIFTS_PAIRS) {
+    if (blockchain === undefined || pair.blockchain === blockchain) {
+      values.push(pair.asset);
+    }
+  }
+  return uniqueSorted(values);
 }
 
 /**
@@ -262,10 +265,12 @@ export function unstatedPaymentSql(
 }
 
 /**
- * Public filter payload: stored values plus the hardcoded payment-link offer.
+ * Public filter payload. Countries come from stored public rows.
+ * Blockchains and assets are the two tech-provider offers.
+ * Stored support rows are not included.
  *
- * @param stored - Distinct countries, blockchains, and assets already stored.
- * @param blockchain - When set, top-level assets are limited to that network.
+ * @param stored - Distinct countries of public rows. Stored blockchains and assets are ignored.
+ * @param blockchain - When set, top-level assets are the pairs of that chain from both offers.
  * @returns Shop-type tokens, the deprecated shop-name alias, countries, networks, assets, every activity value, and per-provider offers.
  */
 export function publicFilterResponse(
@@ -276,13 +281,16 @@ export function publicFilterResponse(
     shopTypes: ['SPAR', 'Others'],
     shopNames: ['SPAR', 'others'],
     countries: stored.countries,
-    blockchains: uniqueSorted([...DFX_BLOCKCHAINS, ...stored.blockchains]),
-    assets: uniqueSorted([...assetsFor(blockchain), ...stored.assets]),
+    blockchains: uniqueSorted([
+      ...DFX_PAIRS.map((pair) => pair.blockchain),
+      ...GIFTS_PAIRS.map((pair) => pair.blockchain),
+    ]),
+    assets: assetsFor(blockchain),
     activities: PLACE_ACTIVITIES,
     techProviders: [
       {
         name: 'DFX.swiss',
-        blockchains: [...DFX_BLOCKCHAINS],
+        blockchains: uniqueSorted(DFX_PAIRS.map((pair) => pair.blockchain)),
         assets: [...ASSET_SET].sort(),
         pairs: DFX_PAIRS.map((pair) => ({ blockchain: pair.blockchain, asset: pair.asset })),
       },
