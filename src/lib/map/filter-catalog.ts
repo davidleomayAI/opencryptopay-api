@@ -3,14 +3,13 @@
  * Networks are those offered for payment links, without test networks and
  * without Plasma. Assets are the payment-enabled names on those networks,
  * not the sellable names.
- * 21.gifts is Lightning and BTC only. Replace this module when the offer
- * is read from the payment service.
+ * 21.gifts is Lightning/BTC, Spark/BTC, and every USDT and USDC pair from
+ * Flashnet Orchestra. Chain `bsc` is `BinanceSmartChain`. Replace this
+ * module when the offer is read from the payment service.
  */
 
 const GIFTS_TECH_PROVIDER = '21.gifts';
 const DFX_TECH_PROVIDER = 'DFX.swiss';
-const GIFTS_BLOCKCHAIN = 'Lightning';
-const GIFTS_ASSET = 'BTC';
 
 /** Every activity a place can have, in filter order. Not limited to stored rows. */
 export const PLACE_ACTIVITIES = [
@@ -91,7 +90,44 @@ const DFX_PAIRS: readonly { blockchain: string; asset: string }[] = [
   { blockchain: 'Tron', asset: 'USDT' },
 ];
 
+/**
+ * 21.gifts offer. Lightning/BTC, Spark/BTC, and the USDT and USDC assets
+ * on the Flashnet Orchestra route catalog. Not USDC.e, USDB, or Bitcoin L1.
+ */
+const GIFTS_PAIRS: readonly { blockchain: string; asset: string }[] = [
+  { blockchain: 'Arbitrum', asset: 'USDC' },
+  { blockchain: 'Arbitrum', asset: 'USDT' },
+  { blockchain: 'Arc', asset: 'USDC' },
+  { blockchain: 'Avalanche', asset: 'USDC' },
+  { blockchain: 'Base', asset: 'USDC' },
+  { blockchain: 'Base', asset: 'USDT' },
+  { blockchain: 'BinanceSmartChain', asset: 'USDC' },
+  { blockchain: 'BinanceSmartChain', asset: 'USDT' },
+  { blockchain: 'Ethereum', asset: 'USDC' },
+  { blockchain: 'Ethereum', asset: 'USDT' },
+  { blockchain: 'HyperCore', asset: 'USDC' },
+  { blockchain: 'HyperEVM', asset: 'USDC' },
+  { blockchain: 'Lightning', asset: 'BTC' },
+  { blockchain: 'Monad', asset: 'USDC' },
+  { blockchain: 'Optimism', asset: 'USDC' },
+  { blockchain: 'Optimism', asset: 'USDT' },
+  { blockchain: 'Plasma', asset: 'USDT' },
+  { blockchain: 'Polygon', asset: 'USDC' },
+  { blockchain: 'Polygon', asset: 'USDT' },
+  { blockchain: 'Sei', asset: 'USDC' },
+  { blockchain: 'Solana', asset: 'USDC' },
+  { blockchain: 'Solana', asset: 'USDT' },
+  { blockchain: 'Spark', asset: 'BTC' },
+  { blockchain: 'Tempo', asset: 'USDC' },
+  { blockchain: 'Tron', asset: 'USDT' },
+];
+
 const CHAIN_SET: ReadonlySet<string> = new Set(DFX_BLOCKCHAINS);
+const GIFTS_CHAIN_SET: ReadonlySet<string> = new Set(GIFTS_PAIRS.map((pair) => pair.blockchain));
+const GIFTS_ASSET_SET: ReadonlySet<string> = new Set(GIFTS_PAIRS.map((pair) => pair.asset));
+const GIFTS_PAIR_KEYS: ReadonlySet<string> = new Set(
+  GIFTS_PAIRS.map((pair) => `${pair.blockchain}\0${pair.asset}`),
+);
 const ASSET_SET: ReadonlySet<string> = new Set(DFX_PAIRS.map((pair) => pair.asset));
 const PAIR_KEYS: ReadonlySet<string> = new Set(
   DFX_PAIRS.map((pair) => `${pair.blockchain}\0${pair.asset}`),
@@ -123,10 +159,14 @@ function offerFlags(
   blockchain: string | undefined,
   asset: string | undefined,
 ): { gifts: boolean; dfx: boolean } {
-  const gifts =
-    (blockchain === undefined || blockchain === GIFTS_BLOCKCHAIN) &&
-    (asset === undefined || asset === GIFTS_ASSET) &&
-    (blockchain !== undefined || asset !== undefined);
+  let gifts = false;
+  if (blockchain !== undefined && asset !== undefined) {
+    gifts = GIFTS_PAIR_KEYS.has(`${blockchain}\0${asset}`);
+  } else if (blockchain !== undefined) {
+    gifts = GIFTS_CHAIN_SET.has(blockchain);
+  } else if (asset !== undefined) {
+    gifts = GIFTS_ASSET_SET.has(asset);
+  }
   let dfx = false;
   if (blockchain !== undefined && asset !== undefined) {
     dfx = PAIR_KEYS.has(`${blockchain}\0${asset}`);
@@ -248,9 +288,9 @@ export function publicFilterResponse(
       },
       {
         name: GIFTS_TECH_PROVIDER,
-        blockchains: [GIFTS_BLOCKCHAIN],
-        assets: [GIFTS_ASSET],
-        pairs: [{ blockchain: GIFTS_BLOCKCHAIN, asset: GIFTS_ASSET }],
+        blockchains: uniqueSorted(GIFTS_PAIRS.map((pair) => pair.blockchain)),
+        assets: uniqueSorted(GIFTS_PAIRS.map((pair) => pair.asset)),
+        pairs: GIFTS_PAIRS.map((pair) => ({ blockchain: pair.blockchain, asset: pair.asset })),
       },
     ],
   };
@@ -260,7 +300,8 @@ export function publicFilterResponse(
  * Public support pairs for one pin. The tech provider is the whole rule.
  *
  * DFX.swiss is the DFX catalog, including ZCHF on Ethereum and Polygon.
- * 21.gifts is Lightning and BTC. Any other provider is an empty list.
+ * 21.gifts is Lightning/BTC, Spark/BTC, and its USDT and USDC pairs.
+ * Any other provider is an empty list.
  * Origin and stored support rows are not inputs.
  *
  * @param techProvider - Stored tech provider.
@@ -268,7 +309,7 @@ export function publicFilterResponse(
  */
 export function publicPlaceSupports(techProvider: string): { blockchain: string; asset: string }[] {
   if (techProvider === GIFTS_TECH_PROVIDER) {
-    return [{ blockchain: GIFTS_BLOCKCHAIN, asset: GIFTS_ASSET }];
+    return GIFTS_PAIRS.map((pair) => ({ blockchain: pair.blockchain, asset: pair.asset }));
   }
   if (techProvider === DFX_TECH_PROVIDER) {
     return DFX_PAIRS.map((pair) => ({ blockchain: pair.blockchain, asset: pair.asset }));

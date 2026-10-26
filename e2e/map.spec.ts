@@ -767,7 +767,7 @@ test('Function: unstatedPaymentSql — a pin without supports uses the payment-l
   };
 
   expect(await names('blockchain=Ethereum')).toContain('Catalog DFX Pin');
-  expect(await names('blockchain=Ethereum')).not.toContain('Catalog Gifts Pin');
+  expect(await names('blockchain=Ethereum')).toContain('Catalog Gifts Pin');
   expect(await names('blockchain=Lightning&asset=BTC')).toEqual(
     expect.arrayContaining(['Catalog DFX Pin', 'Catalog Gifts Pin']),
   );
@@ -780,6 +780,11 @@ test('Function: unstatedPaymentSql — a pin without supports uses the payment-l
   expect(await names('asset=dEURO')).toContain('Catalog DFX Pin');
   expect(await names('asset=LINK')).not.toContain('Catalog DFX Pin');
   expect(await names('blockchain=Plasma')).not.toContain('Catalog DFX Pin');
+  expect(await names('blockchain=Plasma&asset=USDT')).toContain('Catalog Gifts Pin');
+  expect(await names('blockchain=Arc&asset=USDC')).toContain('Catalog Gifts Pin');
+  expect(await names('blockchain=Arc&asset=USDC')).not.toContain('Catalog DFX Pin');
+  expect(await names('blockchain=Bitcoin')).not.toContain('Catalog Gifts Pin');
+  expect(await names('blockchain=Spark&asset=BTC')).toContain('Catalog Gifts Pin');
   expect(await names('shopName=others')).toContain('Catalog Gifts Pin');
   expect(await names('shopType=SPAR')).toContain('Catalog DFX Pin');
   expect(await names('shopType=SPAR')).not.toContain('Catalog Gifts Pin');
@@ -866,7 +871,7 @@ test('Function: publicPlaceSupports — the tech provider offer is the public li
   expect(statedRow?.supports).toEqual(publicPlaceSupports('DFX.swiss'));
 });
 
-test('Function: matchesUnstatedPayment — 21.gifts stays on Lightning and BTC', async ({
+test('Function: matchesUnstatedPayment — 21.gifts follows its own offer', async ({
   request,
 }) => {
   const listed = await request.get('/map/places?blockchain=Lightning&asset=BTC');
@@ -918,12 +923,12 @@ test('Function: publicFilterResponse — filters include the payment-link catalo
   expect(dfx?.pairs).toContainEqual({ blockchain: 'Polygon', asset: 'ZCHF' });
   expect(dfx?.pairs).not.toContainEqual({ blockchain: 'Ethereum', asset: 'BTC' });
   expect(dfx?.blockchains).not.toContain('Plasma');
-  expect(gifts).toEqual({
-    name: '21.gifts',
-    blockchains: ['Lightning'],
-    assets: ['BTC'],
-    pairs: [{ blockchain: 'Lightning', asset: 'BTC' }],
-  });
+  expect(gifts?.name).toBe('21.gifts');
+  expect(gifts?.pairs).toEqual(publicPlaceSupports('21.gifts'));
+  expect(gifts?.pairs).toContainEqual({ blockchain: 'Lightning', asset: 'BTC' });
+  expect(gifts?.pairs).toContainEqual({ blockchain: 'Spark', asset: 'BTC' });
+  expect(gifts?.pairs).toContainEqual({ blockchain: 'Ethereum', asset: 'USDT' });
+  expect(gifts?.pairs).not.toContainEqual({ blockchain: 'Bitcoin', asset: 'BTC' });
   const ethereum = await request.get('/map/filters?blockchain=Ethereum');
   expect(ethereum.status()).toBe(200);
   const ethereumJson = (await ethereum.json()) as {

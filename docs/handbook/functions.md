@@ -44,28 +44,28 @@
 
 ## Function: matchesUnstatedPayment
 
-- **Purpose:** Decide whether a tech provider's offer includes a blockchain or asset filter. `21.gifts` matches Lightning and BTC only. `DFX.swiss` matches a catalog network, a catalog asset, or a catalog pair. Any other provider matches none. Origin is not an input. An omitted filter matches.
+- **Purpose:** Decide whether a tech provider's offer includes a blockchain or asset filter. `21.gifts` matches Lightning/BTC, Spark/BTC, and its USDT and USDC pairs, including a chain or asset that appears in one of those pairs. `DFX.swiss` matches a catalog network, a catalog asset, or a catalog pair. Any other provider matches none. Origin is not an input. An omitted filter matches.
 - **Inputs:** Stored tech provider, and the optional blockchain and asset from the query.
 - **Returns / side effects:** True when the pin stays in the list. No I/O.
 - **Used by:** `MemoryMapPlaceStore.list`. The SQLite driver uses `unstatedPaymentSql` for the same rule.
 
 ## Function: unstatedPaymentSql
 
-- **Purpose:** Build the SQLite predicate for a blockchain or asset filter from `tech_provider` alone. `21.gifts` matches Lightning and BTC. `DFX.swiss` matches the DFX catalog. A request outside both offers matches no pin. Origin and stored support rows are not part of the predicate. No network and no asset returns null.
+- **Purpose:** Build the SQLite predicate for a blockchain or asset filter from `tech_provider` alone. `21.gifts` matches Lightning/BTC, Spark/BTC, and its USDT and USDC pairs. `DFX.swiss` matches the DFX catalog. A request outside both offers matches no pin. Origin and stored support rows are not part of the predicate. No network and no asset returns null.
 - **Inputs:** Optional blockchain and asset query values.
 - **Returns / side effects:** A parenthesised SQL fragment and its bound parameters, or null. No I/O.
 - **Used by:** `SqliteMapPlaceStore.list`.
 
 ## Function: publicFilterResponse
 
-- **Purpose:** Merge distinct stored filter values with the hardcoded payment-link catalog for `GET /map/filters`. `shopTypes` is always `["SPAR", "Others"]`. `shopNames` is the deprecated one-release alias `["SPAR", "others"]` and is removed in the release after the rollout. `?blockchain=` limits the top-level asset list. `techProviders` always contains the full `DFX.swiss` offer and the `21.gifts` offer of Lightning and BTC.
+- **Purpose:** Merge distinct stored filter values with the hardcoded payment-link catalog for `GET /map/filters`. `shopTypes` is always `["SPAR", "Others"]`. `shopNames` is the deprecated one-release alias `["SPAR", "others"]` and is removed in the release after the rollout. `?blockchain=` limits the top-level asset list. `techProviders` always contains the full `DFX.swiss` offer and the `21.gifts` offer of Lightning/BTC, Spark/BTC, and its USDT and USDC pairs.
 - **Inputs:** Stored countries, blockchains, and assets, plus an optional blockchain query.
 - **Returns / side effects:** `{ shopTypes, shopNames, countries, blockchains, assets, activities, techProviders }`. `activities` is always `daily`, `within7Days`, `within30Days`, `olderThan30Days`, `none`, including when `?blockchain=` limits the asset list. No I/O.
 - **Used by:** `mapRoutes` on `GET /map/filters`.
 
 ## Function: publicPlaceSupports
 
-- **Purpose:** Return the public support pairs of one pin from its tech provider alone. `DFX.swiss` is the DFX catalog, including ZCHF on Ethereum and Polygon. `21.gifts` is Lightning and BTC. Any other provider is an empty list. Origin and stored support rows are not inputs.
+- **Purpose:** Return the public support pairs of one pin from its tech provider alone. `DFX.swiss` is the DFX catalog, including ZCHF on Ethereum and Polygon. `21.gifts` is Lightning/BTC, Spark/BTC, and every USDT and USDC pair from Flashnet Orchestra. Any other provider is an empty list. Origin and stored support rows are not inputs.
 - **Inputs:** The stored tech provider.
 - **Returns / side effects:** A new array of `{ blockchain, asset }`. Mutating it does not change the next call. No I/O.
 - **Used by:** `toPublicMapPlace`.

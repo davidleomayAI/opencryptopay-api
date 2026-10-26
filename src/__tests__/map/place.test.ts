@@ -869,6 +869,11 @@ describe('normalizeMapPlaceFilter', () => {
       ok: false,
       error: 'Place support is invalid',
     });
+    for (const pair of publicPlaceSupports('21.gifts')) {
+      expect(
+        normalizeMapPlaceFilter(undefined, undefined, undefined, pair.blockchain, pair.asset).ok,
+      ).toBe(true);
+    }
   });
 });
 

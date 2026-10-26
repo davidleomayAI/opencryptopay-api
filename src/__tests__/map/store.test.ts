@@ -269,7 +269,8 @@ describe('MemoryMapPlaceStore', () => {
       store.list(10, filter).map((row) => row.externalId);
 
     const dfxIds = ['dfx-open', 'origin-only', 'stated'];
-    expect(ids({ blockchain: 'Ethereum' }).sort()).toEqual(dfxIds);
+    const bothIds = ['dfx-open', 'gifts-open', 'label-only', 'origin-only', 'stated'];
+    expect(ids({ blockchain: 'Ethereum' }).sort()).toEqual(bothIds);
     expect(ids({ blockchain: 'Lightning', asset: 'BTC' }).sort()).toEqual([
       'dfx-open',
       'gifts-open',
@@ -278,7 +279,9 @@ describe('MemoryMapPlaceStore', () => {
       'stated',
     ]);
     expect(ids({ blockchain: 'Ethereum', asset: 'BTC' })).toEqual([]);
-    expect(ids({ blockchain: 'Plasma' })).toEqual([]);
+    expect(ids({ blockchain: 'Ethereum', asset: 'USDT' }).sort()).toEqual(bothIds);
+    expect(ids({ blockchain: 'Plasma' }).sort()).toEqual(['gifts-open', 'label-only']);
+    expect(ids({ blockchain: 'Arc', asset: 'USDC' }).sort()).toEqual(['gifts-open', 'label-only']);
     expect(ids({ blockchain: 'BinancePay' }).sort()).toEqual(dfxIds);
     expect(ids({ asset: 'ckBTC' }).sort()).toEqual(dfxIds);
     expect(ids({ blockchain: 'Bitcoin' }).sort()).toEqual(dfxIds);
