@@ -321,6 +321,7 @@ describe('admin routes', () => {
         'createdAt',
         'description',
         'externalId',
+        'googleMapsUrl',
         'houseNumber',
         'id',
         'lastTransactionAt',
