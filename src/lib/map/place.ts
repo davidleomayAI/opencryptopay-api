@@ -833,9 +833,9 @@ function normalizeNostrPubkey(
 
 /**
  * A Google Maps https link. The caller trims. No whitespace, no backslash, no
- * userinfo, no port, at most 2000 characters. The host follows `https://`
- * directly. The host is exactly `www.google.com`, `google.com`,
- * `maps.google.com`, or `maps.app.goo.gl`. The first three need the path
+ * control or format character, no userinfo, no port, at most 2000 characters.
+ * The host follows `https://` directly. The host is exactly `www.google.com`,
+ * `google.com`, `maps.google.com`, or `maps.app.goo.gl`. The first three need the path
  * `/maps` or a path that starts with `/maps/`. `maps.app.goo.gl` needs a path
  * longer than `/`. Query and hash stay.
  *
@@ -843,7 +843,7 @@ function normalizeNostrPubkey(
  * @returns True when the link may be stored.
  */
 export function isGoogleMapsUrl(value: string): boolean {
-  if (/[\s\\]/u.test(value)) {
+  if (/[\s\\\p{Cc}\p{Cf}]/u.test(value)) {
     return false;
   }
   if (value.length < 1 || value.length > 2000) {

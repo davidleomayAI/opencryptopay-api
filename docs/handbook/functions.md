@@ -93,7 +93,7 @@
 
 ## Function: isGoogleMapsUrl
 
-- **Purpose:** Decide whether a trimmed string is a Google Maps https link that a place write may store. The string is at most 2000 characters, has no whitespace and no backslash, uses `https`, has the host directly after `https://` (no extra slash), and has no userinfo and no port. The host is exactly `www.google.com`, `google.com`, `maps.google.com`, or `maps.app.goo.gl`. The first three need the path `/maps` or a path that starts with `/maps/`. `maps.app.goo.gl` needs a path longer than `/`. Query and hash stay. The caller trims; this check does not.
+- **Purpose:** Decide whether a trimmed string is a Google Maps https link that a place write may store. The string is at most 2000 characters, has no whitespace, no backslash, and no control or format character (Unicode `Cc` or `Cf`, such as NUL, DEL, or a zero-width space), uses `https`, has the host directly after `https://` (no extra slash), and has no userinfo and no port. The host is exactly `www.google.com`, `google.com`, `maps.google.com`, or `maps.app.goo.gl`. The first three need the path `/maps` or a path that starts with `/maps/`. `maps.app.goo.gl` needs a path longer than `/`. Query and hash stay. The caller trims; this check does not.
 - **Inputs:** A trimmed string.
 - **Returns / side effects:** True or false. No I/O.
 - **Used by:** `normalizeMapPlace` and `SqliteMapPlaceStore` when it seeds links on the open that adds `google_maps_url`.
