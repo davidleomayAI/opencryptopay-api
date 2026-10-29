@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { publicPlaceSupports } from '@/lib/map/filter-catalog';
+import googleMapsSeed from '@/lib/map/google-maps-seed.json' with { type: 'json' };
+import { npubDecode } from '@/lib/map/nostr-key';
 import {
+  isGoogleMapsUrl,
   normalizeMapPlace,
   normalizeMapPlaceDelete,
   normalizeMapPlaceFilter,
@@ -1437,5 +1440,17 @@ describe('normalizeMapPlaceDelete', () => {
       ok: false,
       error: 'Place revision is invalid',
     });
+  });
+});
+
+describe('google maps seed', () => {
+  it('holds one valid link for each distinct place key', () => {
+    const keys = new Set<string>();
+    for (const entry of googleMapsSeed) {
+      expect(npubDecode(entry.npub)).not.toBeNull();
+      expect(isGoogleMapsUrl(entry.googleMapsUrl)).toBe(true);
+      keys.add(entry.npub);
+    }
+    expect(keys.size).toBe(googleMapsSeed.length);
   });
 });
