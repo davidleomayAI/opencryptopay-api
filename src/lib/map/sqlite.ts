@@ -338,7 +338,6 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
       .map((part) => part.trim())
       .filter((part) => part !== '');
     let addedActivity = false;
-    let addedGoogleMapsUrl = false;
     for (const [index, sql] of statements.entries()) {
       this.#db.exec(sql);
       if (index === 0) {
@@ -388,16 +387,16 @@ export class SqliteMapPlaceStore implements MapPlaceStore {
           this.#db.exec('ALTER TABLE map_place ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
         }
         if (!columns.some((column) => column.name === 'google_maps_url')) {
-          this.#db.exec('ALTER TABLE map_place ADD COLUMN google_maps_url TEXT');
-          addedGoogleMapsUrl = true;
+          // The column marks the seed as done, so both commit together or not at all.
+          this.#db.transaction(() => {
+            this.#db.exec('ALTER TABLE map_place ADD COLUMN google_maps_url TEXT');
+            seedGoogleMapsUrls(this.#db);
+          })();
         }
       }
     }
     if (addedActivity) {
       backfillActivityFromLastTransaction(this.#db);
-    }
-    if (addedGoogleMapsUrl) {
-      seedGoogleMapsUrls(this.#db);
     }
     this.refreshActivity(Date.now());
   }

@@ -855,6 +855,22 @@ if (schemaOk && listAllOk && identityOk && photosOk && adminByIdOk) {
     mapsStore.close();
     mapsStore = undefined;
     const afterReplace = readLink(firstPubkey);
+    const mapsOne: MapPlaceInput = {
+      ...COMPLETE,
+      origin: 'spar',
+      externalId: 'maps-1',
+      name: 'SPAR Maps One',
+      nostrPubkey: firstPubkey,
+    };
+    mapsStore = new SqliteMapPlaceStore(mapsFile);
+    const kept = mapsStore.upsert(mapsOne);
+    const repeated = mapsStore.insertIfNew({
+      ...mapsOne,
+      googleMapsUrl: 'https://maps.app.goo.gl/repeat',
+    });
+    mapsStore.close();
+    mapsStore = undefined;
+    const afterKeep = readLink(firstPubkey);
     mapsStore = new SqliteMapPlaceStore(mapsFile);
     const cleared = mapsStore.upsert({
       ...COMPLETE,
@@ -875,6 +891,23 @@ if (schemaOk && listAllOk && identityOk && photosOk && adminByIdOk) {
     mapsStore = undefined;
     const clearedLink = readLink(firstPubkey);
     const insertedLink = readLink(secondPubkey);
+    const adminLink = 'https://maps.google.com/maps/place/admin';
+    mapsStore = new SqliteMapPlaceStore(mapsFile);
+    const replaceMaps = (content: MapPlaceInput) =>
+      (mapsStore as SqliteMapPlaceStore).replaceById({
+        id: 'maps-1',
+        content,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        lastTransactionAt: null,
+        activity: { kind: 'keep' },
+        nowMs: Date.now(),
+        active: true,
+      });
+    const adminSet = replaceMaps({ ...mapsOne, googleMapsUrl: adminLink });
+    const adminKept = replaceMaps(mapsOne);
+    mapsStore.close();
+    mapsStore = undefined;
+    const adminStored = readLink(firstPubkey);
     if (
       seeded === first.googleMapsUrl &&
       reopened === first.googleMapsUrl &&
@@ -882,22 +915,46 @@ if (schemaOk && listAllOk && identityOk && photosOk && adminByIdOk) {
       !replaced.created &&
       replaced.place.googleMapsUrl === otherLink &&
       afterReplace === otherLink &&
+      kept.ok &&
+      !kept.created &&
+      kept.place.googleMapsUrl === otherLink &&
+      repeated.ok &&
+      !repeated.created &&
+      repeated.place.googleMapsUrl === otherLink &&
+      afterKeep === otherLink &&
       cleared.ok &&
       cleared.place.googleMapsUrl === null &&
       clearedLink === null &&
       inserted.ok &&
       inserted.created &&
       inserted.place.googleMapsUrl === null &&
-      insertedLink === null
+      insertedLink === null &&
+      adminSet.status === 'updated' &&
+      adminSet.place.googleMapsUrl === adminLink &&
+      adminKept.status === 'updated' &&
+      adminKept.place.googleMapsUrl === adminLink &&
+      adminStored === adminLink
     ) {
       googleMapsOk = true;
     } else {
       process.stdout.write(
         `${JSON.stringify({
           replaced,
+          kept,
+          repeated,
           cleared,
           inserted,
-          observed: { seeded, reopened, afterReplace, clearedLink, insertedLink },
+          adminSet,
+          adminKept,
+          observed: {
+            seeded,
+            reopened,
+            afterReplace,
+            afterKeep,
+            clearedLink,
+            insertedLink,
+            adminStored,
+          },
         })}\n`,
       );
       process.exitCode = 1;

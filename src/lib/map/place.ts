@@ -832,8 +832,9 @@ function normalizeNostrPubkey(
 }
 
 /**
- * A Google Maps https link. The caller trims. No userinfo, no port, at most
- * 2000 characters. The host is exactly `www.google.com`, `google.com`,
+ * A Google Maps https link. The caller trims. No whitespace, no backslash, no
+ * userinfo, no port, at most 2000 characters. The host follows `https://`
+ * directly. The host is exactly `www.google.com`, `google.com`,
  * `maps.google.com`, or `maps.app.goo.gl`. The first three need the path
  * `/maps` or a path that starts with `/maps/`. `maps.app.goo.gl` needs a path
  * longer than `/`. Query and hash stay.
@@ -842,7 +843,7 @@ function normalizeNostrPubkey(
  * @returns True when the link may be stored.
  */
 export function isGoogleMapsUrl(value: string): boolean {
-  if (/\s/u.test(value)) {
+  if (/[\s\\]/u.test(value)) {
     return false;
   }
   if (value.length < 1 || value.length > 2000) {
@@ -857,7 +858,12 @@ export function isGoogleMapsUrl(value: string): boolean {
   if (url.protocol !== 'https:') {
     return false;
   }
-  const rest = value.slice(value.indexOf('://') + 3);
+  // The URL parser skips extra slashes before the host, so the host must follow
+  // `https://` directly for the userinfo and port check below.
+  if (!/^https:\/\/[^/]/iu.test(value)) {
+    return false;
+  }
+  const rest = value.slice('https://'.length);
   const stop = rest.search(/[/?#]/u);
   const authority = stop < 0 ? rest : rest.slice(0, stop);
   if (authority.includes('@') || authority.includes(':')) {
